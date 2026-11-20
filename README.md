@@ -8,6 +8,11 @@ possible, GPU where it pays.
 **Status:** just started. No crate is published yet. The design is in
 [tensor4all-meta · docs/design/tenferro-sci.md](https://github.com/tensor4all/tensor4all-meta/blob/main/docs/design/tenferro-sci.md).
 
+![tenferro-sci-rs crates sit on tenferro and on pure Rust algorithm cores that any Rust code can use](https://raw.githubusercontent.com/tensor4all/tensor4all-meta/main/docs/design/figures/sci_layers.svg)
+
+The figure is maintained with the design document in tensor4all-meta
+(`docs/design/figures/make_sci_figures.py`).
+
 ## Planned crates
 
 | Crate | SciPy counterpart | Contents | Core |
