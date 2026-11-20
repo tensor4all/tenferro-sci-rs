@@ -1,0 +1,93 @@
+name: checks
+
+# Reusable job run by ci.yml (released tenferro) and upstream-main.yml
+# (tenferro-rs main branch). Every step skips while the repository has no
+# root Cargo.toml; the first PR that adds a crate makes them run.
+on:
+  workflow_call:
+    inputs:
+      tenferro:
+        description: "`release` uses the versions pinned in Cargo.toml; `main` uses the tenferro-rs main branch."
+        type: string
+        default: release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: fmt, clippy, test, docs (${{ inputs.tenferro }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Detect the workspace
+        id: ws
+        run: |
+          if [ -f Cargo.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "No Cargo.toml yet; skipping the Rust gates."; fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.ws.outputs.present == 'true'
+        with:
+          components: rustfmt, clippy
+
+      - name: Point tenferro crates at tenferro-rs main
+        if: steps.ws.outputs.present == 'true' && inputs.tenferro == 'main'
+        run: |
+          sed -i -E 's#^(tenferro-[a-z-]+) = "[^"]+"#\1 = { git = "https://github.com/tensor4all/tenferro-rs", branch = "main" }#' Cargo.toml
+          grep '^tenferro-' Cargo.toml || true
+          echo "LOCKED=" >> "$GITHUB_ENV"
+
+      - name: Use the committed lockfile
+        if: steps.ws.outputs.present == 'true' && inputs.tenferro != 'main'
+        run: echo "LOCKED=--locked" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.ws.outputs.present == 'true'
+        with:
+          key: tenferro-${{ inputs.tenferro }}
+
+      - name: cargo fmt
+        if: steps.ws.outputs.present == 'true'
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        if: steps.ws.outputs.present == 'true'
+        run: cargo clippy $LOCKED --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        if: steps.ws.outputs.present == 'true'
+        run: cargo test $LOCKED --workspace
+
+      - name: cargo doc
+        if: steps.ws.outputs.present == 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc $LOCKED --workspace --no-deps
+
+  msrv:
+    name: msrv
+    if: inputs.tenferro == 'release'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read rust-version
+        id: msrv
+        run: |
+          if [ -f Cargo.toml ]; then
+            v=$(sed -n -E 's/^rust-version *= *"([^"]+)".*/\1/p' Cargo.toml | head -1)
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"; echo "No Cargo.toml yet; skipping msrv."
+          fi
+
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.msrv.outputs.version != ''
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: cargo build at the MSRV
+        if: steps.msrv.outputs.version != ''
+        run: cargo build --locked --workspace

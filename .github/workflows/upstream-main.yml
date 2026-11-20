@@ -1,0 +1,43 @@
+name: Upstream main
+
+# Builds and tests the workspace against the tenferro-rs main branch so that
+# breaking changes are seen before the next tenferro release.
+on:
+  schedule:
+    - cron: "30 18 * * *" # 03:30 JST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  main:
+    uses: ./.github/workflows/checks.yml
+    with:
+      tenferro: main
+
+  report:
+    needs: main
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create upstream-main --color B60205 \
+            --description "Broken by tenferro-rs main" 2>/dev/null || true
+          number=$(gh issue list --label upstream-main --state open --json number --jq '.[0].number')
+          body="tenferro-sci-rs fails against tenferro-rs \`main\`: ${RUN_URL}
+
+          Opened automatically by the \`upstream-main.yml\` workflow; not written by a person or an AI model."
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Still failing: ${RUN_URL}"
+          else
+            gh issue create --label upstream-main \
+              --title "tenferro-sci-rs fails against tenferro-rs main" --body "$body"
+          fi
