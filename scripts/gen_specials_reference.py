@@ -59,6 +59,27 @@ def dd(v) -> tuple[float, float]:
     return (hi, lo)
 
 
+def stable(f, *args):
+    """f(*args) evaluated at two working precisions that must agree.
+
+    mpmath 1.3.0's Hurwitz zeta loses accuracy at 256 bits for some
+    arguments (zeta(32.54, 522.7) is off by 9e-11), so no reference value
+    is trusted from a single precision: the value is recomputed with more
+    bits until two consecutive precisions agree to 2^-150.
+    """
+    prev = None
+    for prec in (256, 640, 1600, 4000):
+        with mp.workprec(prec):
+            v = f(*[mp.mpf(a) if not isinstance(a, mp.mpf) else +a for a in args])
+            v = +v if v is not None else None
+        if v is None or isinstance(v, mp.mpc) or not mp.isfinite(v):
+            return v
+        if prev is not None and (v == prev or abs(v - prev) <= abs(v) * mp.mpf(2) ** -150):
+            return v
+        prev = v
+    raise RuntimeError(f"reference did not converge: {f.__name__}{args}")
+
+
 def mpv(pair) -> mp.mpf:
     hi, lo = pair
     return mp.mpf(hi) + mp.mpf(lo)
@@ -114,6 +135,56 @@ BETA_AB = [
 ]
 LBETA_AB = BETA_AB + [(1e10, 1e12), (1e8, 3.5), (700.5, 800.25)]
 
+# --------------------------------------------------------------------------
+# Double-double-only points: both sides of every switch between algorithms
+# in the precision-adaptive code, arguments whose low word matters (next to
+# poles), and fixed-seed random arguments with a random low word.
+# --------------------------------------------------------------------------
+
+import random
+
+RNG = random.Random(20261122)
+
+
+def around(t, eps=mp.mpf(2) ** -70):
+    """Double-double points just below and above a threshold t."""
+    t = mp.mpf(t)
+    return [("dd", t * (1 - eps)), ("dd", t * (1 + eps))]
+
+
+def near_poles(ns, d=mp.mpf("1e-20")):
+    return [("dd", -n + s * d) for n in ns for s in (1, -1)]
+
+
+def rnd(lo, hi, log=False):
+    """A random double-double in [lo, hi] (log-uniform if log) with a random low word."""
+    if log:
+        u = mp.exp(mp.log(lo) + (mp.log(hi) - mp.log(lo)) * mp.mpf(RNG.random()))
+    else:
+        u = mp.mpf(lo) + (mp.mpf(hi) - mp.mpf(lo)) * mp.mpf(RNG.random())
+    return ("dd", u * (1 + mp.mpf(RNG.random()) * mp.mpf(2) ** -60))
+
+
+NRAND = 100
+GAMMA_X += [p for t in (0.5, 1.5, 2.5, 20, 171.5, -170, 1e-20, -1e-20) for p in around(t)]
+GAMMA_X += near_poles(range(0, 4)) + [rnd(-170, 171) for _ in range(NRAND)]
+LGAMMA_X += [p for t in (1e-20, 0.5, 1.5, 2.5, 20, -1e-20, -20) for p in around(t)]
+LGAMMA_X += near_poles(range(0, 4)) + [rnd(1e-3, 1e6, log=True) for _ in range(NRAND // 2)]
+LGAMMA_X += [rnd(-300, 0) for _ in range(NRAND // 2)]
+RGAMMA_X += [p for t in (0.5, 1e-20, -1e-20, -170, -200) for p in around(t)]
+RGAMMA_X += near_poles(range(0, 4)) + [rnd(-190, 171) for _ in range(NRAND)]
+_pos, _neg = mp.mpf("1.4616321449683623412626595423257213284681962040064463512959884"), mp.mpf("-0.5040830082644554092582693045333989753")
+DIGAMMA_X += [p for t in (20, _pos - 0.5, _pos + 0.5, _neg - 0.25, _neg + 0.25) for p in around(t)]
+DIGAMMA_X += [("dd", _pos + mp.mpf("1e-25")), ("dd", _neg - mp.mpf("1e-25"))]
+DIGAMMA_X += near_poles(range(0, 4)) + [rnd(-60, 1e4) for _ in range(NRAND)]
+ZETA_SQ += [(s_, q_) for s_ in around(25) for q_ in (0.5, 2.0)] + [(3.0, q_) for q_ in around(25)]
+ZETA_SQ += [(rnd(1.001, 60), rnd(1e-3, 1e3, log=True)) for _ in range(NRAND)]
+ZETA_SQ += [(float(RNG.randint(2, 30)), rnd(-20, -0.01)) for _ in range(NRAND // 4)]
+BETA_AB += [(a_, 20.0) for a_ in around(20)] + [(a_, 70.0) for a_ in around(100)]
+BETA_AB += [(rnd(0.01, 150), rnd(0.01, 150)) for _ in range(NRAND)] + [(rnd(-60, -0.1), rnd(0.1, 40)) for _ in range(NRAND // 2)]
+LBETA_AB += [(rnd(0.01, 1e6, log=True), rnd(0.01, 1e6, log=True)) for _ in range(NRAND)]
+LBETA_AB += [(rnd(-1e4, -20), rnd(0.1, 15)) for _ in range(NRAND // 2)]
+
 
 def mp_lgamma(x):
     if x > 0:
@@ -139,7 +210,7 @@ def write_reference():
         lines = [HEADER, "# columns: " + ",".join(cols) + ",ref_hi,ref_lo,scipy\n"]
         for p in points:
             args = [arg(a) for a in (p if nargs > 1 else (p,))]
-            ref = dd(mpf(*[mpv(a) for a in args]))
+            ref = dd(stable(mpf, *[mpv(a) for a in args]))
             if all(lo == 0.0 for _, lo in args):
                 with np.errstate(all="ignore"):
                     s = fmt(scf(*[hi for hi, _ in args]))
@@ -155,7 +226,7 @@ SPECIAL = [
     ("lgamma", sc.gammaln, [(0.0,), (-0.0,), (-1.0,), (-50.0,), (1.0,), (2.0,), (math.inf,), (-math.inf,), (math.nan,), (3e305,)]),
     ("rgamma", sc.rgamma, [(0.0,), (-0.0,), (-1.0,), (-7.0,), (math.inf,), (math.nan,), (200.0,)]),
     ("digamma", sc.digamma, [(0.0,), (-0.0,), (-1.0,), (-3.0,), (math.inf,), (-math.inf,), (math.nan,)]),
-    ("zeta", sc.zeta, [(1.0, 1.0), (0.5, 1.0), (2.0, 0.0), (2.0, -1.0), (2.5, -0.5), (math.nan, 1.0), (2.0, math.nan)]),
+    ("zeta", sc.zeta, [(1.0, 1.0), (0.5, 2.0), (2.0, 0.0), (2.0, -1.0), (2.5, -0.5), (math.nan, 1.0), (2.0, math.nan)]),
     ("beta", sc.beta, [(-1.0, 0.5), (-1.0, 1.5), (-0.0, 1.0), (math.nan, 1.0)]),
     ("lbeta", sc.betaln, [(-1.0, 0.5), (-2.0, 1.5), (math.nan, 1.0)]),
 ]

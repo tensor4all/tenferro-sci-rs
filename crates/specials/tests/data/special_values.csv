@@ -36,7 +36,7 @@ digamma,inf,,inf
 digamma,-inf,,nan
 digamma,nan,,nan
 zeta,1.0,1.0,inf
-zeta,0.5,1.0,nan
+zeta,0.5,2.0,nan
 zeta,2.0,0.0,inf
 zeta,2.0,-1.0,inf
 zeta,2.5,-0.5,nan
