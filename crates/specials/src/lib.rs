@@ -28,7 +28,7 @@
 //! | `rgamma(x)` | [`rgamma`] | 1e-29 |
 //! | `digamma(x)`, `psi(x)` | [`digamma`] | 1e-29 |
 //! | `zeta(x, q)` | [`zeta`] | 1e-29 |
-//! | `beta(a, b)` | [`beta`] | 1e-29 (`5e-30 · max(1, |ln B|)` for huge arguments) |
+//! | `beta(a, b)` | [`beta`] | 1e-29 (`5e-30 · max(1, abs(ln B))` for huge arguments) |
 //! | `betaln(a, b)` | [`lbeta`] | 2e-29 |
 //!
 //! # Validation
