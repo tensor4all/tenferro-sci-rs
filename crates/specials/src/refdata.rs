@@ -138,3 +138,101 @@ pub fn same<T: Real>(got: T, expected: f64) -> bool {
     let g = got.approx_f64();
     g == expected && g.is_sign_negative() == expected.is_sign_negative()
 }
+
+/// One row of an xsref table (`tests/data/xsref`).
+#[derive(Debug, Clone)]
+pub struct XsrefRow {
+    /// Arguments (f64).
+    pub args: Vec<f64>,
+    /// xsref's reference value, rounded to f64.
+    pub desired: f64,
+    /// True where xsref used an older SciPy instead of an arbitrary-precision reference.
+    pub fallback: bool,
+    /// xsref's tolerance for this platform.
+    pub tol: f64,
+    /// mpmath value as a double-double pair, if defined.
+    pub dd: Option<(f64, f64)>,
+    /// 1-based line in the CSV file.
+    pub line: usize,
+}
+
+/// Column of the xsref tolerance to use: `gcc-linux-x86_64` on every platform.
+///
+/// xsref's tolerances record the error xsf itself showed on each platform.
+/// Clang on aarch64 contracts `a*b + c` into FMA; gcc on x86-64 (no `-mfma`)
+/// does not, and neither does Rust. The port therefore rounds like xsf built
+/// by gcc on x86-64, and its errors match that column (for example
+/// beta(2154.43…, 7.5): 2.2870e-12 here and in the column).
+fn platform_column() -> usize {
+    1
+}
+
+/// The xsref rows of a function.
+pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
+    let (text, nargs) = match name {
+        "gamma" => (include_str!("../tests/data/xsref/gamma.csv"), 1),
+        "lgamma" => (include_str!("../tests/data/xsref/lgamma.csv"), 1),
+        "rgamma" => (include_str!("../tests/data/xsref/rgamma.csv"), 1),
+        "gammasgn" => (include_str!("../tests/data/xsref/gammasgn.csv"), 1),
+        "digamma" => (include_str!("../tests/data/xsref/digamma.csv"), 1),
+        "zeta" => (include_str!("../tests/data/xsref/zeta.csv"), 2),
+        "beta" => (include_str!("../tests/data/xsref/beta.csv"), 2),
+        "lbeta" => (include_str!("../tests/data/xsref/lbeta.csv"), 2),
+        _ => panic!("no xsref table for {name}"),
+    };
+    let col = platform_column();
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|(i, l)| {
+            let f: Vec<&str> = l.split(',').collect();
+            assert_eq!(f.len(), nargs + 7, "line {}: {l}", i + 1);
+            let n = nargs;
+            XsrefRow {
+                args: f[..n].iter().map(|s| num(s)).collect(),
+                desired: num(f[n]),
+                fallback: f[n + 1] == "1",
+                tol: num(f[n + 2 + col]),
+                dd: (!f[n + 5].is_empty()).then(|| (num(f[n + 5]), num(f[n + 6]))),
+                line: i + 1,
+            }
+        })
+        .collect()
+}
+
+/// xsf's `extended_relative_error` (ported from xsf
+/// `include/xsf/fp_error_metrics.h`, BSD-3-Clause): NaN matches NaN, an
+/// infinite value is compared with the "next float after MAX", and a zero
+/// reference is normalized by the smallest subnormal.
+pub fn extended_relative_error(actual: f64, desired: f64) -> f64 {
+    let abs_err = if actual == desired || (actual.is_nan() && desired.is_nan()) {
+        0.0
+    } else if actual.is_nan() || desired.is_nan() {
+        f64::INFINITY
+    } else if actual.is_infinite() {
+        let sgn = 1.0_f64.copysign(actual);
+        let ulp = 2.0_f64.powi(-(f64::MANTISSA_DIGITS as i32)) * f64::MAX;
+        ((sgn * f64::MAX - desired) + sgn * ulp).abs()
+    } else if desired.is_infinite() {
+        let sgn = 1.0_f64.copysign(desired);
+        let ulp = 2.0_f64.powi(-(f64::MANTISSA_DIGITS as i32)) * f64::MAX;
+        ((sgn * f64::MAX - actual) + sgn * ulp).abs()
+    } else {
+        (actual - desired).abs()
+    };
+    let abs_desired = if desired == 0.0 {
+        f64::from_bits(1)
+    } else if desired.is_infinite() {
+        f64::MAX
+    } else if desired.is_nan() {
+        1.0
+    } else {
+        desired.abs()
+    };
+    abs_err / abs_desired
+}
+
+/// xsf's `adjust_tolerance` (`tests/testing_utils.h`): `4 max(eps, tol)`.
+pub fn adjust_tolerance(tol: f64) -> f64 {
+    4.0 * f64::EPSILON.max(tol)
+}

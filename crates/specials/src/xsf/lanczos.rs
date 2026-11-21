@@ -1,0 +1,52 @@
+//! Lanczos approximation (N = 13) for Γ, scaled by `exp(g)`.
+//!
+//! Ported from xsf `include/xsf/cephes/lanczos.h` (only what `zetac.h` needs).
+//! (C) Copyright John Maddock 2006, Boost Software License 1.0
+//! (`LICENSE-BSL-1.0-boost`); formed from
+//! Boost's `lanczos.hpp`, ported to Cephes by the SciPy developers.
+
+use super::polevl::ratevl;
+
+/// Lanczos `g` for N = 13.
+pub(crate) const LANCZOS_G: f64 = 6.024680040776729583740234375;
+
+const LANCZOS_SUM_EXPG_SCALED_NUM: [f64; 13] = [
+    0.006061842346248906525783753964555936883222,
+    0.5098416655656676188125178644804694509993,
+    19.51992788247617482847860966235652136208,
+    449.9445569063168119446858607650988409623,
+    6955.999602515376140356310115515198987526,
+    75999.29304014542649875303443598909137092,
+    601859.6171681098786670226533699352302507,
+    3481712.15498064590882071018964774556468,
+    14605578.08768506808414169982791359218571,
+    43338889.32467613834773723740590533316085,
+    86363131.28813859145546927288977868422342,
+    103794043.1163445451906271053616070238554,
+    56906521.91347156388090791033559122686859,
+];
+
+const LANCZOS_SUM_EXPG_SCALED_DENOM: [f64; 13] = [
+    1.0,
+    66.0,
+    1925.0,
+    32670.0,
+    357423.0,
+    2637558.0,
+    13339535.0,
+    45995730.0,
+    105258076.0,
+    150917976.0,
+    120543840.0,
+    39916800.0,
+    0.0,
+];
+
+/// `exp(-g)`-scaled Lanczos sum, `lanczos_sum_expg_scaled`.
+pub(crate) fn lanczos_sum_expg_scaled(x: f64) -> f64 {
+    ratevl(
+        x,
+        &LANCZOS_SUM_EXPG_SCALED_NUM,
+        &LANCZOS_SUM_EXPG_SCALED_DENOM,
+    )
+}

@@ -1,7 +1,9 @@
 //! Γ, ln|Γ|, sign of Γ and 1/Γ for `f64`.
 //!
 //! Ported from xsf `include/xsf/cephes/gamma.h` (`Gamma`, `lgam_sgn`,
-//! `gammasgn`) and `include/xsf/cephes/rgamma.h` (`rgamma`).
+//! `gammasgn`), `include/xsf/cephes/rgamma.h` (`rgamma`),
+//! `include/xsf/loggamma.h` (real `loggamma` and `loggamma_taylor`) and
+//! `include/xsf/gamma.h` (`gammaln`).
 //! Cephes Math Library Release 2.2, Copyright 1984, 1987, 1989, 1992 by
 //! Stephen L. Moshier; C++ translation by SciPy developers (2024).
 
@@ -327,4 +329,63 @@ pub(crate) fn rgamma(x: f64) -> f64 {
         return 1.0 / z;
     }
     w * (1.0 + chbevl(4.0 * w - 2.0, &RGAMMA_R)) / z
+}
+
+const LOGGAMMA_TAYLOR_RADIUS: f64 = 0.2;
+
+/// Taylor series for log-Gamma around z = 1:
+/// `loggamma(z + 1) = -gamma*z + zeta(2)*z**2/2 - zeta(3)*z**3/3 ...`
+fn loggamma_taylor(mut z: f64) -> f64 {
+    const COEFFS: [f64; 23] = [
+        -4.3478266053040259361E-2,
+        4.5454556293204669442E-2,
+        -4.7619070330142227991E-2,
+        5.000004769810169364E-2,
+        -5.2631679379616660734E-2,
+        5.5555767627403611102E-2,
+        -5.8823978658684582339E-2,
+        6.2500955141213040742E-2,
+        -6.6668705882420468033E-2,
+        7.1432946295361336059E-2,
+        -7.6932516411352191473E-2,
+        8.3353840546109004025E-2,
+        -9.0954017145829042233E-2,
+        1.0009945751278180853E-1,
+        -1.1133426586956469049E-1,
+        1.2550966952474304242E-1,
+        -1.4404989676884611812E-1,
+        1.6955717699740818995E-1,
+        -2.0738555102867398527E-1,
+        2.7058080842778454788E-1,
+        -4.0068563438653142847E-1,
+        8.2246703342411321824E-1,
+        -5.7721566490153286061E-1,
+    ];
+    z -= 1.0;
+    z * polevl(z, &COEFFS)
+}
+
+/// Real `loggamma` of `xsf/loggamma.h`: NaN for `x < 0`.
+fn loggamma(x: f64) -> f64 {
+    if x < 0.0 {
+        return f64::NAN;
+    }
+    // lgam loses relative accuracy near its zeros at 1 and 2
+    if (x - 1.0).abs() < LOGGAMMA_TAYLOR_RADIUS {
+        // `+ 0.0` keeps +0 at x = 1
+        return loggamma_taylor(x) + 0.0;
+    }
+    if 2.0 - LOGGAMMA_TAYLOR_RADIUS < x && x < 2.0 {
+        return (x - 1.0).ln() + loggamma_taylor(x - 1.0);
+    }
+    lgam_sgn(x).0
+}
+
+/// `gammaln` of `xsf/gamma.h`.
+pub(crate) fn gammaln(x: f64) -> f64 {
+    if x < 0.0 {
+        lgam_sgn(x).0
+    } else {
+        loggamma(x)
+    }
 }

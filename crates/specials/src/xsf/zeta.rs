@@ -1,6 +1,7 @@
 //! Hurwitz ζ(x, q) for `f64`.
 //!
-//! Ported from xsf `include/xsf/cephes/zeta.h`.
+//! Ported from xsf `include/xsf/cephes/zeta.h` and the real `zeta(double,
+//! double)` wrapper of `include/xsf/zeta.h`.
 //! Cephes Math Library, Copyright 1984, 1987 by Stephen L. Moshier.
 
 use super::consts::MACHEP;
@@ -78,4 +79,12 @@ pub(crate) fn zeta(x: f64, q: f64) -> f64 {
         k += 1.0;
     }
     s
+}
+
+/// `zeta(x, q)` of `xsf/zeta.h`: Riemann zeta for `q == 1`, else Hurwitz zeta.
+pub(crate) fn zeta_xsf(x: f64, q: f64) -> f64 {
+    if q == 1.0 {
+        return super::zetac::riemann_zeta(x);
+    }
+    zeta(x, q)
 }

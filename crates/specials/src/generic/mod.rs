@@ -46,32 +46,60 @@ fn reduce_half<T: Real>(x: T) -> (T, bool) {
     (r, (n / k::<T>(2.0)).fract() != T::zero())
 }
 
-/// `a * b` that follows IEEE rules for infinite operands. Double-double
-/// multiplication computes an error term `fma(a, b, -ab)`, which is
-/// `inf - inf = NaN` when the product is infinite.
+/// `a * b` that follows IEEE rules for infinite operands and overflow.
+/// Double-double multiplication computes an error term `fma(a, b, -ab)`,
+/// which is `inf - inf = NaN` when the product is infinite.
 pub(crate) fn mul<T: Real>(a: T, b: T) -> T {
-    if a.is_infinite() || b.is_infinite() {
+    let r = a * b;
+    if r.is_nan() && !a.is_nan() && !b.is_nan() {
+        // An infinite operand, or a result that overflowed: the error term is NaN.
         T::from_dd(a.approx_f64() * b.approx_f64(), 0.0)
     } else {
-        a * b
+        r
     }
 }
 
 /// `a / b` with IEEE rules for infinite operands (see [`mul`]).
+///
+/// Double-double division goes through `1/b`; for `|b| > 2^900` that
+/// reciprocal has a subnormal low word and loses digits, so both operands are
+/// first scaled by the same exact power of two.
 pub(crate) fn div<T: Real>(a: T, b: T) -> T {
-    if a.is_infinite() || b.is_infinite() {
+    let bh = b.approx_f64().abs();
+    let (a, b) = if bh.is_finite() && bh > 2.0_f64.powi(900) {
+        let s = k::<T>(2.0_f64.powi(-600));
+        (a * s, b * s)
+    } else {
+        (a, b)
+    };
+    let r = a / b;
+    if r.is_nan() && !a.is_nan() && !b.is_nan() {
+        // An infinite operand, or a result that overflowed: the error term is NaN.
         T::from_dd(a.approx_f64() / b.approx_f64(), 0.0)
     } else {
-        a / b
+        r
     }
 }
 
 /// `a + b` with IEEE rules for infinite operands (see [`mul`]).
 pub(crate) fn add<T: Real>(a: T, b: T) -> T {
-    if a.is_infinite() || b.is_infinite() {
+    let r = a + b;
+    if r.is_nan() && !a.is_nan() && !b.is_nan() {
+        // An infinite operand, or a result that overflowed: the error term is NaN.
         T::from_dd(a.approx_f64() + b.approx_f64(), 0.0)
     } else {
-        a + b
+        r
+    }
+}
+
+/// `ln x` that is also correct for subnormal `x`, where the double-double
+/// logarithm is not: scale into the normal range by an exact power of two.
+pub(crate) fn ln<T: Real>(x: T) -> T {
+    if x > T::zero() && x.abs().approx_f64() < f64::MIN_POSITIVE {
+        let scale = k::<T>(2.0_f64.powi(600));
+        (x * scale).ln() - k::<T>(600.0) * T::LN_2()
+    } else {
+        x.ln()
     }
 }
 

@@ -4,11 +4,16 @@
 //! series of ln Γ(1+z)) and 5.11.1 / 5.11.3 (Stirling series).
 
 use super::tables::{EULER_GAMMA, LN_PI, LN_SQRT_2PI, SQRT_2PI, STIRLING, ZETA_M1};
-use super::{div, mul, sinpi};
+use super::{div, ln, mul, sinpi};
 use crate::real::{c, k, Real};
 
 /// Below this, Stirling's series is not used.
 pub(crate) const STIRLING_MIN: f64 = 20.0;
+
+/// Below -this, 1/Γ(x) uses the recurrence 1/Γ(x) = x/Γ(x+1) (Γ(1-x) overflows).
+const RGAMMA_REC_MIN: f64 = 170.0;
+/// Below -this, |1/Γ(x)| > f64::MAX for every non-integer x.
+const RGAMMA_OVERFLOW: f64 = 200.0;
 
 /// True when `x` is zero or a negative integer (a pole of Γ).
 fn is_pole<T: Real>(x: T) -> bool {
@@ -69,11 +74,11 @@ pub(crate) fn lgamma_pos<T: Real>(x: T) -> T {
     let half = k::<T>(0.5);
     if x < k(1e-20) {
         // DLMF 5.7.3: ln Γ(x) = -ln x - γx + O(x²).
-        return -x.ln() - c::<T>(EULER_GAMMA) * x;
+        return -ln(x) - c::<T>(EULER_GAMMA) * x;
     }
     if x < half {
         // ln Γ(x) = ln Γ(1+x) - ln x = ln Γ(2+x) - ln(1+x) - ln x.
-        return lgamma2p(x) - x.ln_1p() - x.ln();
+        return lgamma2p(x) - x.ln_1p() - ln(x);
     }
     if x < k(1.5) {
         let z = x - one;
@@ -107,7 +112,7 @@ pub(crate) fn lgamma<T: Real>(x: T) -> T {
         return lgamma_pos(x);
     }
     if x > k(-1e-20) {
-        return -(-x).ln() - c::<T>(EULER_GAMMA) * x;
+        return -ln(-x) - c::<T>(EULER_GAMMA) * x;
     }
     // Reflection, DLMF 5.5.3: ln|Γ(x)| = ln π - ln|sin πx| - ln Γ(1-x).
     c::<T>(LN_PI) - sinpi(x).abs().ln() - lgamma_pos(T::one() - x)
@@ -229,6 +234,14 @@ pub(crate) fn rgamma<T: Real>(x: T) -> T {
     if x >= k(0.5) {
         return div(T::one(), gamma_pos(x));
     }
+    if x < k(-RGAMMA_REC_MIN) {
+        if x < k(-RGAMMA_OVERFLOW) {
+            // |1/Γ(x)| = |sin(πx)| Γ(1-x) / π overflows for every non-integer x here.
+            return T::infinity().copysign(sinpi(x));
+        }
+        // Γ(1-x) overflows while 1/Γ(x) may not: 1/Γ(x) = x / Γ(x+1).
+        return mul(x, rgamma(x + T::one()));
+    }
     // 1/Γ(x) = sin(πx) Γ(1-x) / π.
     div(mul(sinpi(x), gamma_pos(T::one() - x)), T::PI())
 }
@@ -239,5 +252,31 @@ pub(crate) fn lgamma_diff_large<T: Real>(a: T, b: T) -> T {
     // (a+b-½)ln(a+b) - (a-½)ln a - b = (a-½) ln(1 + b/a) + b ln(a+b) - b.
     let half = k::<T>(0.5);
     let ab = a + b;
-    (a - half) * (b / a).ln_1p() + b * ab.ln() - b + (stirling_tail(ab) - stirling_tail(a))
+    let r = b / a;
+    let lead = if r.abs() < k(1e-30) {
+        // (a-½) ln(1+r) = b - r/2 + O(a r²); r itself may be subnormal.
+        b - half * r
+    } else {
+        (a - half) * r.ln_1p()
+    };
+    lead + b * (a.ln() + r.ln_1p()) - b + (stirling_tail(ab) - stirling_tail(a))
+}
+
+/// ln B(a, b) for `a, b >= STIRLING_MIN`, from the Stirling series of all
+/// three gamma functions, written so that `a + b` may overflow:
+/// `(a-½) ln(a/(a+b)) + (b-½) ln(b/(a+b)) - ½ ln(a+b) + ln√(2π) + S(a) + S(b) - S(a+b)`.
+pub(crate) fn lbeta_large<T: Real>(a: T, b: T) -> T {
+    let half = k::<T>(0.5);
+    let r = b / a;
+    let l1p = r.ln_1p(); // ln((a+b)/a)
+    let ln_ab = a.ln() + l1p;
+    let t_a = -(a - half) * l1p;
+    let t_b = (b - half) * (ln(r) - l1p);
+    let ab = a + b;
+    let s_ab = if ab.is_finite() {
+        stirling_tail(ab)
+    } else {
+        T::zero()
+    };
+    t_a + t_b - half * ln_ab + c::<T>(LN_SQRT_2PI) + stirling_tail(a) + stirling_tail(b) - s_ab
 }

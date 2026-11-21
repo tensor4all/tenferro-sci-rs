@@ -25,7 +25,9 @@ const NEG_RADIUS: f64 = 0.25;
 /// ψ(x) for x >= ASY_MIN: `ln x - 1/(2x) - Σ B_{2k} / (2k x^{2k})`.
 fn digamma_asy<T: Real>(x: T) -> T {
     let eps = T::epsilon();
-    let xi2 = (x * x).recip();
+    // 1/x² as (1/x)², which does not overflow for large x.
+    let xi = x.recip();
+    let xi2 = xi * xi;
     let mut sum = x.ln() - k::<T>(0.5) / x;
     let mut p = xi2;
     for &cf in &DIGAMMA_ASY {

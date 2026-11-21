@@ -6,8 +6,8 @@
 //! ln Γ(a+b) - ln Γ(a) is evaluated from the Stirling series directly to
 //! avoid the cancellation of two large logarithms.
 
-use super::gamma::{gamma, gammasgn, lgamma, lgamma_diff_large, lgamma_pos, rgamma, STIRLING_MIN};
-use super::{add, mul};
+use super::gamma::{gamma, gammasgn, lbeta_large, lgamma, lgamma_diff_large, rgamma, STIRLING_MIN};
+use super::{add, div, ln, mul, sinpi};
 use crate::real::{k, Real};
 
 /// Γ arguments up to here are evaluated directly.
@@ -44,7 +44,7 @@ fn beta_negint<T: Real>(a: i32, b: T) -> T {
     match as_int(b) {
         Some(bi) if T::one() - k::<T>(f64::from(a)) - b > T::zero() => {
             let sgn = if bi % 2 == 0 { T::one() } else { -T::one() };
-            sgn * beta(T::one() - k::<T>(f64::from(a)) - b, b)
+            mul(sgn, beta(T::one() - k::<T>(f64::from(a)) - b, b))
         }
         _ => T::infinity(),
     }
@@ -61,10 +61,27 @@ fn lbeta_negint<T: Real>(a: i32, b: T) -> T {
 
 /// `(ln|B(a, b)|, sign)` for |a| >= |b| outside the direct range.
 fn lbeta_signed<T: Real>(a: T, b: T) -> (T, T) {
-    let zero = T::zero();
-    if b > zero && a >= k(STIRLING_MIN) {
-        // a is the larger, so a + b >= STIRLING_MIN too.
-        return (lgamma_pos(b) - lgamma_diff_large(a, b), T::one());
+    if a >= k(STIRLING_MIN) && b >= k(STIRLING_MIN) {
+        // Both large (a >= b): no cancellation, and a + b may overflow.
+        return (lbeta_large(a, b), T::one());
+    }
+    if a >= k(STIRLING_MIN) && a + b >= k(STIRLING_MIN) {
+        // ln Γ(a+b) - ln Γ(a) from the Stirling series, without cancellation;
+        // valid for either sign of b.
+        return (lgamma(b) - lgamma_diff_large(a, b), gammasgn(b));
+    }
+    if a <= -k::<T>(STIRLING_MIN) && T::one() - a - b >= k(STIRLING_MIN) {
+        // Large negative a: by reflection (DLMF 5.5.3),
+        // Γ(a)/Γ(a+b) = [sin π(a+b) / sin πa] Γ(1-a-b)/Γ(1-a),
+        // and the gamma ratio has large positive arguments.
+        let c = T::one() - a - b;
+        let (sab, sa) = (sinpi(a + b), sinpi(a));
+        if sab == T::zero() {
+            // a + b is a pole of Γ: B = 0.
+            return (T::neg_infinity(), T::one());
+        }
+        let l = lgamma(b) - lgamma_diff_large(c, b) + ln(sab.abs()) - ln(sa.abs());
+        return (l, gammasgn(b) * sab.signum() * sa.signum());
     }
     let ab = a + b;
     let sign = gammasgn(a) * gammasgn(b) * gammasgn(ab);
@@ -76,16 +93,24 @@ fn in_direct_range<T: Real>(a: T, b: T) -> bool {
     a.abs() <= m && b.abs() <= m && (a + b).abs() <= m
 }
 
-/// Γ(a) Γ(b) / Γ(a + b) as `(Γ(a) / Γ(a+b)) Γ(b)`, ordered to stay in range.
+/// Γ(a) Γ(b) / Γ(a + b), ordered to stay in range. The quotients are formed
+/// by division rather than through 1/Γ(a+b): near the ends of the range that
+/// reciprocal is below 1e-292, where the low word of a double-double is
+/// subnormal and the result loses digits.
 fn gamma_ratio<T: Real>(a: T, b: T) -> T {
-    let y = rgamma(a + b);
     let ga = gamma(a);
     let gb = gamma(b);
-    let (gay, gby) = (mul(ga, y), mul(gb, y));
-    if (gay.abs() - T::one()).abs() > (gby.abs() - T::one()).abs() {
-        mul(gby, ga)
+    let gab = gamma(a + b);
+    if !gab.is_finite() || gab == T::zero() {
+        // a + b at a pole of Γ (1/Γ = 0) or beyond its range.
+        let y = rgamma(a + b);
+        return mul(mul(ga, y), gb);
+    }
+    let (ta, tb) = (div(ga, gab), div(gb, gab));
+    if (ta.abs() - T::one()).abs() > (tb.abs() - T::one()).abs() {
+        mul(tb, ga)
     } else {
-        mul(gay, gb)
+        mul(ta, gb)
     }
 }
 
@@ -124,7 +149,7 @@ pub(crate) fn lbeta<T: Real>(a: T, b: T) -> T {
         // Γ(b) for tiny b would overflow; that case goes through ln Γ.
         let v = gamma_ratio(a, b);
         if v.is_finite() && v != T::zero() {
-            return v.abs().ln();
+            return ln(v.abs());
         }
     }
     lbeta_signed(a, b).0
