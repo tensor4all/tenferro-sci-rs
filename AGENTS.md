@@ -28,5 +28,11 @@ Short version of the repository rules:
   upstream license.
 - Contractions, GEMM, decompositions and solves go through tenferro, tcontract,
   tlinalg or colmat; no handwritten inner loops.
+- When work here reveals a shortcoming in tenferro's design or API (a
+  missing primitive, an awkward contract, a performance gap), do not work
+  around it ad hoc in this repository. Report it to the user with the
+  evidence, and after the user confirms, improve tenferro-rs itself (issue,
+  then PR there). Until that lands, the change here waits or stays on its
+  branch.
 - The PR body carries `## Verification` with a command and its output, and a
   line-initial `Model: <provider>/<model>`.
