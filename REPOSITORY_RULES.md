@@ -65,6 +65,10 @@ Where this file and the code disagree, the code wins and this file is fixed.
   implementation.
 - Tests are small and fast: fixed seeds, minimal cases, exact or
   tolerance-stated assertions. No test takes tens of seconds.
+- A bug found in an upstream library or in reference data (mpmath, SciPy,
+  xsref, ...) is recorded in [`docs/upstream-issues.md`](docs/upstream-issues.md)
+  with its evidence and what this repository does about it, whether or not it
+  is reported upstream.
 
 ## Autodiff
 
