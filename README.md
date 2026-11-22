@@ -19,7 +19,7 @@ The figure is maintained with the design document in tensor4all-meta
 | --- | --- | --- | --- |
 | `tenferro-krylov` | `sparse.linalg` (iterative part) | eigsolve, linsolve, exponentiate, svdsolve, Davidson | [`krylov`](https://github.com/Ryo-wtnb11/krylov-rs) |
 | `tenferro-optimize` | `optimize` | L-BFGS, Levenberg–Marquardt, trust region, root finding | own |
-| `tenferro-special` | `special` | gamma, Bessel, error functions, orthogonal polynomials | pure Rust port of SciPy's [xsf](https://github.com/scipy/xsf) |
+| `tenferro-special` | `special` | gamma, Bessel, error functions, orthogonal polynomials | [`specials`](crates/specials) (in this workspace) |
 | `tenferro-integrate` | `integrate` | adaptive quadrature, ODE solvers with adjoints | own |
 | `tenferro-interpolate` | `interpolate` | splines, grid interpolation, Chebyshev | own |
 
@@ -28,6 +28,12 @@ version. Algorithms that need only vector operations sit in independent,
 pure Rust cores that do not depend on tenferro, so any Rust code can use them;
 the `tenferro-*` crates add tenferro tensors (CPU and GPU), autodiff rules,
 batching and traced use on top.
+
+## Independent cores in this workspace
+
+| Crate | Contents | Status |
+| --- | --- | --- |
+| [`specials`](crates/specials) | Special functions for `f64` (a port of SciPy's [xsf](https://github.com/scipy/xsf)) and double-double `xprec::Df64` (precision-adaptive algorithms). Gamma family so far. | not published |
 
 ## Validation
 

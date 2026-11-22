@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["crates/specials"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+repository = "https://github.com/tensor4all/tenferro-sci-rs"
+
+[workspace.dependencies]
+num-traits = "0.2.19"
+xprec = "0.2.3"

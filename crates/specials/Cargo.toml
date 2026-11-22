@@ -1,0 +1,20 @@
+[package]
+name = "specials"
+description = "Special functions in pure Rust for f64 and double-double (xprec Df64): a port of SciPy's xsf plus precision-adaptive algorithms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause AND BSL-1.0"
+keywords = ["special-functions", "gamma", "double-double", "scipy", "math"]
+categories = ["mathematics", "science"]
+publish = false
+
+[features]
+default = ["xprec"]
+## Implement `Real` for `xprec::Df64` (double-double, ~32 significant digits).
+xprec = ["dep:xprec"]
+
+[dependencies]
+num-traits.workspace = true
+xprec = { workspace = true, optional = true }
