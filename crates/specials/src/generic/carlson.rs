@@ -250,7 +250,7 @@ pub(crate) fn elliprc<T: Real>(x: T, y: T) -> T {
         let t = elliprc(x - y, -y);
         return mul(t, sqrt(div(x, x - y)));
     }
-    if is_small(y) || !(x >= T::zero()) {
+    if is_small(y) || x < T::zero() {
         return T::nan();
     }
     if x.is_infinite() || y.is_infinite() {

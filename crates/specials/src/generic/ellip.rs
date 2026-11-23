@@ -239,7 +239,7 @@ fn ellipj_core<T: Real>(u: T, m: T, p: T) -> (T, T, T, T) {
     // φ_N = 2^N a_N u carries the phase of u; with ε|φ_N| >= 1 no digit of
     // sn or cn is correct.
     let mut phi = mul(k::<T>(2.0_f64.powi(levels as i32)) * a[levels], u);
-    if !(phi.abs() < k::<T>(2.0_f64.powi(104))) {
+    if phi.abs() >= k::<T>(2.0_f64.powi(104)) {
         return nan;
     }
     let quarter_pi = T::FRAC_PI_4();
