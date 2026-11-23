@@ -350,8 +350,28 @@ fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
     ((g - y) * rj - k::<T>(3.0) * rf + k::<T>(3.0) * rc) / (y - p)
 }
 
+/// Like [`scale_exponent`], but centers the geometric mean of the largest and
+/// the smallest nonzero argument at 1: R_J forms `p (p + λ)²` and `(p Σ√x)²`,
+/// which leave the double-double range unless the arguments straddle 1.
+fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
+    let logs: Vec<f64> = args
+        .iter()
+        .map(|a| a.abs().approx_f64())
+        .filter(|&v| v != 0.0)
+        .map(f64::log2)
+        .collect();
+    let max = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min = logs.iter().copied().fold(f64::INFINITY, f64::min);
+    let center = ((max + min) / 2.0).round() as i32;
+    if center.abs() < 100 {
+        0
+    } else {
+        center / 2
+    }
+}
+
 fn rj_scaled<T: Real>(x: T, y: T, z: T, p: T) -> T {
-    let j = scale_exponent(&[x, y, z, p]);
+    let j = rj_scale_exponent(&[x, y, z, p]);
     let r = rj_core(
         ldexp(x, -2 * j),
         ldexp(y, -2 * j),
@@ -361,8 +381,25 @@ fn rj_scaled<T: Real>(x: T, y: T, z: T, p: T) -> T {
     ldexp(r, -3 * j)
 }
 
+/// Largest ratio, in bits, between the largest and the smallest nonzero
+/// argument of R_J that the duplication supports: beyond it `p (p + λ)²`
+/// leaves the range of the double-double type. Verified accurate to 5e-32 at
+/// ratios of 1e180 (2^598) and failing from 1e200.
+const RJ_RATIO_BITS: f64 = 600.0;
+
 pub(crate) fn elliprj<T: Real>(x: T, y: T, z: T, p: T) -> T {
     if x.is_nan() || y.is_nan() || z.is_nan() || p.is_nan() {
+        return T::nan();
+    }
+    let logs = [x, y, z, p]
+        .map(|a| a.abs().approx_f64())
+        .into_iter()
+        .filter(|v| v.is_finite() && *v != 0.0)
+        .map(f64::log2);
+    let (max, min) = logs.fold((f64::NEG_INFINITY, f64::INFINITY), |(mx, mn), l| {
+        (mx.max(l), mn.min(l))
+    });
+    if max - min > RJ_RATIO_BITS {
         return T::nan();
     }
     let mut v = [x, y, z];

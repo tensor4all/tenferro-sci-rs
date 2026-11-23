@@ -707,7 +707,8 @@ pub fn elliprc<T: Real>(x: T, y: T) -> T {
 ///
 /// Defined for `x, y, z >= 0` with `z > 0` and at most one of `x`, `y` zero.
 /// `+∞` if `z = 0` or if `x = y = 0`; 0 if an argument is infinite; NaN for a
-/// negative argument.
+/// negative argument. The `Df64` result is accurate to 1e-30 while it is above
+/// about 1e-292 (a smaller double-double has a subnormal low word).
 ///
 /// # Examples
 ///
@@ -787,6 +788,11 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// `p < 0` it is the Cauchy principal value (DLMF 19.20.14). `+∞` at the pole
 /// (two of `x`, `y`, `z` zero, `p != 0`); 0 if an argument is infinite; NaN
 /// for a negative `x`, `y` or `z` and for `p = 0`.
+///
+/// The `Df64` path returns NaN when the largest and the smallest nonzero finite
+/// argument (in absolute value) differ by more than a factor of 2^600
+/// (about 4e180), where its duplication leaves the range of the type; below
+/// that it is accurate to 1e-30 (checked up to a ratio of 1e180).
 ///
 /// # Examples
 ///

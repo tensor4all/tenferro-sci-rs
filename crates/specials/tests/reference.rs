@@ -294,3 +294,30 @@ fn stirling2_df64_beyond_the_work_limit_is_exact() {
         "f64 formula limits the check"
     );
 }
+
+/// R_J(x, y, z, z) = R_D(x, y, z) (DLMF 19.20.? degenerate case). The `Df64`
+/// R_J is accurate up to a ratio of 2^600 between its largest and smallest
+/// nonzero argument and returns NaN beyond it, instead of a wrong value.
+#[test]
+fn df64_elliprj_ratio_limit_is_fail_fast() {
+    let d = Df64::from;
+    for z in [1e100, 1e150, 1e180] {
+        let rj = specials::elliprj(d(0.5), d(1.0), d(z), d(z));
+        let rd = specials::elliprd(d(0.5), d(1.0), d(z));
+        let e = ((rj - rd) / rd).abs().hi();
+        assert!(
+            e <= 1e-29,
+            "z={z:e}: R_J = {rj:?}, R_D = {rd:?}, error {e:e}"
+        );
+    }
+    for z in [1e182, 1e200, 1e300] {
+        assert!(
+            specials::elliprj(d(0.5), d(1.0), d(z), d(z)).hi().is_nan(),
+            "z={z:e}"
+        );
+    }
+    // A zero argument does not count: R_J(0, y, z, p) has a ratio of y/z only.
+    assert!(specials::elliprj(d(0.0), d(1.0), d(1e150), d(2.0))
+        .hi()
+        .is_finite());
+}
