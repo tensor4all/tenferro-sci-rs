@@ -9,7 +9,7 @@ use crate::generic;
 use crate::refdata::{error, rows};
 
 /// (function, relative tolerance, absolute floor)
-const CASES: [(&str, f64, f64); 7] = [
+const CASES: [(&str, f64, f64); 15] = [
     ("gamma", 4e-15, 0.0),
     ("lgamma", 4e-15, 0.0),
     ("rgamma", 4e-15, 0.0),
@@ -20,6 +20,19 @@ const CASES: [(&str, f64, f64); 7] = [
     // exp(ln B) for arguments beyond Γ's range: error ~ |ln B| ε.
     ("beta", 5e-13, 0.0),
     ("lbeta", 4e-15, 0.0),
+    // The rest of the gamma family (#8). poch, binom and gen_harmonic pay
+    // |ln Γ| ε in f64 (exp of a difference of ln Γ values, or of -a ln i).
+    ("poch", 1e-12, 0.0),
+    // x = -3.75 is next to a zero of ln|Γ(1+x)| (x ≈ -3.74): absolute accuracy
+    // eps there gives 3e-14 relative.
+    ("lgam1p", 5e-14, 0.0),
+    ("binom", 1e-12, 0.0),
+    ("zetac", 1e-12, 0.0),
+    ("trigamma", 4e-15, 0.0),
+    ("digammainv", 4e-15, 0.0),
+    ("gen_harmonic", 4e-13, 0.0),
+    // 6e5 additions at n = 2e5: the f64 recurrence accumulates ~1e-14.
+    ("stirling2", 1e-13, 0.0),
 ];
 
 fn eval(name: &str, a: &[f64]) -> f64 {
@@ -31,6 +44,17 @@ fn eval(name: &str, a: &[f64]) -> f64 {
         "zeta" => generic::zeta::zeta(a[0], a[1]),
         "beta" => generic::beta::beta(a[0], a[1]),
         "lbeta" => generic::beta::lbeta(a[0], a[1]),
+        "poch" => generic::poch::poch(a[0], a[1]),
+        "lgam1p" => generic::lgam1p::lgam1p(a[0]),
+        "binom" => generic::binom::binom(a[0], a[1]),
+        "zetac" => generic::zeta::zetac(a[0]),
+        "trigamma" => generic::trigamma::trigamma(a[0]),
+        "digammainv" => generic::digammainv::digammainv(a[0]),
+        "gen_harmonic" => generic::gen_harmonic::gen_harmonic(a[0], a[1]),
+        "stirling2" => match generic::stirling2::prepare(a[0], a[1]) {
+            generic::stirling2::Prepared::Value(v) => v,
+            generic::stirling2::Prepared::Kernel(n, k) => generic::stirling2::stirling2(n, k),
+        },
         _ => unreachable!("{name}"),
     }
 }
@@ -64,4 +88,29 @@ fn sinpi_is_exact_at_half_integers_and_odd_in_x() {
         assert_eq!(generic::sinpi(x), s, "sinpi({x})");
     }
     assert_eq!(generic::sinpi(3.0_f64), 0.0);
+}
+
+/// GKP (6.43) for `S(n, n - j)` against the recurrence, where the recurrence is
+/// still cheap: exact integers below 2^106, relative 1e-30 above.
+#[cfg(feature = "xprec")]
+#[test]
+fn near_diagonal_matches_the_recurrence() {
+    use xprec::Df64;
+    for n in [70_u32, 100, 219, 500, 2000] {
+        for j in [1_usize, 2, 3, 7, 20, 33, 64] {
+            if j as u32 >= n {
+                continue;
+            }
+            let nn = Df64::from(f64::from(n));
+            let kk = nn - Df64::from(j as f64);
+            let want = generic::stirling2::stirling2(nn, kk);
+            let got = generic::stirling2::near_diagonal(nn, j);
+            if want.hi().is_infinite() {
+                assert_eq!(got.hi(), f64::INFINITY, "S({n}, {n} - {j})");
+                continue;
+            }
+            let e = ((got - want) / want).abs().hi();
+            assert!(e <= 1e-30, "S({n}, {n} - {j}): err {e:e}");
+        }
+    }
 }

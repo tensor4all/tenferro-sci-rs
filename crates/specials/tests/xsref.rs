@@ -33,12 +33,17 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
         "zeta" => specials::zeta(a[0], a[1]),
         "beta" => specials::beta(a[0], a[1]),
         "lbeta" => specials::lbeta(a[0], a[1]),
+        "poch" => specials::poch(a[0], a[1]),
+        "lgam1p" => specials::lgam1p(a[0]),
+        "binom" => specials::binom(a[0], a[1]),
+        "zetac" => specials::zetac(a[0]),
         _ => unreachable!("{name}"),
     }
 }
 
-const NAMES: [&str; 8] = [
-    "gamma", "lgamma", "rgamma", "gammasgn", "digamma", "zeta", "beta", "lbeta",
+const NAMES: [&str; 12] = [
+    "gamma", "lgamma", "rgamma", "gammasgn", "digamma", "zeta", "beta", "lbeta", "poch", "lgam1p",
+    "binom", "zetac",
 ];
 
 /// One failing row.
@@ -113,6 +118,12 @@ fn dd_tolerance(name: &str, args: &[f64]) -> f64 {
     match name {
         "gamma" | "lgamma" | "rgamma" | "digamma" | "zeta" => 1e-29,
         "lbeta" => 2e-30,
+        // Worst measured over the xsref points: poch 1.1e-30, lgam1p 9.2e-31,
+        // zetac 2.1e-30 (a 5x margin or more).
+        "poch" | "lgam1p" | "zetac" => 1e-29,
+        // binom: 1.4e-29 where B(a, b) of large negative a goes through ln Γ
+        // (error ~ |ln Γ| eps); 5e-29 is 3.6x the worst.
+        "binom" => 5e-29,
         // beta is computed as exp(ln B): the relative error of B grows like
         // |ln B| eps, so the tolerance scales with max(1, |ln B|).
         "beta" => 5e-30 * specials::lbeta(args[0], args[1]).abs().max(1.0),
@@ -177,4 +188,17 @@ fn df64_matches_xsref_where_mpmath_is_undefined() {
         report.add(name, &fails);
     }
     report.assert_empty("Df64 against xsref where mpmath is undefined");
+}
+
+/// The tolerance is xsref's `gcc-linux-x86_64` column on every platform (issue
+/// #8, `lib.rs`). A macOS-only `max` with the `clang-darwin-aarch64` column used
+/// to loosen 1,259 rows across all twelve tables.
+#[test]
+fn tolerance_is_the_gcc_column_on_every_platform() {
+    let row = xsref_rows("binom")
+        .into_iter()
+        .find(|r| r.line == 2030)
+        .expect("binom.csv line 2030");
+    // Columns: clang-darwin-aarch64 4.3956158062363253e-13, gcc-linux-x86_64 1.5231444905425505e-14.
+    assert_eq!(row.tol, 1.5231444905425505e-14);
 }

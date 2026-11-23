@@ -216,7 +216,6 @@ fn zeta_reflection(x: f64) -> f64 {
 }
 
 /// Riemann zeta function, minus one.
-#[allow(dead_code)]
 pub(crate) fn zetac(x: f64) -> f64 {
     if x.is_nan() {
         x

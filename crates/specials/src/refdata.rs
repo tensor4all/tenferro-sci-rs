@@ -70,6 +70,14 @@ pub fn data(name: &str) -> (&'static str, usize) {
         "zeta" => (include_str!("../tests/data/zeta.csv"), 2),
         "beta" => (include_str!("../tests/data/beta.csv"), 2),
         "lbeta" => (include_str!("../tests/data/lbeta.csv"), 2),
+        "poch" => (include_str!("../tests/data/poch.csv"), 2),
+        "lgam1p" => (include_str!("../tests/data/lgam1p.csv"), 1),
+        "binom" => (include_str!("../tests/data/binom.csv"), 2),
+        "zetac" => (include_str!("../tests/data/zetac.csv"), 1),
+        "trigamma" => (include_str!("../tests/data/trigamma.csv"), 1),
+        "digammainv" => (include_str!("../tests/data/digammainv.csv"), 1),
+        "gen_harmonic" => (include_str!("../tests/data/gen_harmonic.csv"), 2),
+        "stirling2" => (include_str!("../tests/data/stirling2.csv"), 2),
         _ => panic!("no reference data for {name}"),
     }
 }
@@ -156,16 +164,16 @@ pub struct XsrefRow {
     pub line: usize,
 }
 
-/// Column of the xsref tolerance to use: `gcc-linux-x86_64` on every platform.
+/// Column of the xsref tolerance to use: `gcc-linux-x86_64`, on every platform.
 ///
 /// xsref's tolerances record the error xsf itself showed on each platform.
 /// Clang on aarch64 contracts `a*b + c` into FMA; gcc on x86-64 (no `-mfma`)
 /// does not, and neither does Rust. The port therefore rounds like xsf built
 /// by gcc on x86-64, and its errors match that column (for example
-/// beta(2154.43…, 7.5): 2.2870e-12 here and in the column).
-fn platform_column() -> usize {
-    1
-}
+/// beta(2154.43…, 7.5): 2.2870e-12 here and in the column). A row that fails it
+/// on a platform whose libm is not correctly rounded is a known deviation
+/// (`docs/upstream-issues.md`), not a reason to loosen the bound.
+const TOL_COLUMN: usize = 1;
 
 /// The xsref rows of a function.
 pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
@@ -178,9 +186,12 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "zeta" => (include_str!("../tests/data/xsref/zeta.csv"), 2),
         "beta" => (include_str!("../tests/data/xsref/beta.csv"), 2),
         "lbeta" => (include_str!("../tests/data/xsref/lbeta.csv"), 2),
+        "poch" => (include_str!("../tests/data/xsref/poch.csv"), 2),
+        "lgam1p" => (include_str!("../tests/data/xsref/lgam1p.csv"), 1),
+        "binom" => (include_str!("../tests/data/xsref/binom.csv"), 2),
+        "zetac" => (include_str!("../tests/data/xsref/zetac.csv"), 1),
         _ => panic!("no xsref table for {name}"),
     };
-    let col = platform_column();
     text.lines()
         .enumerate()
         .filter(|(_, l)| !l.starts_with('#') && !l.trim().is_empty())
@@ -192,7 +203,8 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
                 args: f[..n].iter().map(|s| num(s)).collect(),
                 desired: num(f[n]),
                 fallback: f[n + 1] == "1",
-                tol: num(f[n + 2 + col]),
+                // Columns n+2..n+5: clang-darwin-aarch64, gcc-linux-x86_64, other.
+                tol: num(f[n + 2 + TOL_COLUMN]),
                 dd: (!f[n + 5].is_empty()).then(|| (num(f[n + 5]), num(f[n + 6]))),
                 line: i + 1,
             }

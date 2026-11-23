@@ -10,11 +10,18 @@
 //! return the same non-finite values.
 
 pub(crate) mod beta;
+pub(crate) mod binom;
 pub(crate) mod digamma;
+pub(crate) mod digammainv;
 pub(crate) mod gamma;
+pub(crate) mod gen_harmonic;
+pub(crate) mod lgam1p;
+pub(crate) mod poch;
+pub(crate) mod stirling2;
 #[rustfmt::skip]
 #[allow(clippy::excessive_precision, clippy::approx_constant)]
 pub(crate) mod tables;
+pub(crate) mod trigamma;
 pub(crate) mod zeta;
 
 use crate::real::{k, Real};
@@ -92,12 +99,18 @@ pub(crate) fn add<T: Real>(a: T, b: T) -> T {
     }
 }
 
-/// `ln x` that is also correct for subnormal `x`, where the double-double
-/// logarithm is not: scale into the normal range by an exact power of two.
+/// `ln x` that is also correct for subnormal `x` and for finite `x >= 2^1023`,
+/// where the double-double logarithm is not (xprec 0.2.3 returns NaN from
+/// 2^1023 up; see `docs/upstream-issues.md`): scale into the normal range by an
+/// exact power of two.
 pub(crate) fn ln<T: Real>(x: T) -> T {
-    if x > T::zero() && x.abs().approx_f64() < f64::MIN_POSITIVE {
+    let xf = x.abs().approx_f64();
+    if x > T::zero() && xf < f64::MIN_POSITIVE {
         let scale = k::<T>(2.0_f64.powi(600));
         (x * scale).ln() - k::<T>(600.0) * T::LN_2()
+    } else if x > T::zero() && xf.is_finite() && xf > 2.0_f64.powi(1000) {
+        let scale = k::<T>(2.0_f64.powi(-600));
+        (x * scale).ln() + k::<T>(600.0) * T::LN_2()
     } else {
         x.ln()
     }

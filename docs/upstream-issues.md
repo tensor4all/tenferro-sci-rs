@@ -97,3 +97,70 @@ SciPy's AI policy asks that issues there be written by a human.
   | -2.3 | 1e+200 | 1058.1195937575947 | 1059.558709440716 | 1.4e-03 | 1.4e-03 |
   | 0.46415888336127786 | 1e+200 | -211.62351809996463 | -213.10701996126411 | 7.0e-03 | 7.0e-03 |
   | 0.0004641588833612782 | 1e+200 | 7.6750159006901 | 7.461262835568412 | 2.9e-02 | 2.8e-02 |
+
+## scipy/xsf: `binom(n, k)` applies its large-`k` expansion when `k` is not large
+
+- **Affects:** xsf `31177fd9` (`include/xsf/binom.h`), and SciPy 1.16.3's
+  `scipy.special.binom`, which gives the same values.
+- **Cause:** the branch "avoid loss of precision (DLMF 5.11.13)" is guarded by
+  `k > 1e8 * abs(n)`. That holds for a moderate `k` when `n` is tiny, but the
+  expansion `Γ(1+n)/|k| (1 + n(n+1)/(2k))` is a series in `1/k` and is not
+  accurate for `k` of order 1. Example: `binom(1e-9, 0.5)`.
+- **Evidence** (mpmath 1.3.0): the true value is `0.63661977325012374`; xsf and
+  SciPy give `0.6366197730780055`, relative error 2.7e-10 (the generic formula
+  `1/(n+1)/beta(1+n-k, 1+k)` is accurate to 4e-16 at the same point).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port, so it has the same error; the
+  `f64` check in `tests/reference.rs` allows 1e-9 for exactly this class of
+  arguments (`k > 1e8 |n|`, `k < 1e6`) and states why. The `Df64` path uses the
+  exact reflection formula there and is accurate to 5e-29.
+
+## scipy: SciPy 1.16.3 predates xsf fixes that the pinned xsf has
+
+Not a bug in this repository or in xsf. The SciPy 1.16.3 used for the parity
+column of `tests/data/*.csv` was released before these xsf fixes, so its values
+differ from the pinned xsf (and from mpmath) on the affected rows; the parity
+check in `tests/reference.rs` skips them (`scipy_comparable`) and the rows are
+still checked against mpmath and, for `f64`, against xsf's own regression
+cases:
+
+| function | xsf issue | SciPy 1.16.3 behavior |
+| --- | --- | --- |
+| `lgam1p` | gh-348 | Taylor series stopped after 41 terms near `abs(x) = 1/2`: relative error 3e-14 at `x = 0.5` |
+| `zetac` | gh-346 | returns 0 for `127 <= x < 1075` |
+| `binom` | gh-352 | wrong for `k > 1e8 abs(n)` (4e-5 at `binom(-10.5, 500000000000.25)`) |
+| `stirling2` | gh-378 | Temme approximation for `n > 50`: 2e-5 at `S(51, 7)` |
+
+
+## xprec: `Df64::ln` and `ln_1p` return NaN for `x >= 2^1023`
+
+- **Affects:** xprec 0.2.3, `Df64::ln` and `Df64::ln_1p` for finite arguments
+  from 2^1023 ≈ 8.988e307 up to `f64::MAX` (8e307 is still correct).
+- **Example:** `Df64::from(1e308).ln()` and `Df64::from(f64::MAX).ln()` are
+  `(NaN, NaN)`; the values are 709.196… and 709.782….
+- **Upstream:** not reported.
+- **Here:** `generic::ln` scales arguments above 2^1000 by the exact 2^-600
+  first (it already scaled subnormal arguments up). `gen_harmonic` uses it for
+  `ln i`, `ln n` and `ln(n/N)`, so that `gen_harmonic(f64::MAX, a)` is finite in
+  both strategies. Other callers of the raw `ln` on huge double-double
+  arguments, for example `poch(f64::MAX, m)` with tiny `m`, still give NaN.
+
+## Apple libm: `log` is not correctly rounded, which moves one xsref `binom` row
+
+- **Affects:** macOS (aarch64) libm `log`, through Rust's `f64::ln`.
+- **Example:** `ln(403.1393536837051)` is 5.999282292953255 on macOS and
+  5.9992822929532545 with glibc. glibc's value is the correctly rounded one
+  (mpmath at 300 bits), so the macOS value is 1 ulp away.
+  `binom(458.13935368370517, 56.000000000000064)` (xsref `binom.csv` line 2030)
+  evaluates `exp` of a difference of ln Γ values of size 2e3 through xsf's
+  `lgam`, so that ulp becomes a relative error of 4.3956e-13. That is exactly
+  xsf's own error in the `clang-darwin-aarch64` column, and 7.2× the
+  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only xsref row of the
+  twelve tables that fails on macOS.
+- **Upstream:** not reported (not a bug: C does not require `log` to be
+  correctly rounded).
+- **Here:** the gcc-linux-x86_64 tolerances are asserted on every platform, as
+  issue #8 requires, so `f64_matches_xsref` fails on this one row on macOS. It
+  passes on Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
+  Making the `f64` port independent of the platform libm (a correctly rounded
+  `ln` in pure Rust) would remove the deviation; that is a separate change.

@@ -30,14 +30,31 @@
 //! | `zeta(x, q)` | [`zeta`] | 1e-29 |
 //! | `beta(a, b)` | [`beta`] | 1e-29 (`5e-30 · max(1, abs(ln B))` for huge arguments) |
 //! | `betaln(a, b)` | [`lbeta`] | 2e-29 |
+//! | `poch(a, m)` | [`poch`] | 1e-29 (grows like `ε m ln a` for `a` beyond 1e10) |
+//! | `lgam1p(x)` | [`lgam1p`] | 1e-29 (relative also next to the zeros `x = 0` and `x = 1`) |
+//! | `binom(n, k)` | [`binom`] | 5e-29 (grows like `ε abs(ln Γ)` for huge arguments: about 1e-22 at `k = 1e9`) |
+//! | `zetac(x)` | [`zetac`] | 5e-29 (1e-29 for `x > -160`) |
+//! | `polygamma(1, x)` (xsf `trigamma`) | [`trigamma`] | 1e-30 while the result is above 1e-292 (`x` below about 1e292) |
+//! | `digammainv(y)` (xsf `digammainv`) | [`digammainv`] | 1e-30 for `y >= -1e290` (see [`digammainv`]) |
+//! | `_gen_harmonic(n, a)` (xsf `gen_harmonic`) | [`gen_harmonic`] | 1e-30 for `a >= -3`; for `a < -3` it grows like `ε abs(a) ln n` (3.4e-30 measured at `a = -68`, `n = 70`) |
+//! | `stirling2(n, k)` | [`stirling2`] | 1e-30 (exact below 2^106) |
+//!
+//! A double-double result below about 1e-292 has a subnormal low word, so its
+//! relative accuracy falls towards that of `f64` at the bottom of the range;
+//! the figures above hold for results above that.
 //!
 //! # Validation
 //!
 //! * **`f64`** is checked with xsf's own test suite: the reference tables of
-//!   [xsref](https://github.com/scipy/xsref) (about 21,000 points for these
+//!   [xsref](https://github.com/scipy/xsref) (about 43,000 points for these
 //!   functions) with xsf's error metric and per-point tolerances, plus xsf's
 //!   hand-written regression cases. Rust does not contract `a*b + c` into FMA,
 //!   so the tolerances of xsf built by gcc on x86-64 apply on every platform.
+//!   They are asserted on every platform, with no relaxation. The port calls
+//!   the platform's `ln`/`exp`/`powf`, so a libm that is not correctly rounded
+//!   can exceed them. Linux (glibc, x86-64 and aarch64) passes every row. On
+//!   macOS one `binom` row fails because Apple's `log` is off by 1 ulp; see
+//!   `docs/upstream-issues.md`.
 //! * **`Df64`** is checked against mpmath double-double values at the same
 //!   xsref points and at points chosen for the double-double algorithms: both
 //!   sides of every switch between algorithms, arguments whose low word
@@ -247,6 +264,215 @@ pub fn lbeta<T: Real>(a: T, b: T) -> T {
     match T::STRATEGY {
         Strategy::F64Kernels => k64(xsf::beta::lbeta(a.approx_f64(), b.approx_f64())),
         Strategy::Adaptive => generic::beta::lbeta(a, b),
+    }
+}
+
+/// (a)ₘ = Γ(a + m)/Γ(a), the Pochhammer symbol (rising factorial, DLMF 5.2.5).
+///
+/// For a non-negative integer `m` this is the product `a (a+1) ⋯ (a+m-1)`. It
+/// is `0` when `a` is a non-positive integer and `a + m` is not, and `+∞` the
+/// other way round (as xsf).
+///
+/// # Examples
+///
+/// ```
+/// use specials::poch;
+///
+/// assert_eq!(poch(3.0_f64, 4.0), 3.0 * 4.0 * 5.0 * 6.0);
+/// assert_eq!(poch(-2.0_f64, 3.0), 0.0);
+/// ```
+pub fn poch<T: Real>(a: T, m: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::poch::poch(a.approx_f64(), m.approx_f64())),
+        Strategy::Adaptive => generic::poch::poch(a, m),
+    }
+}
+
+/// ln Γ(1 + x), accurate for `x` near 0 and near 1 where `lgamma(1 + x)` is not.
+///
+/// `+∞` at `x = -1` and NaN-free elsewhere on the real line except the
+/// negative integers below -1, where it is `+∞` as well (poles of Γ).
+///
+/// # Examples
+///
+/// ```
+/// use specials::lgam1p;
+///
+/// // ln Γ(1 + x) ≈ -γx for tiny x, with full relative accuracy.
+/// let y = lgam1p(1e-20_f64);
+/// assert!((y + 0.5772156649015329e-20).abs() < 1e-35);
+/// ```
+pub fn lgam1p<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::unity::lgam1p(x.approx_f64())),
+        Strategy::Adaptive => generic::lgam1p::lgam1p(x),
+    }
+}
+
+/// C(n, k), the binomial coefficient, extended to real arguments as
+/// Γ(n+1)/(Γ(k+1)Γ(n-k+1)).
+///
+/// NaN for a negative integer `n`. Integer `n` and `k` give integers exactly
+/// while they fit the mantissa; `k` a negative integer gives `0` for
+/// non-integer `n`.
+///
+/// The `f64` path is xsf's, including its large-`k` expansion, which xsf also
+/// applies when `k > 1e8 |n|` but `k` is not large. There (`k < 1e6`, tiny `n`)
+/// the `f64` result has a relative error up to about 3e-10, for example
+/// `binom(1e-9, 0.5)`; see `docs/upstream-issues.md`. The `Df64` path is not
+/// affected.
+///
+/// # Examples
+///
+/// ```
+/// use specials::binom;
+///
+/// assert_eq!(binom(10.0_f64, 3.0), 120.0);
+/// assert!((binom(0.5_f64, 2.0) + 0.125).abs() < 1e-16);
+/// ```
+pub fn binom<T: Real>(n: T, k: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::binom::binom(n.approx_f64(), k.approx_f64())),
+        Strategy::Adaptive => generic::binom::binom(n, k),
+    }
+}
+
+/// ζ(x) − 1, the Riemann zeta function minus one (accurate for large `x`
+/// where ζ(x) rounds to 1).
+///
+/// `zetac(1) = +∞`, `zetac(+∞) = 0`, NaN at `-∞`. For `x > 1075` the result
+/// underflows to zero (and is subnormal just below). For `x < 1` the result is
+/// accurate in absolute terms near the isolated points where ζ(x) = 1.
+///
+/// # Examples
+///
+/// ```
+/// use specials::zetac;
+///
+/// // ζ(2) - 1 = π²/6 - 1
+/// let pi = core::f64::consts::PI;
+/// assert!((zetac(2.0_f64) - (pi * pi / 6.0 - 1.0)).abs() < 1e-15);
+/// assert_eq!(zetac(1.0_f64), f64::INFINITY);
+/// ```
+pub fn zetac<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::zetac::zetac(x.approx_f64())),
+        Strategy::Adaptive => generic::zeta::zetac(x),
+    }
+}
+
+/// ψ'(x), the trigamma function (DLMF 5.15.1).
+///
+/// `+∞` at zero and the negative integers, NaN at `-∞`. For `x > 0` it equals
+/// ζ(2, x).
+///
+/// # Examples
+///
+/// ```
+/// use specials::trigamma;
+///
+/// // ψ'(1) = π²/6
+/// let pi = core::f64::consts::PI;
+/// assert!((trigamma(1.0_f64) - pi * pi / 6.0).abs() < 1e-15);
+/// ```
+pub fn trigamma<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::trigamma::trigamma(x.approx_f64())),
+        Strategy::Adaptive => generic::trigamma::trigamma(x),
+    }
+}
+
+/// The `x > 0` with ψ(x) = y, the inverse of [`digamma`] on its increasing branch.
+///
+/// `0` for `y = -∞`; `+∞` for `y` above ln(`f64::MAX`) ≈ 709.78 and `y = +∞`.
+///
+/// For `y` below about -1.3e154 the root is below 7.5e-155, where ψ'
+/// overflows. There the `f64` kernel (xsf's Newton iteration) returns NaN
+/// unless its starting point is already exact, for example at `y = -1e300`.
+/// The `Df64` path starts from the `f64` value, so it is NaN at the same
+/// points. Where it is finite, it holds 1e-30 down to `y = -1e290`. Below
+/// that the root is under 1e-290, where the low word of a double-double is
+/// subnormal, and the accuracy falls towards that of `f64` at the bottom of the
+/// normal range.
+///
+/// # Examples
+///
+/// ```
+/// use specials::{digamma, digammainv};
+///
+/// let x = digammainv(digamma(2.5_f64));
+/// assert!((x - 2.5).abs() < 1e-14);
+/// ```
+pub fn digammainv<T: Real>(y: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::digammainv::digammainv(y.approx_f64())),
+        Strategy::Adaptive => generic::digammainv::digammainv(y),
+    }
+}
+
+/// H(n, a) = Σ_{i=1}^{n} i^-a, the generalized harmonic number.
+///
+/// `n` must be a positive integer; a non-integer or `n < 1` gives NaN
+/// (xsf leaves that check to the Python wrapper). `a` may be any real number:
+/// `a = 0` gives `n`, `a = +∞` gives 1 and `a = -∞` gives `+∞`. `n = +∞`
+/// gives the limit: ζ(a) for `a > 1` and `+∞` for `a <= 1`. Both strategies
+/// sum at most 2^20 terms directly; beyond that they use the Euler–Maclaurin
+/// formula, so the cost does not grow with `n`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::gen_harmonic;
+///
+/// assert!((gen_harmonic(4.0_f64, 1.0) - 25.0 / 12.0).abs() < 1e-15);
+/// assert_eq!(gen_harmonic(4.0_f64, -1.0), 10.0);
+/// ```
+pub fn gen_harmonic<T: Real>(n: T, a: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::gen_harmonic::gen_harmonic(
+            n.approx_f64(),
+            a.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::gen_harmonic::gen_harmonic(n, a),
+    }
+}
+
+/// S(n, k), the Stirling number of the second kind: the number of ways to
+/// partition `n` elements into `k` non-empty subsets.
+///
+/// Arguments, the same for both strategies: NaN gives NaN, and `n < 0` or
+/// `k < 0` gives 0. Otherwise `n` and `k` are truncated towards zero, so
+/// `stirling2(5.7, 3.2) = S(5, 3)` and `stirling2(5.1, 5.5) = S(5, 5) = 1`.
+/// Then `S(n, n) = 1` (including `n = +∞`), `S(n, k) = 0` for `k > n` and for
+/// `k = 0 < n`, and `S(+∞, k) = +∞` for finite `k >= 2`. Overflow gives `+∞`.
+///
+/// For `n > 219` the `f64` path is xsf's second-order Temme asymptotic
+/// approximation (relative error up to about 1e-6 at `n = 220`, falling with
+/// `n`; for `n <= 219` it is the exact recurrence), except for `k = 2` and
+/// `n - k <= 64`, which are evaluated exactly, and for `(n-k) ln k > ln(f64::MAX)`,
+/// which is `+∞` without evaluating Temme. The `Df64` path evaluates the
+/// recurrence (with closed forms for `k = 2`, `n - 1` and `n - 2`) up to a cost
+/// of `(k-1)(n-k) <= 3e7` and is exact below 2^106. Beyond that cost it uses the
+/// exact sum of Graham, Knuth and Patashnik (6.43) for `n - k <= 64`; every
+/// other argument beyond that cost overflows to `+∞`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::stirling2;
+///
+/// assert_eq!(stirling2(5.0_f64, 3.0), 25.0);
+/// assert_eq!(stirling2(10.0_f64, 7.0), 5880.0);
+/// ```
+pub fn stirling2<T: Real>(n: T, k: T) -> T {
+    // One argument contract for both strategies (truncation, signs, infinities).
+    let (n, k) = match generic::stirling2::prepare(n, k) {
+        generic::stirling2::Prepared::Value(v) => return v,
+        generic::stirling2::Prepared::Kernel(n, k) => (n, k),
+    };
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::stirling2::stirling2(n.approx_f64(), k.approx_f64())),
+        Strategy::Adaptive => generic::stirling2::stirling2(n, k),
     }
 }
 

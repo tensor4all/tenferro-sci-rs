@@ -5,11 +5,12 @@
 //! s < 0, the functional equation (DLMF 25.4.1). The domain conventions
 //! follow xsf's `zeta(x, q)`: q = 1 is the Riemann function for every real s;
 //! otherwise s = 1 gives +∞, s < 1 NaN, q a non-positive integer +∞, and q < 0
-//! needs an integer s.
+//! needs an integer s. For `|s| < 0.1` the Riemann function uses its Taylor
+//! series about 0 (coefficients ζ⁽ⁿ⁾(0)/n! from mpmath).
 
 use super::gamma::{gamma, lgamma};
-use super::tables::EULER_MACLAURIN;
-use super::{mul, sinpi};
+use super::tables::{EULER_MACLAURIN, ZETA_TAYLOR0};
+use super::{mul, power_series, sinpi};
 use crate::real::{c, k, Real};
 
 /// `y^-s` for `y != 0`; a negative `y` requires an integer `s`.
@@ -139,8 +140,11 @@ fn riemann<T: Real>(s: T) -> T {
         // ζ(+∞) = 1; ζ(s) oscillates without limit as s → -∞.
         return if s > T::zero() { one } else { T::nan() };
     }
-    if s == T::zero() {
-        return k(-0.5);
+    if s.abs() < k(0.1) {
+        // Taylor series about 0 (radius 1). Near 0 the reflection formula
+        // would need 1 - s, which cannot hold the low word of a tiny `s`
+        // next to the pole of ζ at 1.
+        return power_series(&ZETA_TAYLOR0[1..], s, c(ZETA_TAYLOR0[0]));
     }
     if s > one {
         return euler_maclaurin(s, one, s.max(k(25.0)), None);
@@ -171,4 +175,46 @@ fn riemann<T: Real>(s: T) -> T {
     let v = l.exp();
     let v = if v.is_finite() { v } else { T::infinity() };
     mul(mul(v, sn), z)
+}
+
+/// Above this, ζ(s) - 1 < 1e-292 and equals 2^-s to 1e-170.
+const LOW_WORD_UNDERFLOW: f64 = 970.0;
+
+/// ζ(s) - 1 (SciPy's `zetac`).
+///
+/// For `s > 1` this is the Hurwitz function ζ(s, 2) (DLMF 25.11.1 with the
+/// first term removed), which has no cancellation. For `s < 1` the Riemann
+/// function is far from 1 except near the isolated points where ζ(s) = 1
+/// (the first one at s ≈ -17.2); there the result is accurate in absolute
+/// terms only.
+pub(crate) fn zetac<T: Real>(s: T) -> T {
+    if s.is_nan() {
+        return s;
+    }
+    if s == T::one() {
+        return T::infinity();
+    }
+    if s == T::infinity() {
+        return T::zero();
+    }
+    if s == T::neg_infinity() {
+        return T::nan();
+    }
+    if s > T::one() {
+        // 2^-s underflows to zero beyond s = 1075.
+        if s > k(1080.0) {
+            return T::zero();
+        }
+        if s > k(LOW_WORD_UNDERFLOW) {
+            // ζ(s, 2) = 2^-s (1 + (2/3)^s + ...) = 2^-s to better than 1e-170,
+            // and below 1e-292 the low word of a double-double is subnormal:
+            // evaluate 2^-(s-600) in the type and scale by the exact 2^-600.
+            let v = (-(s - k(600.0)) * T::LN_2()).exp();
+            return v * k(2.0_f64.powi(-600));
+        }
+        return zeta(s, k(2.0));
+    }
+    // `add`, not `-`: for s < about -260 `riemann` returns (±∞, 0) and a raw
+    // subtraction makes the error term NaN where the f64 path returns ±∞.
+    super::add(riemann(s), -T::one())
 }
