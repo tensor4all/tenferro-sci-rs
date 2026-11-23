@@ -10,11 +10,15 @@
 //! * `df64_matches_mpmath_on_xsref_points`: where xsref provides an mpmath
 //!   value as a double-double (`dd`), the `Df64` result must agree with it to
 //!   a per-function relative tolerance (`1e-29` for gamma, lgamma, rgamma,
-//!   digamma, zeta; `2e-30` for lbeta; `5e-30 max(1, |ln B|)` for beta).
+//!   digamma, zeta; `2e-30` for lbeta; `5e-30 max(1, |ln B|)` for beta; see
+//!   `dd_tolerance` for the rest, including the elliptic family).
 //! * `df64_matches_xsref_where_mpmath_is_undefined`: where mpmath has no value
 //!   (poles, outside the domain, non-finite inputs), the `Df64` result rounded
 //!   to `f64` must satisfy xsf's criterion against SciPy's value, i.e. the
 //!   double-double path returns the same special values as SciPy.
+
+// These tests exercise `xprec::Df64`.
+#![cfg(feature = "xprec")]
 
 #[path = "../src/refdata.rs"]
 mod refdata;

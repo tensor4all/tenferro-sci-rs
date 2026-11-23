@@ -13,6 +13,8 @@
 //! same f64-rounded reference with the same tolerance. Complex-valued and
 //! float-template cases are not ported.
 
+// These tests exercise `xprec::Df64`.
+#![cfg(feature = "xprec")]
 // Reference values keep the digits xsf's tests give them.
 #![allow(clippy::excessive_precision, clippy::approx_constant)]
 
