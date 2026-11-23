@@ -16,9 +16,14 @@
 //! asymptotic approximation evaluated in `f64`, converted to the type, so it
 //! has only the accuracy of that approximation (about 1e-3 there).
 //!
-//! The argument conventions follow xsf's `stirling2`: `n < 0` or `k < 0` or
-//! `k > n` or `0 < k < 1` give 0 (`S(0, 0) = 1`), and `n`, `k` are truncated
-//! to integers.
+//! The argument contract is shared with the `f64` path and applied by
+//! [`prepare`] before either kernel runs: NaN gives NaN; `n < 0` or `k < 0`
+//! gives 0; otherwise `n` and `k` are truncated towards zero, and then
+//! `S(n, n) = 1` (also for `n = +∞`), `S(n, k) = 0` for `k > n` or `k = 0 < n`,
+//! `S(n, 1) = 1` and `S(+∞, k) = +∞` for finite `k >= 2`. The kernels see only
+//! finite integers with `2 <= k < n`. The choice between the closed forms and
+//! the recurrence is made on the double-double values, so arguments above 2^53
+//! keep their low word; only the Temme fallback rounds them to `f64`.
 
 use super::{add, div, mul};
 use crate::real::{k, Real};
@@ -27,46 +32,73 @@ use crate::xsf;
 /// Largest `(k-1)(n-k)` handled by the dynamic programme.
 const WORK_MAX: f64 = 3e7;
 
-pub(crate) fn stirling2<T: Real>(n: T, kk: T) -> T {
+/// The arguments after the contract above: either the value, or integers
+/// `2 <= k < n` with `n` finite for a kernel.
+pub(crate) enum Prepared<T> {
+    Value(T),
+    Kernel(T, T),
+}
+
+/// `trunc` that leaves infinities alone (double-double `trunc(∞)` is NaN).
+fn trunc<T: Real>(x: T) -> T {
+    if x.is_finite() {
+        x.trunc()
+    } else {
+        x
+    }
+}
+
+pub(crate) fn prepare<T: Real>(n: T, kk: T) -> Prepared<T> {
     if n.is_nan() || kk.is_nan() {
-        return T::nan();
+        return Prepared::Value(T::nan());
     }
-    let (nf, kf) = (n.approx_f64(), kk.approx_f64());
-    if (nf == 0.0 && kf == 0.0) || (nf == 1.0 && kf == 1.0) {
-        return T::one();
+    if n < T::zero() || kk < T::zero() {
+        return Prepared::Value(T::zero());
     }
-    if kf < 1.0 || kf > nf || nf < 0.0 {
-        return T::zero();
+    let (n, kk) = (trunc(n), trunc(kk));
+    if n == kk {
+        return Prepared::Value(T::one());
     }
-    if nf == kf || kf == 1.0 {
-        return T::one();
+    if kk > n || kk == T::zero() {
+        return Prepared::Value(T::zero());
     }
-    if nf.is_infinite() {
-        return T::from_dd(xsf::stirling2::stirling2(nf, kf), 0.0);
+    if kk == T::one() {
+        return Prepared::Value(T::one());
     }
-    let nt = k::<T>(nf.trunc());
-    if kf.trunc() == 2.0 {
+    if n.is_infinite() {
+        return Prepared::Value(T::infinity());
+    }
+    Prepared::Kernel(n, kk)
+}
+
+/// S(n, k) for integers `2 <= k < n`, `n` finite (see [`prepare`]).
+pub(crate) fn stirling2<T: Real>(n: T, kk: T) -> T {
+    if kk == k(2.0) {
         // 2^(n-1) - 1 overflows beyond n = 1025.
-        return if nf >= 1025.0 {
+        return if n >= k(1025.0) {
             T::infinity()
         } else {
-            k::<T>(2.0_f64.powi(nf as i32 - 1)) - T::one() // an exact power of two
+            k::<T>(2.0_f64.powi(n.approx_f64() as i32 - 1)) - T::one() // an exact power of two
         };
     }
-    if kf.trunc() == nf.trunc() - 1.0 {
-        return div(mul(nt, nt - T::one()), k(2.0));
+    if kk == n - T::one() {
+        return div(mul(n, n - T::one()), k(2.0));
     }
-    if kf.trunc() == nf.trunc() - 2.0 {
-        let p = mul(mul(nt, nt - T::one()), nt - k(2.0));
-        return div(mul(p, k::<T>(3.0) * nt - k(5.0)), k(24.0));
+    if kk == n - k(2.0) {
+        let p = mul(mul(n, n - T::one()), n - k(2.0));
+        return div(mul(p, k::<T>(3.0) * n - k(5.0)), k(24.0));
     }
-    let ni = nf as i64;
-    let ki = kf as i64;
-    let rows = ni - ki; // rows of the triangle to advance
-    let width = ki - 1; // inner loop length
-    if (rows as f64) * (width as f64) > WORK_MAX {
-        return T::from_dd(xsf::stirling2::stirling2_temme(nf, kf), 0.0);
+    let rows = (n - kk).approx_f64(); // rows of the triangle to advance
+    let width = (kk - T::one()).approx_f64(); // inner loop length
+    if rows * width > WORK_MAX {
+        return T::from_dd(
+            xsf::stirling2::stirling2_temme(n.approx_f64(), kk.approx_f64()),
+            0.0,
+        );
     }
+    // Both are below 3e7 + 2 here, so exact in f64 and i64.
+    let ni = n.approx_f64() as i64;
+    let ki = kk.approx_f64() as i64;
     // curr[j] holds S(j + i + 1, j + 1) as the rows advance (the diagonal
     // formulation of xsf, with the shorter side as the array).
     let size = ki.min(ni - ki + 1) as usize;

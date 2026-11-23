@@ -189,3 +189,16 @@ fn df64_matches_xsref_where_mpmath_is_undefined() {
     }
     report.assert_empty("Df64 against xsref where mpmath is undefined");
 }
+
+/// The tolerance is xsref's `gcc-linux-x86_64` column on every platform (issue
+/// #8, `lib.rs`). A macOS-only `max` with the `clang-darwin-aarch64` column used
+/// to loosen 1,259 rows across all twelve tables.
+#[test]
+fn tolerance_is_the_gcc_column_on_every_platform() {
+    let row = xsref_rows("binom")
+        .into_iter()
+        .find(|r| r.line == 2030)
+        .expect("binom.csv line 2030");
+    // Columns: clang-darwin-aarch64 4.3956158062363253e-13, gcc-linux-x86_64 1.5231444905425505e-14.
+    assert_eq!(row.tol, 1.5231444905425505e-14);
+}

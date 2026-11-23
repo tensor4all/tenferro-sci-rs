@@ -35,8 +35,8 @@
 //! | `binom(n, k)` | [`binom`] | 5e-29 |
 //! | `zetac(x)` | [`zetac`] | 5e-29 (1e-29 for `x > -160`) |
 //! | `polygamma(1, x)` (xsf `trigamma`) | [`trigamma`] | 1e-30 |
-//! | `digammainv(y)` (xsf `digammainv`) | [`digammainv`] | 1e-30 |
-//! | `_gen_harmonic(n, a)` (xsf `gen_harmonic`) | [`gen_harmonic`] | 1e-30 |
+//! | `digammainv(y)` (xsf `digammainv`) | [`digammainv`] | 1e-30 for `y >= -1e290` (see [`digammainv`]) |
+//! | `_gen_harmonic(n, a)` (xsf `gen_harmonic`) | [`gen_harmonic`] | 1e-30 for `a >= -3`; for `a < -3` it grows like `ε abs(a) ln n` (3.4e-30 measured at `a = -68`, `n = 70`) |
 //! | `stirling2(n, k)` | [`stirling2`] | 1e-30 (exact below 2^106; `f64`-level (about 1e-3) only where [`stirling2`] says so) |
 //!
 //! # Validation
@@ -46,6 +46,11 @@
 //!   functions) with xsf's error metric and per-point tolerances, plus xsf's
 //!   hand-written regression cases. Rust does not contract `a*b + c` into FMA,
 //!   so the tolerances of xsf built by gcc on x86-64 apply on every platform.
+//!   They are asserted on every platform, with no relaxation. The port calls
+//!   the platform's `ln`/`exp`/`powf`, so a libm that is not correctly rounded
+//!   can exceed them. Linux (glibc, x86-64 and aarch64) passes every row. On
+//!   macOS one `binom` row fails because Apple's `log` is off by 1 ulp; see
+//!   `docs/upstream-issues.md`.
 //! * **`Df64`** is checked against mpmath double-double values at the same
 //!   xsref points and at points chosen for the double-double algorithms: both
 //!   sides of every switch between algorithms, arguments whose low word
@@ -371,6 +376,15 @@ pub fn trigamma<T: Real>(x: T) -> T {
 ///
 /// `0` for `y = -∞`; `+∞` for `y` above ln(`f64::MAX`) ≈ 709.78 and `y = +∞`.
 ///
+/// For `y` below about -1.3e154 the root is below 7.5e-155, where ψ'
+/// overflows. There the `f64` kernel (xsf's Newton iteration) returns NaN
+/// unless its starting point is already exact, for example at `y = -1e300`.
+/// The `Df64` path starts from the `f64` value, so it is NaN at the same
+/// points. Where it is finite, it holds 1e-30 down to `y = -1e290`. Below
+/// that the root is under 1e-290, where the low word of a double-double is
+/// subnormal, and the accuracy falls towards that of `f64` at the bottom of the
+/// normal range.
+///
 /// # Examples
 ///
 /// ```
@@ -390,7 +404,10 @@ pub fn digammainv<T: Real>(y: T) -> T {
 ///
 /// `n` must be a positive integer; a non-integer or `n < 1` gives NaN
 /// (xsf leaves that check to the Python wrapper). `a` may be any real number:
-/// `a = 0` gives `n`, `a = +∞` gives 1 and `a = -∞` gives `+∞`.
+/// `a = 0` gives `n`, `a = +∞` gives 1 and `a = -∞` gives `+∞`. `n = +∞`
+/// gives the limit: ζ(a) for `a > 1` and `+∞` for `a <= 1`. Both strategies
+/// sum at most 2^20 terms directly; beyond that they use the Euler–Maclaurin
+/// formula, so the cost does not grow with `n`.
 ///
 /// # Examples
 ///
@@ -413,15 +430,20 @@ pub fn gen_harmonic<T: Real>(n: T, a: T) -> T {
 /// S(n, k), the Stirling number of the second kind: the number of ways to
 /// partition `n` elements into `k` non-empty subsets.
 ///
-/// `n` and `k` are truncated to integers. `S(0, 0) = 1`; values with `n < 0`,
-/// `k < 0`, `k > n` or `0 <= k < 1` (`n > 0`) are 0. Overflow gives `+∞`.
+/// Arguments, the same for both strategies: NaN gives NaN, and `n < 0` or
+/// `k < 0` gives 0. Otherwise `n` and `k` are truncated towards zero, so
+/// `stirling2(5.7, 3.2) = S(5, 3)` and `stirling2(5.1, 5.5) = S(5, 5) = 1`.
+/// Then `S(n, n) = 1` (including `n = +∞`), `S(n, k) = 0` for `k > n` and for
+/// `k = 0 < n`, and `S(+∞, k) = +∞` for finite `k >= 2`. Overflow gives `+∞`.
 ///
 /// For `n > 219` the `f64` path is xsf's second-order Temme asymptotic
 /// approximation (relative error up to about 1e-6 at `n = 220`, falling with
 /// `n`; for `n <= 219` it is the exact recurrence). The `Df64` path evaluates
 /// the recurrence (with closed forms for `k = 2`, `n - 1` and `n - 2`) up to a
 /// cost of `(k-1)(n-k) <= 3e7` and is exact below 2^106; beyond that cost it
-/// falls back to the `f64` Temme value (relative error up to about 1e-3).
+/// falls back to the `f64` Temme value (relative error up to about 1e-3), which
+/// also rounds the arguments to `f64` (for `n` above 2^53 only the closed forms
+/// use the full double-double arguments).
 ///
 /// # Examples
 ///
@@ -432,6 +454,11 @@ pub fn gen_harmonic<T: Real>(n: T, a: T) -> T {
 /// assert_eq!(stirling2(10.0_f64, 7.0), 5880.0);
 /// ```
 pub fn stirling2<T: Real>(n: T, k: T) -> T {
+    // One argument contract for both strategies (truncation, signs, infinities).
+    let (n, k) = match generic::stirling2::prepare(n, k) {
+        generic::stirling2::Prepared::Value(v) => return v,
+        generic::stirling2::Prepared::Kernel(n, k) => (n, k),
+    };
     match T::STRATEGY {
         Strategy::F64Kernels => k64(xsf::stirling2::stirling2(n.approx_f64(), k.approx_f64())),
         Strategy::Adaptive => generic::stirling2::stirling2(n, k),

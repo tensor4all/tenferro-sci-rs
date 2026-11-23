@@ -21,6 +21,14 @@ pub(crate) fn trigamma<T: Real>(x: T) -> T {
         return T::zero();
     }
     if x > T::zero() {
+        if x < T::one() {
+            // ψ'(x) = 1/x² + ζ(2, 1 + x), two positive terms. The Hurwitz ζ(2, x)
+            // returns NaN for subnormal x and loses about 3e-30 for tiny normal x;
+            // 1/x² overflows below 7.46e-155, where the f64 path returns +∞, and
+            // `div`/`mul`/`add` keep that infinity.
+            let r = div(T::one(), x);
+            return add(mul(r, r), zeta(k(2.0), T::one() + x));
+        }
         return zeta(k(2.0), x);
     }
     if x == x.floor() {

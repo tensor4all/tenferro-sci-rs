@@ -131,3 +131,36 @@ cases:
 | `binom` | gh-352 | wrong for `k > 1e8 abs(n)` (4e-5 at `binom(-10.5, 500000000000.25)`) |
 | `stirling2` | gh-378 | Temme approximation for `n > 50`: 2e-5 at `S(51, 7)` |
 
+
+## xprec: `Df64::ln` and `ln_1p` return NaN for `x >= 2^1023`
+
+- **Affects:** xprec 0.2.3, `Df64::ln` and `Df64::ln_1p` for finite arguments
+  from 2^1023 ≈ 8.988e307 up to `f64::MAX` (8e307 is still correct).
+- **Example:** `Df64::from(1e308).ln()` and `Df64::from(f64::MAX).ln()` are
+  `(NaN, NaN)`; the values are 709.196… and 709.782….
+- **Upstream:** not reported.
+- **Here:** `generic::ln` scales arguments above 2^1000 by the exact 2^-600
+  first (it already scaled subnormal arguments up). `gen_harmonic` uses it for
+  `ln i`, `ln n` and `ln(n/N)`, so that `gen_harmonic(f64::MAX, a)` is finite in
+  both strategies. Other callers of the raw `ln` on huge double-double
+  arguments, for example `poch(f64::MAX, m)` with tiny `m`, still give NaN.
+
+## Apple libm: `log` is not correctly rounded, which moves one xsref `binom` row
+
+- **Affects:** macOS (aarch64) libm `log`, through Rust's `f64::ln`.
+- **Example:** `ln(403.1393536837051)` is 5.999282292953255 on macOS and
+  5.9992822929532545 with glibc. glibc's value is the correctly rounded one
+  (mpmath at 300 bits), so the macOS value is 1 ulp away.
+  `binom(458.13935368370517, 56.000000000000064)` (xsref `binom.csv` line 2030)
+  evaluates `exp` of a difference of ln Γ values of size 2e3 through xsf's
+  `lgam`, so that ulp becomes a relative error of 4.3956e-13. That is exactly
+  xsf's own error in the `clang-darwin-aarch64` column, and 7.2× the
+  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only xsref row of the
+  twelve tables that fails on macOS.
+- **Upstream:** not reported (not a bug: C does not require `log` to be
+  correctly rounded).
+- **Here:** the gcc-linux-x86_64 tolerances are asserted on every platform, as
+  issue #8 requires, so `f64_matches_xsref` fails on this one row on macOS. It
+  passes on Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
+  Making the `f64` port independent of the platform libm (a correctly rounded
+  `ln` in pure Rust) would remove the deviation; that is a separate change.

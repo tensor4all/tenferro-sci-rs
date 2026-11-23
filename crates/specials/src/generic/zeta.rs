@@ -214,5 +214,7 @@ pub(crate) fn zetac<T: Real>(s: T) -> T {
         }
         return zeta(s, k(2.0));
     }
-    riemann(s) - T::one()
+    // `add`, not `-`: for s < about -260 `riemann` returns (±∞, 0) and a raw
+    // subtraction makes the error term NaN where the f64 path returns ±∞.
+    super::add(riemann(s), -T::one())
 }

@@ -5,8 +5,18 @@
 //! by SciPy developers.
 //! Reference: N. M. Temme, "Asymptotic estimates of Stirling numbers", Studies
 //! in Applied Mathematics, 89(3):233-243, 1993.
+//!
+//! Deviation: the public `stirling2` applies one argument contract to both
+//! strategies (`generic::stirling2::prepare`: truncation towards zero, `n < 0` or
+//! `k < 0` gives 0, `S(+∞, k) = +∞`) before calling this kernel, so it only sees
+//! integers `2 <= k < n`. xsf compares the raw reals and evaluates Temme at
+//! non-integer `n > 219`. Two further deviations keep the `f64` path from
+//! returning NaN where the value overflows: `S(n, 2) = 2^(n-1) - 1` for
+//! `n > 219`, and the Temme product taken in logarithms when its factors over-
+//! or underflow separately.
 
 use super::binom::binom;
+use super::gamma::lgam_sgn;
 use super::lambertw::lambertw0_neg;
 
 /// Dynamic programming, valid for `n <= 219` (the stack array of xsf holds
@@ -83,13 +93,30 @@ pub(crate) fn stirling2_temme(n: f64, k: f64) -> f64 {
     let denom = 24.0 * f * (1.0 + t0) * (1.0 + t0) * (x0 - t0) * (x0 - t0) * (x0 - t0) * (x0 - t0);
     let f1 = num / denom;
 
-    a.exp() * k.powf(n - k) * binom(n, k) * (f - f1 / k)
+    let v = a.exp() * k.powf(n - k) * binom(n, k) * (f - f1 / k);
+    if v.is_nan() {
+        // Deviation from xsf: the product of the factors is `0 * ∞` (NaN) when
+        // they over- or underflow separately. Take it in logarithms instead.
+        let lbinom = lgam_sgn(n + 1.0).0 - lgam_sgn(k + 1.0).0 - lgam_sgn(n - k + 1.0).0;
+        let l = a + (n - k) * k.ln() + lbinom + (f - f1 / k).ln();
+        return l.exp();
+    }
+    v
 }
 
 pub(crate) fn stirling2(n: f64, k: f64) -> f64 {
     // 219 is the largest n for which no S(n, k) overflows.
     if n <= 219.0 {
         return stirling2_dp(n, k);
+    }
+    if k == 2.0 {
+        // Deviation from xsf: S(n, 2) = 2^(n-1) - 1 exactly (xsf's Temme gives NaN once
+        // e^(n/2) overflows), the same closed form as the double-double path.
+        return if n >= 1025.0 {
+            f64::INFINITY
+        } else {
+            2.0_f64.powi(n as i32 - 1) - 1.0
+        };
     }
     stirling2_temme(n, k)
 }

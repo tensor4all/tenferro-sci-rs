@@ -14,7 +14,7 @@
 //! double-double epsilon. The special values follow xsf's `gen_harmonic`.
 
 use super::tables::ZETA_M1;
-use super::{add, div, mul};
+use super::{add, div, ln, mul};
 use crate::real::{c, k, Real};
 
 /// `i^-a` for a positive `i`: an integer power when `a` is an integer, else
@@ -38,7 +38,9 @@ fn pow_neg<T: Real>(i: T, a: T) -> T {
             p
         };
     }
-    let l = -a * i.ln();
+    // `mul`: for |a| near f64::MAX the product overflows, and a raw `*` would give a
+    // NaN low word, so `l` would be neither large nor small and `exp` would return NaN.
+    let l = -mul(a, ln(i));
     if l.approx_f64() > 709.7 {
         T::infinity()
     } else if l.approx_f64() < -745.0 {
@@ -48,18 +50,35 @@ fn pow_neg<T: Real>(i: T, a: T) -> T {
     }
 }
 
-/// `Σ_{i=lo}^{hi} i^-a` over integers, smallest terms first.
-fn sum_powers<T: Real>(lo: u64, hi: u64, a: T) -> T {
+/// `Σ_{i=1}^{hi} i^-a` over integers, smallest terms first.
+///
+/// The caller's `hi` can be as large as `40 + |a|` for any finite `a`, so the
+/// loop is bounded by the value, not by `hi`: for `a < 0` the sum stops once it
+/// overflows, and for `a > 1` the terms beyond `M` are dropped, where
+/// `Σ_{i>M} i^-a <= M^(1-a)/(a-1) <= ε/4` (the sum itself is at least 1).
+fn sum_powers<T: Real>(hi: u64, a: T) -> T {
     let mut sum = T::zero();
     // `add`, not `+`: once a term overflows the double-double sum carries (inf, NaN), and a
     // raw addition turns the whole sum into NaN instead of the infinity the f64 path gives.
     if a >= T::zero() {
-        for i in (lo..=hi).rev() {
+        let mut hi = hi;
+        let af = a.approx_f64();
+        if af > 1.0 {
+            let eps = T::epsilon().approx_f64();
+            let m = ((af - 1.0) * eps / 4.0).ln() / (1.0 - af); // ln M
+            if m < 40.0 {
+                hi = hi.min(m.exp().ceil() as u64 + 1);
+            }
+        }
+        for i in (1..=hi).rev() {
             sum = add(sum, pow_neg(k::<T>(i as f64), a));
         }
     } else {
-        for i in lo..=hi {
+        for i in 1..=hi {
             sum = add(sum, pow_neg(k::<T>(i as f64), a));
+            if sum.approx_f64() == f64::INFINITY {
+                break;
+            }
         }
     }
     sum
@@ -74,7 +93,8 @@ fn zeta_even<T: Real>(j: usize) -> T {
 }
 
 pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
-    if n.is_nan() || n < T::one() || n != n.floor() {
+    // `floor` of a double-double infinity is NaN: test integrality on finite `n` only.
+    if n.is_nan() || n < T::one() || (n.is_finite() && n != n.floor()) {
         return T::nan();
     }
     if n == T::one() {
@@ -93,12 +113,21 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
     if a == T::zero() {
         return n;
     }
+    if n == T::infinity() {
+        // The limit: ζ(a) for a > 1, a divergent sum otherwise (as the f64 path).
+        // ζ(a) as 1 + zetac(a): Hurwitz ζ(a, 1) is NaN for a near f64::MAX.
+        return if a > T::one() {
+            add(T::one(), super::zeta::zetac(a))
+        } else {
+            T::infinity()
+        };
+    }
     let big_n = k::<T>(40.0) + a.abs().ceil();
     if n <= big_n {
-        return sum_powers(1, n.approx_f64() as u64, a);
+        return sum_powers(n.approx_f64() as u64, a);
     }
     let nn = big_n.approx_f64() as u64;
-    let head = sum_powers(1, nn - 1, a);
+    let head = sum_powers(nn - 1, a);
     // Judge the value, not the type predicate: a double-double that overflowed carries
     // (hi = inf, lo = NaN), and `is_infinite()` on that pair is false, so the guard would
     // let the NaN through and the result would differ from the f64 path.
@@ -128,22 +157,33 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
                                    // Integral.
     let oma = one - a;
     let integral = if oma == T::zero() {
-        (n / big_n).ln()
+        ln(n / big_n)
     } else {
-        let u = oma * ((n - big_n) / big_n).ln_1p();
+        // ln(n/N) through ln_1p where n/N is near 1; `ln` (correct up to f64::MAX)
+        // once n/N > 2, where ln_1p has no accuracy to gain.
+        let r = (n - big_n) / big_n;
+        let l = if r > T::one() {
+            ln(n / big_n)
+        } else {
+            r.ln_1p()
+        };
+        let u = oma * l;
         if u.approx_f64() > 709.0 {
             return T::infinity();
         }
-        big_n * p_big * u.exp_m1() / oma
+        // N^(1-a) can overflow where the integral does not: divide by 1 - a first.
+        mul(div(mul(big_n, p_big), oma), u.exp_m1())
     };
     // `add`/`mul`, not raw operators: `p_big` can be infinite (1000^-(-300)), and a raw
     // multiply would make the Df64 error term NaN where the f64 path returns +inf.
     let mut tail = add(integral, div(add(p_big, pn), k(2.0)));
     // Correction terms; `xn = n^(-a-2j+1)` and `xb = N^(-a-2j+1)`.
-    let mut xn = pn / n;
-    let mut xb = p_big / big_n;
-    let in2 = (n * n).recip();
-    let ib2 = (big_n * big_n).recip();
+    // `div`/`mul`: for n beyond 1e154 the square overflows, and the raw operators
+    // would give a NaN low word instead of the zero the correction then needs.
+    let mut xn = div(pn, n);
+    let mut xb = div(p_big, big_n);
+    let in2 = div(T::one(), mul(n, n));
+    let ib2 = div(T::one(), mul(big_n, big_n));
     let two_pi = k::<T>(2.0) * T::PI();
     let inv_two_pi2 = (two_pi * two_pi).recip();
     let mut bern = k::<T>(2.0) * inv_two_pi2 * zeta_even::<T>(1); // B_2/2!
@@ -151,7 +191,7 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
     for j in 1..60_usize {
         let term = -mul(mul(bern, poch_odd), add(xn, -xb));
         tail = add(tail, term);
-        if term.abs() <= eps * (head + tail).abs() {
+        if term.abs() <= eps * add(head, tail).abs() {
             break;
         }
         // Advance to j + 1.
@@ -159,8 +199,8 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
             mul(poch_odd, add(a, k(2.0 * j as f64 - 1.0))),
             add(a, k(2.0 * j as f64)),
         );
-        xn = xn * in2;
-        xb = xb * ib2;
+        xn = mul(xn, in2);
+        xb = mul(xb, ib2);
         let sign = if (j + 1) % 2 == 1 {
             T::one()
         } else {
@@ -168,5 +208,5 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
         };
         bern = sign * k::<T>(2.0) * zeta_even::<T>(j + 1) * inv_two_pi2.powi(j as i32 + 1);
     }
-    head + tail
+    add(head, tail)
 }

@@ -176,22 +176,12 @@ fn platform_column() -> usize {
 }
 
 /// xsref's tolerance of a row (`cols`: the `clang-darwin-aarch64`,
-/// `gcc-linux-x86_64` and `other` columns).
-///
-/// The `gcc-linux-x86_64` column is authoritative (and what CI on Linux runs).
-/// Some rows depend on the platform's libm, not only on the algorithm: for
-/// example `binom(458.139…, 56.00000000000006)` evaluates `exp` of a
-/// difference of ln Γ values of size 1.5e3, so one ulp of difference in a libm
-/// `log`/`pow` moves the result by 2e-13. On macOS the libm differs from
-/// glibc, and the port's error on such rows equals xsf's own error on
-/// `clang-darwin-aarch64`; there the larger of the two columns applies.
+/// `gcc-linux-x86_64` and `other` columns): the `gcc-linux-x86_64` column, on
+/// every platform. A row that fails it on a platform whose libm is not
+/// correctly rounded is a known deviation (`docs/upstream-issues.md`), not a
+/// reason to loosen the bound.
 fn tolerance(cols: &[&str], col: usize) -> f64 {
-    let t = num(cols[col]);
-    if cfg!(target_os = "macos") {
-        t.max(num(cols[0]))
-    } else {
-        t
-    }
+    num(cols[col])
 }
 
 /// The xsref rows of a function.

@@ -9,6 +9,9 @@
 //! * for `a + m < 0` and `1 - a - m >= 21`, the reflection formula
 //!   (DLMF 5.5.3) `(a)_m = sin(πa) / sin(π(a+m)) · (1-a-m)_m`, which turns it
 //!   into the previous case;
+//! * for `0 < |a| < 1e-200 <= |a+m|`, `a · exp(ln|Γ(a+m)| - ln Γ(1+a))`, because
+//!   `ln Γ(a) ≈ -ln|a|` reaches 745 for subnormal `a` and the exponential
+//!   would underflow before the reduction product brings it back;
 //! * otherwise `exp(ln|Γ(a+m)| - ln|Γ(a)|)` with the signs of Γ, where
 //!   `|ln Γ|` is below about 100 (`-21 < a < 21`) and the error is a few
 //!   `|ln Γ| ε`.
@@ -20,6 +23,9 @@ use super::gamma::{gammasgn, lgamma, lgamma_diff_large, STIRLING_MIN};
 use super::{add, div, mul, sinpi};
 use crate::real::{k, Real};
 use crate::xsf;
+
+/// Below this `|a|` the factor `a` of `(a)_m` is taken out before `exp`.
+const TINY_A: f64 = 1e-200;
 
 /// A non-positive integer of magnitude below 1e13 (xsf's `is_nonpos_int`).
 fn is_nonpos_int<T: Real>(x: T) -> bool {
@@ -151,6 +157,18 @@ pub(crate) fn poch<T: Real>(a: T, m: T) -> T {
             let ratio = div(sinpi(a), sinpi_sum(a, m));
             return mul(mul(r, ratio), exp_sat(lgamma_diff_large(b, m)));
         }
+    }
+    if a != T::zero() && a.abs() < k(TINY_A) && (a + m).abs() >= k(TINY_A) {
+        // Γ(a) ≈ 1/a overflows its logarithm's range, and exp(ln Γ(a+m) - ln Γ(a))
+        // underflows before the product `r` restores the value. Take the factor
+        // `a` out: (a)_m = a Γ(a+m) / Γ(1+a), with Γ(1+a) > 0 for |a| < 1.
+        let e = exp_sat(add(lgamma(a + m), -lgamma(one + a))) * gammasgn(a + m);
+        let g = mul(r, e);
+        return if g.approx_f64().is_finite() {
+            mul(g, a)
+        } else {
+            mul(r, mul(e, a))
+        };
     }
     let e = exp_sat(add(lgamma(a + m), -lgamma(a)));
     mul(mul(r, e), mul(gammasgn(a + m), gammasgn(a)))

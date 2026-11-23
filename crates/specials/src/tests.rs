@@ -51,7 +51,10 @@ fn eval(name: &str, a: &[f64]) -> f64 {
         "trigamma" => generic::trigamma::trigamma(a[0]),
         "digammainv" => generic::digammainv::digammainv(a[0]),
         "gen_harmonic" => generic::gen_harmonic::gen_harmonic(a[0], a[1]),
-        "stirling2" => generic::stirling2::stirling2(a[0], a[1]),
+        "stirling2" => match generic::stirling2::prepare(a[0], a[1]) {
+            generic::stirling2::Prepared::Value(v) => v,
+            generic::stirling2::Prepared::Kernel(n, k) => generic::stirling2::stirling2(n, k),
+        },
         _ => unreachable!("{name}"),
     }
 }
