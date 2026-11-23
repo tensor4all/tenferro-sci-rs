@@ -51,7 +51,9 @@ def dd(v) -> tuple[float, float]:
     if math.isinf(hi) or hi == 0.0:
         return (hi, 0.0)
     lo = float(v - mp.mpf(hi))
-    return (hi, lo)
+    # float(v) can differ from the nearest double at a tie; renormalize.
+    hi2 = hi + lo
+    return (hi2, (hi - hi2) + lo)
 
 
 def stable(f, *args):
@@ -168,20 +170,109 @@ def ref_zetac(x):
     return mp.zeta(x, 2) if x > 1 else mp.zeta(x) - 1
 
 
-# (crate name, xsref name, signature, reference)
+def _real(v):
+    return mp.re(v) if isinstance(v, mp.mpc) and abs(mp.im(v)) <= abs(v) * mp.mpf(2) ** -(mp.mp.prec - 20) else v
+
+
+def ref_ellipk(m):
+    if m > 1:
+        return None  # xsf: NaN (K is complex)
+    return mp.inf if m == 1 else mp.ellipk(m)
+
+
+def ref_ellipkm1(p):
+    if p < 0:
+        return None
+    if p == 0:
+        return mp.inf
+    with mp.workprec(mp.mp.prec + extra_bits(1, p)):
+        return +mp.ellipk(1 - mp.mpf(p))
+
+
+def ref_ellipe(m):
+    if m > 1:
+        return None
+    return mp.mpf(1) if m == 1 else mp.ellipe(m)
+
+
+def _phi_bits(phi):
+    """Bits to reduce phi modulo pi exactly enough."""
+    return max(0, mp.mpf(phi).exp + mp.mpf(phi).bc) + 20 if phi != 0 else 0
+
+
+def ref_ellipkinc(phi, m):
+    if m > 1:
+        return None
+    with mp.workprec(mp.mp.prec + _phi_bits(phi)):
+        phi, m = mp.mpf(phi), mp.mpf(m)
+        if m == 1 and abs(phi) >= mp.pi / 2:
+            return None  # F is infinite at phi = +-pi/2; xsf's cutoff is the f64 value of pi/2
+        return +mp.ellipf(phi, m)
+
+
+def ref_ellipeinc(phi, m):
+    if m > 1:
+        return None
+    with mp.workprec(mp.mp.prec + _phi_bits(phi)):
+        return +mp.ellipe(mp.mpf(phi), mp.mpf(m))
+
+
+def _jacobi(u, m):
+    """(sn, cn, dn, am) of u for m <= 1, real."""
+    u, m = mp.mpf(u), mp.mpf(m)
+    if u == 0:
+        return mp.mpf(0), mp.mpf(1), mp.mpf(1), mp.mpf(0)
+    if m == 1:
+        sn, cn = mp.tanh(u), 1 / mp.cosh(u)
+        return sn, cn, cn, 2 * mp.atan(mp.exp(u)) - mp.pi / 2
+    if m == 0:
+        return mp.sin(u), mp.cos(u), mp.mpf(1), u
+    K = mp.ellipk(m)
+    n = int(mp.nint(u / (2 * K)))
+    up = u - 2 * n * K
+    sn = _real(mp.ellipfun("sn", up, m=m))
+    cn = _real(mp.ellipfun("cn", up, m=m))
+    dn = _real(mp.ellipfun("dn", up, m=m))
+    # sn, cn flip sign with n odd; dn does not (u -> u - 2nK).
+    sgn = -1 if n % 2 else 1
+    return sgn * sn, sgn * cn, dn, n * mp.pi + mp.atan2(sn, cn)
+
+
+def _ellipj_ref(k):
+    def ref(u, m):
+        if m > 1:
+            return None
+        with mp.workprec(mp.mp.prec + _phi_bits(u)):
+            return +_jacobi(u, m)[k]
+
+    ref.__name__ = f"ref_ellipj_{k}"
+    return ref
+
+
+# (crate name, xsref name, signature, reference, output column)
 FUNCS = [
-    ("gamma", "gamma", "d-d", ref_gamma),
-    ("lgamma", "gammaln", "d-d", ref_lgamma),
-    ("rgamma", "rgamma", "d-d", ref_rgamma),
-    ("gammasgn", "gammasgn", "d-d", None),
-    ("digamma", "digamma", "d-d", ref_digamma),
-    ("zeta", "zeta", "d_d-d", ref_zeta),
-    ("beta", "beta", "d_d-d", ref_beta),
-    ("lbeta", "betaln", "d_d-d", ref_lbeta),
-    ("poch", "poch", "d_d-d", ref_poch),
-    ("lgam1p", "lgam1p", "d-d", ref_lgam1p),
-    ("binom", "binom", "d_d-d", ref_binom),
-    ("zetac", "zetac", "d-d", ref_zetac),
+    ("gamma", "gamma", "d-d", ref_gamma, 0),
+    ("lgamma", "gammaln", "d-d", ref_lgamma, 0),
+    ("rgamma", "rgamma", "d-d", ref_rgamma, 0),
+    ("gammasgn", "gammasgn", "d-d", None, 0),
+    ("digamma", "digamma", "d-d", ref_digamma, 0),
+    ("zeta", "zeta", "d_d-d", ref_zeta, 0),
+    ("beta", "beta", "d_d-d", ref_beta, 0),
+    ("lbeta", "betaln", "d_d-d", ref_lbeta, 0),
+    ("poch", "poch", "d_d-d", ref_poch, 0),
+    ("lgam1p", "lgam1p", "d-d", ref_lgam1p, 0),
+    ("binom", "binom", "d_d-d", ref_binom, 0),
+    ("zetac", "zetac", "d-d", ref_zetac, 0),
+    ("ellipk", "ellipk", "d-d", ref_ellipk, 0),
+    ("ellipkm1", "ellipkm1", "d-d", ref_ellipkm1, 0),
+    ("ellipe", "ellipe", "d-d", ref_ellipe, 0),
+    ("ellipkinc", "ellipkinc", "d_d-d", ref_ellipkinc, 0),
+    ("ellipeinc", "ellipeinc", "d_d-d", ref_ellipeinc, 0),
+    # ellipj returns four values; each gets its own table with the same layout.
+    ("ellipj_sn", "ellipj", "d_d-d_d_d_d", _ellipj_ref(0), 0),
+    ("ellipj_cn", "ellipj", "d_d-d_d_d_d", _ellipj_ref(1), 1),
+    ("ellipj_dn", "ellipj", "d_d-d_d_d_d", _ellipj_ref(2), 2),
+    ("ellipj_ph", "ellipj", "d_d-d_d_d_d", _ellipj_ref(3), 3),
 ]
 
 
@@ -196,7 +287,7 @@ def main(xsref: Path, only: list[str] | None = None):
     tables = xsref / "src" / "xsref" / "tables" / "scipy_special_tests"
     OUT.mkdir(parents=True, exist_ok=True)
     mp.mp.prec = BASE_PREC
-    for name, xname, sig, ref in FUNCS:
+    for name, xname, sig, ref, col in FUNCS:
         if only and name not in only:
             continue
         d = tables / xname
@@ -204,8 +295,9 @@ def main(xsref: Path, only: list[str] | None = None):
         out = pq.read_table(d / f"Out_{sig}.parquet").to_pylist()
         tols = [pq.read_table(d / f"Err_{sig}_{p}.parquet").to_pylist() for p in PLATFORMS]
         nargs = len(inp[0])
+        which = f" (output out{col})" if name.startswith("ellipj_") else ""
         lines = [
-            f"# imported from scipy/xsref {commit} tables/scipy_special_tests/{xname}/*_{sig}.parquet\n",
+            f"# imported from scipy/xsref {commit} tables/scipy_special_tests/{xname}/*_{sig}.parquet{which}\n",
             f"# by scripts/import_xsref.py on {datetime.date.today().isoformat()}; xsref is BSD-3-Clause.\n",
             f"# dd_hi,dd_lo: mpmath {mp.__version__} at >= {BASE_PREC} bits at the same inputs (empty: pole or outside the domain).\n",
             "# columns: " + ",".join(f"a{i}" for i in range(nargs))
@@ -222,8 +314,8 @@ def main(xsref: Path, only: list[str] | None = None):
                     v = None
                 if v is not None and not isinstance(v, mp.mpc):
                     ddv = tuple(fmt(c) for c in dd(v))
-            cells = [fmt(a) for a in args] + [fmt(o["out0"]), str(int(o["fallback"]))]
-            cells += [fmt(t[i]["err0"]) for t in tols] + list(ddv)
+            cells = [fmt(a) for a in args] + [fmt(o[f"out{col}"]), str(int(o["fallback"]))]
+            cells += [fmt(t[i][f"err{col}"]) for t in tols] + list(ddv)
             lines.append(",".join(cells) + "\n")
         (OUT / f"{name}.csv").write_text("".join(lines))
         print(name, len(inp))
