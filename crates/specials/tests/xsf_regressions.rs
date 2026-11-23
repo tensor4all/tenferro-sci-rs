@@ -1730,6 +1730,12 @@ fn legendre_carlson_k_and_e<T: Num>() {
         let rf = specials::elliprf(f(0.0), f(1.0) - f(m), f(1.0)).to_f64();
         let e = specials::ellipe(f(m)).to_f64();
         let rg = 2.0 * specials::elliprg(f(0.0), f(1.0) - f(m), f(1.0)).to_f64();
+        // extended_relative_error(NaN, NaN) is 0, so a NaN must fail explicitly.
+        assert!(
+            [k, rf, e, rg].iter().all(|v| v.is_finite()),
+            "[{}] m={m:e}: K={k:e}, R_F={rf:e}, E={e:e}, 2 R_G={rg:e}",
+            T::NAME
+        );
         let ek = extended_relative_error(k, rf);
         let ee = extended_relative_error(e, rg);
         assert!(ek <= 1e-7, "[{}] K(m={m:e}) = {k:e}, R_F = {rf:e}", T::NAME);
@@ -1760,6 +1766,11 @@ fn legendre_carlson_km1<T: Num>() {
         let m1 = 2.0_f64.powi(exponent);
         let result = specials::ellipkm1(f(m1)).to_f64();
         let expected = specials::elliprf(f(0.0), f(m1), f(1.0)).to_f64();
+        assert!(
+            result.is_finite() && expected.is_finite(),
+            "[{}] ellipkm1({m1:e}) = {result:e}, R_F = {expected:e}",
+            T::NAME
+        );
         let error = extended_relative_error(result, expected);
         assert!(
             error <= 1e-7,
