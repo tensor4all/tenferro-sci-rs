@@ -10,11 +10,12 @@
 //! `S(n, n-2) = n(n-1)(n-2)(3n-5)/24` (elementary identities, checked against the
 //! recurrence by the tests for `n <= 2000`) cover the large-`n` cases that matter most.
 //!
-//! Beyond the work limit (`n` in the millions or more with `k` neither 2 nor
-//! within 2 of `n`, for results that do not overflow) there is no
-//! double-double algorithm here: the result is xsf's second-order Temme
-//! asymptotic approximation evaluated in `f64`, converted to the type, so it
-//! has only the accuracy of that approximation (about 1e-3 there).
+//! Beyond the work limit, `n - k <= 64` uses the exact sum of positive terms in
+//! [`near_diagonal`]. Otherwise (`n` in the millions or more, with `k` not
+//! near 2 or `n`, for results that do not overflow) there is no double-double
+//! algorithm here: the result is xsf's second-order Temme asymptotic
+//! approximation evaluated in `f64`, converted to the type, so it has only the
+//! accuracy of that approximation (about 1e-3 there).
 //!
 //! The argument contract is shared with the `f64` path and applied by
 //! [`prepare`] before either kernel runs: NaN gives NaN; `n < 0` or `k < 0`
@@ -31,6 +32,44 @@ use crate::xsf;
 
 /// Largest `(k-1)(n-k)` handled by the dynamic programme.
 const WORK_MAX: f64 = 3e7;
+
+/// Largest `j = n - k` evaluated by [`near_diagonal`] beyond the work limit.
+pub(crate) const NEAR_DIAGONAL_MAX: usize = 64;
+
+/// `S(n, n - j)` for `1 <= j <= NEAR_DIAGONAL_MAX` and integer `n > j`, from
+/// Graham, Knuth and Patashnik, *Concrete Mathematics*, eq. (6.43):
+/// `S(n, n - j) = Σ_{i=0}^{j-1} ⟨⟨j, i⟩⟩ C(n + j - 1 - i, 2j)`, with the
+/// second-order Eulerian numbers `⟨⟨m, i⟩⟩ = (i+1)⟨⟨m-1, i⟩⟩ + (2m-1-i)⟨⟨m-1, i-1⟩⟩`
+/// (eq. 6.35). Every term is positive, so there is no cancellation; the error
+/// is a few times `j ε`. Xsf's Temme approximation, which this replaces there,
+/// gives NaN for small `n - k` and large `n`.
+pub(crate) fn near_diagonal<T: Real>(n: T, j: usize) -> T {
+    // ⟨⟨j, i⟩⟩ for i = 0..j.
+    let mut e = vec![T::zero(); j + 1];
+    e[0] = T::one();
+    for m in 1..=j {
+        for i in (1..m).rev() {
+            e[i] = add(
+                mul(k::<T>((i + 1) as f64), e[i]),
+                mul(k::<T>((2 * m - 1 - i) as f64), e[i - 1]),
+            );
+        }
+        // i = 0: (0+1)⟨⟨m-1, 0⟩⟩ = 1.
+    }
+    let mut sum = T::zero();
+    for (i, &ei) in e.iter().take(j).enumerate() {
+        let m = n + k::<T>(j as f64 - 1.0 - i as f64);
+        // C(m, 2j) as Π (m - t)/(t + 1): every partial product is the binomial
+        // C(m, t+1), which for m >= 4j stays below C(m, 2j), so nothing overflows
+        // before the result does.
+        let mut c = T::one();
+        for t in 0..2 * j {
+            c = div(mul(c, m - k::<T>(t as f64)), k::<T>((t + 1) as f64));
+        }
+        sum = add(sum, mul(ei, c));
+    }
+    sum
+}
 
 /// The arguments after the contract above: either the value, or integers
 /// `2 <= k < n` with `n` finite for a kernel.
@@ -91,6 +130,9 @@ pub(crate) fn stirling2<T: Real>(n: T, kk: T) -> T {
     let rows = (n - kk).approx_f64(); // rows of the triangle to advance
     let width = (kk - T::one()).approx_f64(); // inner loop length
     if rows * width > WORK_MAX {
+        if rows <= NEAR_DIAGONAL_MAX as f64 {
+            return near_diagonal(n, rows as usize);
+        }
         return T::from_dd(
             xsf::stirling2::stirling2_temme(n.approx_f64(), kk.approx_f64()),
             0.0,

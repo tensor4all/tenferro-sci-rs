@@ -89,3 +89,28 @@ fn sinpi_is_exact_at_half_integers_and_odd_in_x() {
     }
     assert_eq!(generic::sinpi(3.0_f64), 0.0);
 }
+
+/// GKP (6.43) for `S(n, n - j)` against the recurrence, where the recurrence is
+/// still cheap: exact integers below 2^106, relative 1e-30 above.
+#[cfg(feature = "xprec")]
+#[test]
+fn near_diagonal_matches_the_recurrence() {
+    use xprec::Df64;
+    for n in [70_u32, 100, 219, 500, 2000] {
+        for j in [1_usize, 2, 3, 7, 20, 33, 64] {
+            if j as u32 >= n {
+                continue;
+            }
+            let nn = Df64::from(f64::from(n));
+            let kk = nn - Df64::from(j as f64);
+            let want = generic::stirling2::stirling2(nn, kk);
+            let got = generic::stirling2::near_diagonal(nn, j);
+            if want.hi().is_infinite() {
+                assert_eq!(got.hi(), f64::INFINITY, "S({n}, {n} - {j})");
+                continue;
+            }
+            let e = ((got - want) / want).abs().hi();
+            assert!(e <= 1e-30, "S({n}, {n} - {j}): err {e:e}");
+        }
+    }
+}

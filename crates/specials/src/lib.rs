@@ -312,6 +312,12 @@ pub fn lgam1p<T: Real>(x: T) -> T {
 /// while they fit the mantissa; `k` a negative integer gives `0` for
 /// non-integer `n`.
 ///
+/// The `f64` path is xsf's, including its large-`k` expansion, which xsf also
+/// applies when `k > 1e8 |n|` but `k` is not large. There (`k < 1e6`, tiny `n`)
+/// the `f64` result has a relative error up to about 3e-10, for example
+/// `binom(1e-9, 0.5)`; see `docs/upstream-issues.md`. The `Df64` path is not
+/// affected.
+///
 /// # Examples
 ///
 /// ```
@@ -438,12 +444,14 @@ pub fn gen_harmonic<T: Real>(n: T, a: T) -> T {
 ///
 /// For `n > 219` the `f64` path is xsf's second-order Temme asymptotic
 /// approximation (relative error up to about 1e-6 at `n = 220`, falling with
-/// `n`; for `n <= 219` it is the exact recurrence). The `Df64` path evaluates
-/// the recurrence (with closed forms for `k = 2`, `n - 1` and `n - 2`) up to a
-/// cost of `(k-1)(n-k) <= 3e7` and is exact below 2^106; beyond that cost it
-/// falls back to the `f64` Temme value (relative error up to about 1e-3), which
-/// also rounds the arguments to `f64` (for `n` above 2^53 only the closed forms
-/// use the full double-double arguments).
+/// `n`; for `n <= 219` it is the exact recurrence), except for `k = 2` and
+/// `n - k <= 64`, which are evaluated exactly, and for `(n-k) ln k > ln(f64::MAX)`,
+/// which is `+∞` without evaluating Temme. The `Df64` path evaluates the
+/// recurrence (with closed forms for `k = 2`, `n - 1` and `n - 2`) up to a cost
+/// of `(k-1)(n-k) <= 3e7` and is exact below 2^106. Beyond that cost it uses the
+/// exact sum of Graham, Knuth and Patashnik (6.43) for `n - k <= 64`, and
+/// otherwise falls back to the `f64` Temme value (relative error up to about
+/// 1e-3), which also rounds the arguments to `f64`.
 ///
 /// # Examples
 ///

@@ -11,11 +11,14 @@
 //! `k < 0` gives 0, `S(+∞, k) = +∞`) before calling this kernel, so it only sees
 //! integers `2 <= k < n`. xsf compares the raw reals and evaluates Temme at
 //! non-integer `n > 219`. Two further deviations keep the `f64` path from
-//! returning NaN where the value overflows: `S(n, 2) = 2^(n-1) - 1` for
-//! `n > 219`, and the Temme product taken in logarithms when its factors over-
-//! or underflow separately.
+//! returning NaN or `-∞` where the value overflows: `S(n, 2) = 2^(n-1) - 1`
+//! for `n > 219`, `+∞` once the lower bound `k^(n-k)` overflows, and the Temme
+//! product taken in logarithms when its factors over- or underflow separately.
+//! For `n > 219` and `n - k <= 64` the value is the exact sum of
+//! `generic::stirling2::near_diagonal` (Temme gives NaN there for large `n`).
 
 use super::binom::binom;
+use super::consts::MAXLOG;
 use super::gamma::lgam_sgn;
 use super::lambertw::lambertw0_neg;
 
@@ -72,6 +75,13 @@ pub(crate) fn stirling2_temme(n: f64, k: f64) -> f64 {
     if k <= 0.0 || k > n || n < 0.0 {
         return 0.0;
     }
+    // Deviation from xsf: S(n, k) >= k^(n-k) (k elements in distinct blocks, the
+    // rest anywhere), so the value overflows once (n - k) ln k > ln(DBL_MAX). There
+    // xsf's Temme terms overflow on their own and the product came out -inf or NaN
+    // (for example S(1.6e7, 3)).
+    if (n - k) * k.ln() > MAXLOG {
+        return f64::INFINITY;
+    }
 
     let mu = k / n;
     let d = (-1.0 / mu).exp() / mu;
@@ -94,9 +104,10 @@ pub(crate) fn stirling2_temme(n: f64, k: f64) -> f64 {
     let f1 = num / denom;
 
     let v = a.exp() * k.powf(n - k) * binom(n, k) * (f - f1 / k);
-    if v.is_nan() {
+    if v.is_nan() || v < 0.0 {
         // Deviation from xsf: the product of the factors is `0 * ∞` (NaN) when
-        // they over- or underflow separately. Take it in logarithms instead.
+        // they over- or underflow separately, and a negative value is never right
+        // (S(n, k) >= 1). Take it in logarithms instead.
         let lbinom = lgam_sgn(n + 1.0).0 - lgam_sgn(k + 1.0).0 - lgam_sgn(n - k + 1.0).0;
         let l = a + (n - k) * k.ln() + lbinom + (f - f1 / k).ln();
         return l.exp();
@@ -117,6 +128,11 @@ pub(crate) fn stirling2(n: f64, k: f64) -> f64 {
         } else {
             2.0_f64.powi(n as i32 - 1) - 1.0
         };
+    }
+    if n - k <= crate::generic::stirling2::NEAR_DIAGONAL_MAX as f64 {
+        // Deviation from xsf: Temme gives NaN for small n - k and large n; the exact
+        // sum of positive terms of `generic::stirling2::near_diagonal` instead.
+        return crate::generic::stirling2::near_diagonal(n, (n - k) as usize);
     }
     stirling2_temme(n, k)
 }

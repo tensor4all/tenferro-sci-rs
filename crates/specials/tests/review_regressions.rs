@@ -1,9 +1,11 @@
 //! Regression tests for the dispatched review of the gamma-family PR (#21,
 //! findings N1-N9), plus the f64-vs-Df64 grid the review proposed.
 //!
-//! Reference values are mpmath 1.4.1 at 200 and 300 bits (the two must agree to
-//! 1e-40), rounded to a double-double `(hi, lo)`; the Stirling numbers are exact
-//! integers from Python's integer recurrence and the closed forms.
+//! The reference values are printed by `scripts/gen_review_regressions.py`:
+//! mpmath 1.3.0 (the version the other reference data pins) at 200 and 300 bits,
+//! which must agree to 1e-40, rounded to a double-double `(hi, lo)`. The
+//! Stirling numbers are exact Python integers (recurrence, closed forms, and
+//! Graham–Knuth–Patashnik (6.43)).
 
 use specials::Real;
 use std::sync::mpsc;
@@ -288,6 +290,71 @@ fn n7_stirling2_df64_keeps_the_low_word_of_large_arguments() {
     });
 }
 
+/// Follow-up review of 9332580: beyond the work limit the Temme fallback came out
+/// `-∞` or NaN where S(n, k) >= k^(n-k) overflows (both strategies use it).
+#[test]
+fn stirling2_overflow_is_plus_infinity_beyond_the_work_limit() {
+    for (n, k) in [
+        (1.5e7, 3.0),
+        (1.6e7, 3.0),
+        (1e9, 3.0),
+        (1e8, 4.0),
+        (1e7, 5.0),
+        (1e300, 3.0),
+        (1e6, 999000.0),
+    ] {
+        assert_eq!(
+            specials::stirling2(n, k),
+            f64::INFINITY,
+            "f64 stirling2({n}, {k})"
+        );
+        let d = specials::stirling2(Df64::from(n), Df64::from(k)).hi();
+        assert_eq!(d, f64::INFINITY, "Df64 stirling2({n}, {k})");
+    }
+}
+
+/// Follow-up: Temme (xsf) gave NaN for small `n - k` and large `n` in both
+/// strategies. Exact integers from GKP (6.43) with Python integers.
+#[test]
+fn stirling2_near_the_diagonal_beyond_the_work_limit() {
+    let cases: [(f64, f64, (f64, f64)); 4] = [
+        (
+            1261668211.0,
+            1261668208.0,
+            (8.40291021436129e52, -3.093942039824179e36),
+        ),
+        (
+            7745630509816.0,
+            7745630509804.0,
+            (1.1083213806699752e297, 7.143231256549722e280),
+        ),
+        (
+            1e7,
+            9999990.0,
+            (2.691109470802454e130, 1.7073989170252915e114),
+        ),
+        (
+            1e8,
+            99999995.0,
+            (2.6041658420140025e76, 7.59229209676233e59),
+        ),
+    ];
+    for (n, k, want) in cases {
+        let f = specials::stirling2(n, k);
+        let ef = ((f - want.0) / want.0).abs();
+        assert!(ef <= 1e-13, "f64 stirling2({n}, {k}) = {f:e}, err {ef:e}");
+        let e = rel(specials::stirling2(Df64::from(n), Df64::from(k)), want);
+        assert!(e <= 1e-30, "Df64 stirling2({n}, {k}): err {e:e}");
+    }
+    let m = Df64::from(2.0_f64.powi(60));
+    let e = rel(
+        specials::stirling2(m, m - Df64::from(4.0)),
+        (8.129553516447896e141, 3.1025560135222333e125),
+    );
+    assert!(e <= 1e-30, "Df64 stirling2(2^60, 2^60 - 4): err {e:e}");
+    assert_eq!(specials::stirling2(4e6, 3999936.0), f64::INFINITY);
+}
+
 // ---------------------------------------------------------------- N8 poch
 
 #[test]
@@ -347,6 +414,7 @@ fn strategies_agree_on_extreme_arguments() {
         1.0,
         2.0,
         2.5,
+        3.0,
         10.0,
         100.5,
         170.25,

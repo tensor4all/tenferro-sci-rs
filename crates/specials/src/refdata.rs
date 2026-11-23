@@ -164,25 +164,16 @@ pub struct XsrefRow {
     pub line: usize,
 }
 
-/// Column of the xsref tolerance to use: `gcc-linux-x86_64` on every platform.
+/// Column of the xsref tolerance to use: `gcc-linux-x86_64`, on every platform.
 ///
 /// xsref's tolerances record the error xsf itself showed on each platform.
 /// Clang on aarch64 contracts `a*b + c` into FMA; gcc on x86-64 (no `-mfma`)
 /// does not, and neither does Rust. The port therefore rounds like xsf built
 /// by gcc on x86-64, and its errors match that column (for example
-/// beta(2154.43…, 7.5): 2.2870e-12 here and in the column).
-fn platform_column() -> usize {
-    1
-}
-
-/// xsref's tolerance of a row (`cols`: the `clang-darwin-aarch64`,
-/// `gcc-linux-x86_64` and `other` columns): the `gcc-linux-x86_64` column, on
-/// every platform. A row that fails it on a platform whose libm is not
-/// correctly rounded is a known deviation (`docs/upstream-issues.md`), not a
-/// reason to loosen the bound.
-fn tolerance(cols: &[&str], col: usize) -> f64 {
-    num(cols[col])
-}
+/// beta(2154.43…, 7.5): 2.2870e-12 here and in the column). A row that fails it
+/// on a platform whose libm is not correctly rounded is a known deviation
+/// (`docs/upstream-issues.md`), not a reason to loosen the bound.
+const TOL_COLUMN: usize = 1;
 
 /// The xsref rows of a function.
 pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
@@ -201,7 +192,6 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "zetac" => (include_str!("../tests/data/xsref/zetac.csv"), 1),
         _ => panic!("no xsref table for {name}"),
     };
-    let col = platform_column();
     text.lines()
         .enumerate()
         .filter(|(_, l)| !l.starts_with('#') && !l.trim().is_empty())
@@ -213,7 +203,8 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
                 args: f[..n].iter().map(|s| num(s)).collect(),
                 desired: num(f[n]),
                 fallback: f[n + 1] == "1",
-                tol: tolerance(&f[n + 2..n + 5], col),
+                // Columns n+2..n+5: clang-darwin-aarch64, gcc-linux-x86_64, other.
+                tol: num(f[n + 2 + TOL_COLUMN]),
                 dd: (!f[n + 5].is_empty()).then(|| (num(f[n + 5]), num(f[n + 6]))),
                 line: i + 1,
             }
