@@ -46,6 +46,36 @@ differences. See [REPOSITORY_RULES.md](REPOSITORY_RULES.md).
 Start with [CONTRIBUTING.md](CONTRIBUTING.md). Coding agents start from
 [AGENTS.md](AGENTS.md).
 
+### Contributions we are looking for
+
+- **Special functions in [`specials`](crates/specials).** More families ported
+  from SciPy's xsf, tests and reference values first; physics functions beyond
+  SciPy (Fermi–Dirac and Bose–Einstein integrals, Debye, Coulomb wave and
+  others, see [#2](https://github.com/tensor4all/tenferro-sci-rs/issues/2));
+  double-double variants.
+- **`tenferro-krylov`** following its design in
+  [#3](https://github.com/tensor4all/tenferro-sci-rs/issues/3); the path
+  without autodiff can start now on krylov 0.4.
+- **`tenferro-optimize`**, starting from the Adam, L-BFGS and
+  Levenberg–Marquardt code in
+  [tenferro-examples](https://github.com/tensor4all/tenferro-examples).
+- **Reference data**: scripts that generate SciPy and mpmath values and
+  derivatives for the tests.
+
+The order of work and what each crate waits for are in the
+[design](https://github.com/tensor4all/tensor4all-meta/blob/main/docs/design/tenferro-sci.md#order-of-work).
+
+### Software paper: join as a co-author
+
+We plan to submit a software paper on tenferro at the end of January 2027 (the
+journal is not fixed and acceptance is not guaranteed). People who make a
+substantial contribution to tenferro-sci-rs, tenferro-rs and its upstream
+crates, or tenferro-examples can join the author list. The criteria and how to
+apply are in [tensor4all/tenferro-paper](https://github.com/tensor4all/tenferro-paper)
+([AUTHORS-NOTES.md](https://github.com/tensor4all/tenferro-paper/blob/main/AUTHORS-NOTES.md));
+contributors coordinate in the tenferro Matrix room
+[#tenferro-tensor4all:matrix.org](https://matrix.to/#/#tenferro-tensor4all:matrix.org).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
