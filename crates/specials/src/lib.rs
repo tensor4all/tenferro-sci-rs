@@ -1,6 +1,6 @@
 //! Special functions in pure Rust, for `f64` and double-double.
 //!
-//! Every function is generic over [`Real`], which is implemented for `f64`
+//! Every function at the crate root is generic over [`Real`], which is implemented for `f64`
 //! and, with the `xprec` feature (on by default), for [`xprec::Df64`]. The
 //! two use different algorithms ([`Strategy`]):
 //!
@@ -42,6 +42,40 @@
 //! A double-double result below about 1e-292 has a subnormal low word, so its
 //! relative accuracy falls towards that of `f64` at the bottom of the range;
 //! the figures above hold for results above that.
+//!
+//! # Families from `few_special_functions` (`f64` only)
+//!
+//! The modules [`fermi_dirac`], [`bose_einstein`], [`clausen`], [`debye`],
+//! [`coulomb`], [`whittaker`], [`marcum_q`], [`dawson`], [`fresnel`],
+//! [`voigt`] and [`parabolic_cylinder`] are re-exported from
+//! [`few_special_functions`](https://crates.io/crates/few_special_functions)
+//! 0.2.1, pinned exactly in the workspace manifest. They take `f64` (some also
+//! `Complex64` from `num-complex` 0.4) and have no `Df64` form. Domain errors
+//! give NaN, as above. Each function that iterates also has a `*_checked` form
+//! that returns [`SpecialError`] when an iteration reaches its cap; the plain
+//! form returns NaN there.
+//!
+//! These families are validated against mpmath in `few_special_functions`
+//! itself. Maximum relative errors measured there:
+//!
+//! | Module | Functions | Points | Max relative error |
+//! | --- | --- | --- | --- |
+//! | [`fermi_dirac`] | `F_j(x)`, `F_j(x)/Γ(j+1)` | 323 | 8.1e-15 |
+//! | [`bose_einstein`] | `Γ(k+1) Li_{k+1}(e^η)`, `Li_{k+1}(e^η)` | 70, 110 | 1.1e-15 |
+//! | [`clausen`] | `Cl_n(θ)`, n = 1..=6 | 120 | 1.1e-14 |
+//! | [`debye`] | `D_n(β, x)` | 216 | 4.8e-16 |
+//! | [`coulomb`] | `F`, `G`, `H±` | 1092 | 4.7e-13 |
+//! | [`coulomb`] | `phi_dot`, `psi`, `i` | 61 | 2.0e-10 (cancellation in Φ at ρ = 5; median 2e-14) |
+//! | [`whittaker`] | `M`, `W` and their `z`-derivatives | 1188 | 2.9e-13 |
+//! | [`marcum_q`] | `Q_μ(a, b)`, `dQ_M/db` | 392, 120 | 3.3e-14 |
+//! | [`dawson`] | `D(x)` | 27 | 9.5e-16 |
+//! | [`fresnel`] | `C(x)`, `S(x)` | 16 | 2.2e-12 |
+//! | [`voigt`] | `K(x, y)` | 400 | 1.2e-15 |
+//! | [`parabolic_cylinder`] | `U`, `V`, `D_ν` and derivatives | 176, 54 | 1.8e-13 |
+//! | [`parabolic_cylinder`] | `W` and its derivative | 48 | 4.6e-11 |
+//!
+//! `tests/few_special_functions.rs` checks one mpmath value per family through
+//! these re-exports.
 //!
 //! # Validation
 //!
@@ -100,6 +134,11 @@ mod real;
 mod xsf;
 
 pub use real::{Real, Strategy};
+
+pub use few_special_functions::{
+    bose_einstein, clausen, coulomb, dawson, debye, fermi_dirac, fresnel, marcum_q,
+    parabolic_cylinder, voigt, whittaker, SpecialError,
+};
 
 /// Γ(x), the gamma function (DLMF 5.2.1).
 ///
