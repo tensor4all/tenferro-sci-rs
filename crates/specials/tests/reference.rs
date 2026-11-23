@@ -19,6 +19,14 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
         "zeta" => specials::zeta(a[0], a[1]),
         "beta" => specials::beta(a[0], a[1]),
         "lbeta" => specials::lbeta(a[0], a[1]),
+        "poch" => specials::poch(a[0], a[1]),
+        "lgam1p" => specials::lgam1p(a[0]),
+        "binom" => specials::binom(a[0], a[1]),
+        "zetac" => specials::zetac(a[0]),
+        "trigamma" => specials::trigamma(a[0]),
+        "digammainv" => specials::digammainv(a[0]),
+        "gen_harmonic" => specials::gen_harmonic(a[0], a[1]),
+        "stirling2" => specials::stirling2(a[0], a[1]),
         _ => unreachable!("{name}"),
     }
 }
@@ -28,7 +36,7 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
 /// The f64 figures are those of Cephes as SciPy ships it: `beta` and `lbeta`
 /// go through exp/differences of ln Γ for large arguments, and `lgamma` is
 /// accurate in absolute terms near its zeros at 1 and 2 (floor 1).
-const TOL: [(&str, f64, f64, f64, f64); 7] = [
+const TOL: [(&str, f64, f64, f64, f64); 15] = [
     ("gamma", 1e-15, 1e-15, 1e-29, 0.0),
     ("lgamma", 1e-15, 1e-15, 1e-29, 1.0),
     ("rgamma", 1e-15, 1e-15, 1e-29, 0.0),
@@ -36,7 +44,70 @@ const TOL: [(&str, f64, f64, f64, f64); 7] = [
     ("zeta", 1e-15, 1e-15, 1e-29, 0.0),
     ("beta", 5e-13, 5e-13, 1e-29, 0.0),
     ("lbeta", 1e-13, 4e-15, 2e-29, 0.0),
+    // The rest of the gamma family (#8). Worst measured (f64 vs mpmath, f64 vs
+    // SciPy, Df64 vs mpmath): poch 1.6e-13 / 1.2e-16 / 9.4e-31, lgam1p 6.3e-16 /
+    // see `scipy_comparable` / 4.8e-31, binom see `f64_tolerance` / 3.9e-16 /
+    // 1.4e-29, zetac 3.3e-14 / - / 2.1e-29, trigamma 3.6e-16 / 2.1e-16 /
+    // 2.4e-31, digammainv 7.6e-16 / - / 3.3e-31, gen_harmonic 1.4e-13 / - /
+    // 1.6e-31, stirling2 see `f64_tolerance` / - / 1.4e-31. The stated figures
+    // are 3x or more above those.
+    //
+    // poch, zetac and gen_harmonic evaluate exp/ln of sums of size up to 1e3
+    // in f64 (error ~ |ln| eps ~ 1e-13, as xsf). binom and zetac in Df64 reach
+    // ~1e-29 where ln Γ or log-form reflection (x < -160) is involved.
+    ("poch", 5e-13, 1e-15, 1e-29, 0.0),
+    ("lgam1p", 2e-15, 5e-14, 1e-29, 0.0),
+    ("binom", 1e-13, 1e-13, 5e-29, 0.0),
+    ("zetac", 1e-13, 1e-13, 5e-29, 0.0),
+    ("trigamma", 2e-15, 2e-15, 1e-30, 0.0),
+    ("digammainv", 3e-15, 3e-15, 1e-30, 0.0),
+    ("gen_harmonic", 5e-13, 5e-13, 1e-30, 0.0),
+    ("stirling2", 1e-12, 1e-12, 1e-30, 0.0),
 ];
+
+/// The f64 tolerance against mpmath, where it depends on the arguments.
+///
+/// * `binom` with `k > 1e8 |n|` and `k < 1e6` uses xsf's large-`k` asymptotic
+///   expansion although `k` is not large (relative error 2.7e-10 at
+///   `binom(1e-9, 0.5)`, see `docs/upstream-issues.md`).
+/// * `binom` otherwise goes through B(n-k+1, k+1) as exp of a difference of
+///   ln Γ values (xsf's `beta`), so its error is a few `eps |ln Γ|`:
+///   `3 eps (|ln Γ(n+1)| + |ln Γ(k+1)| + |ln Γ(n-k+1)|)`, at least 1e-13.
+/// * `stirling2` for `n > 219` is xsf's second-order Temme approximation
+///   (worst 7.4e-7 at n = 220); for `n <= 219` it is the exact recurrence.
+fn f64_tolerance(name: &str, a: &[f64], tol: f64) -> f64 {
+    match name {
+        "binom" if a[1] > 1e8 * a[0].abs() && a[1] < 1e6 => 1e-9,
+        "binom" => {
+            let l = |x: f64| specials::lgamma(x).abs();
+            let l = if l(a[0] + 1.0).is_finite()
+                && l(a[1] + 1.0).is_finite()
+                && l(a[0] - a[1] + 1.0).is_finite()
+            {
+                l(a[0] + 1.0) + l(a[1] + 1.0) + l(a[0] - a[1] + 1.0)
+            } else {
+                0.0
+            };
+            tol.max(3.0 * f64::EPSILON * l)
+        }
+        "stirling2" if a[0] > 219.0 => 2e-6,
+        _ => tol,
+    }
+}
+
+/// False where the SciPy 1.16.3 used for the parity column predates a fix that
+/// xsf (the pinned commit) has: `lgam1p` near |x| = 1/2 (gh-348, 3e-14),
+/// `zetac(x)` for x >= 127 (gh-346, returned 0), `binom` for `k > 1e8 |n|`
+/// (gh-352), and `stirling2` for `n > 50` (gh-378, Temme at 2e-5). Those rows
+/// are still checked against mpmath.
+fn scipy_comparable(name: &str, a: &[f64]) -> bool {
+    match name {
+        "zetac" => a[0] < 127.0,
+        "binom" => a[1] <= 1e8 * a[0].abs(),
+        "stirling2" => a[0] <= 50.0,
+        _ => true,
+    }
+}
 
 #[test]
 fn f64_matches_mpmath_and_scipy() {
@@ -45,19 +116,22 @@ fn f64_matches_mpmath_and_scipy() {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
             let e = error(got, r.reference, floor);
+            let tol_mp = f64_tolerance(name, &a, tol_mp);
             assert!(
                 e <= tol_mp,
                 "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
                 r.line,
                 r.reference
             );
-            let s = r.scipy.expect("f64 rows carry SciPy's value");
-            let e = error(got, (s, 0.0), floor);
-            assert!(
-                e <= tol_sp,
-                "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
-                r.line
-            );
+            // digammainv and gen_harmonic are not in SciPy 1.16.3 (no value).
+            if let Some(s) = r.scipy.filter(|_| scipy_comparable(name, &a)) {
+                let e = error(got, (s, 0.0), floor);
+                assert!(
+                    e <= tol_sp,
+                    "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
+                    r.line
+                );
+            }
         }
     }
 }
@@ -95,4 +169,39 @@ fn special_values_match_scipy() {
             "Df64 {name}{args:?} = {got:?}, scipy {expected}"
         );
     }
+}
+
+/// `S(n, n-3) = C(n,4) + 10 C(n,5) + 15 C(n,6)` in f64 (relative error ~1e-15 for the n used).
+fn stirling2_n_minus_3(n: f64) -> f64 {
+    let c = |j: u32| (0..j).fold(1.0, |acc, i| acc * (n - f64::from(i)) / f64::from(i + 1));
+    c(4) + 10.0 * c(5) + 15.0 * c(6)
+}
+
+#[test]
+fn stirling2_df64_beyond_the_work_limit_is_the_f64_temme_value() {
+    // (k-1)(n-k) = 3.6e7 > 3e7: the double-double path has no algorithm here and
+    // returns xsf's Temme approximation, which has the accuracy of that
+    // approximation (1e-3 here), not of double-double.
+    let (n, k) = (1.2e7, 1.2e7 - 3.0);
+    let exact = stirling2_n_minus_3(n);
+    let df = specials::stirling2(Df64::from(n), Df64::from(k));
+    assert_eq!(
+        df.hi(),
+        specials::stirling2(n, k),
+        "the fallback is the f64 value"
+    );
+    let e = (df.hi() - exact).abs() / exact;
+    assert!(
+        e < 1e-2,
+        "S({n}, {k}): {:e} vs {exact:e}, error {e:e}",
+        df.hi()
+    );
+    // Within the limit (cost 6e5): the exact recurrence, to double-double.
+    let (n, k) = (2e5, 2e5 - 3.0);
+    let df = specials::stirling2(Df64::from(n), Df64::from(k));
+    let exact = stirling2_n_minus_3(n);
+    assert!(
+        (df.hi() - exact).abs() / exact < 1e-14,
+        "f64 formula limits the check"
+    );
 }

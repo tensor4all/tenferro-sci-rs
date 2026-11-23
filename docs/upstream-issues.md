@@ -97,3 +97,37 @@ SciPy's AI policy asks that issues there be written by a human.
   | -2.3 | 1e+200 | 1058.1195937575947 | 1059.558709440716 | 1.4e-03 | 1.4e-03 |
   | 0.46415888336127786 | 1e+200 | -211.62351809996463 | -213.10701996126411 | 7.0e-03 | 7.0e-03 |
   | 0.0004641588833612782 | 1e+200 | 7.6750159006901 | 7.461262835568412 | 2.9e-02 | 2.8e-02 |
+
+## scipy/xsf: `binom(n, k)` applies its large-`k` expansion when `k` is not large
+
+- **Affects:** xsf `31177fd9` (`include/xsf/binom.h`), and SciPy 1.16.3's
+  `scipy.special.binom`, which gives the same values.
+- **Cause:** the branch "avoid loss of precision (DLMF 5.11.13)" is guarded by
+  `k > 1e8 * abs(n)`. That holds for a moderate `k` when `n` is tiny, but the
+  expansion `Γ(1+n)/|k| (1 + n(n+1)/(2k))` is a series in `1/k` and is not
+  accurate for `k` of order 1. Example: `binom(1e-9, 0.5)`.
+- **Evidence** (mpmath 1.3.0): the true value is `0.63661977325012374`; xsf and
+  SciPy give `0.6366197730780055`, relative error 2.7e-10 (the generic formula
+  `1/(n+1)/beta(1+n-k, 1+k)` is accurate to 4e-16 at the same point).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port, so it has the same error; the
+  `f64` check in `tests/reference.rs` allows 1e-9 for exactly this class of
+  arguments (`k > 1e8 |n|`, `k < 1e6`) and states why. The `Df64` path uses the
+  exact reflection formula there and is accurate to 5e-29.
+
+## scipy: SciPy 1.16.3 predates xsf fixes that the pinned xsf has
+
+Not a bug in this repository or in xsf. The SciPy 1.16.3 used for the parity
+column of `tests/data/*.csv` was released before these xsf fixes, so its values
+differ from the pinned xsf (and from mpmath) on the affected rows; the parity
+check in `tests/reference.rs` skips them (`scipy_comparable`) and the rows are
+still checked against mpmath and, for `f64`, against xsf's own regression
+cases:
+
+| function | xsf issue | SciPy 1.16.3 behavior |
+| --- | --- | --- |
+| `lgam1p` | gh-348 | Taylor series stopped after 41 terms near `abs(x) = 1/2`: relative error 3e-14 at `x = 0.5` |
+| `zetac` | gh-346 | returns 0 for `127 <= x < 1075` |
+| `binom` | gh-352 | wrong for `k > 1e8 abs(n)` (4e-5 at `binom(-10.5, 500000000000.25)`) |
+| `stirling2` | gh-378 | Temme approximation for `n > 50`: 2e-5 at `S(51, 7)` |
+

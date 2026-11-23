@@ -70,6 +70,14 @@ pub fn data(name: &str) -> (&'static str, usize) {
         "zeta" => (include_str!("../tests/data/zeta.csv"), 2),
         "beta" => (include_str!("../tests/data/beta.csv"), 2),
         "lbeta" => (include_str!("../tests/data/lbeta.csv"), 2),
+        "poch" => (include_str!("../tests/data/poch.csv"), 2),
+        "lgam1p" => (include_str!("../tests/data/lgam1p.csv"), 1),
+        "binom" => (include_str!("../tests/data/binom.csv"), 2),
+        "zetac" => (include_str!("../tests/data/zetac.csv"), 1),
+        "trigamma" => (include_str!("../tests/data/trigamma.csv"), 1),
+        "digammainv" => (include_str!("../tests/data/digammainv.csv"), 1),
+        "gen_harmonic" => (include_str!("../tests/data/gen_harmonic.csv"), 2),
+        "stirling2" => (include_str!("../tests/data/stirling2.csv"), 2),
         _ => panic!("no reference data for {name}"),
     }
 }
@@ -167,6 +175,25 @@ fn platform_column() -> usize {
     1
 }
 
+/// xsref's tolerance of a row (`cols`: the `clang-darwin-aarch64`,
+/// `gcc-linux-x86_64` and `other` columns).
+///
+/// The `gcc-linux-x86_64` column is authoritative (and what CI on Linux runs).
+/// Some rows depend on the platform's libm, not only on the algorithm: for
+/// example `binom(458.139…, 56.00000000000006)` evaluates `exp` of a
+/// difference of ln Γ values of size 1.5e3, so one ulp of difference in a libm
+/// `log`/`pow` moves the result by 2e-13. On macOS the libm differs from
+/// glibc, and the port's error on such rows equals xsf's own error on
+/// `clang-darwin-aarch64`; there the larger of the two columns applies.
+fn tolerance(cols: &[&str], col: usize) -> f64 {
+    let t = num(cols[col]);
+    if cfg!(target_os = "macos") {
+        t.max(num(cols[0]))
+    } else {
+        t
+    }
+}
+
 /// The xsref rows of a function.
 pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
     let (text, nargs) = match name {
@@ -178,6 +205,10 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "zeta" => (include_str!("../tests/data/xsref/zeta.csv"), 2),
         "beta" => (include_str!("../tests/data/xsref/beta.csv"), 2),
         "lbeta" => (include_str!("../tests/data/xsref/lbeta.csv"), 2),
+        "poch" => (include_str!("../tests/data/xsref/poch.csv"), 2),
+        "lgam1p" => (include_str!("../tests/data/xsref/lgam1p.csv"), 1),
+        "binom" => (include_str!("../tests/data/xsref/binom.csv"), 2),
+        "zetac" => (include_str!("../tests/data/xsref/zetac.csv"), 1),
         _ => panic!("no xsref table for {name}"),
     };
     let col = platform_column();
@@ -192,7 +223,7 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
                 args: f[..n].iter().map(|s| num(s)).collect(),
                 desired: num(f[n]),
                 fallback: f[n + 1] == "1",
-                tol: num(f[n + 2 + col]),
+                tol: tolerance(&f[n + 2..n + 5], col),
                 dd: (!f[n + 5].is_empty()).then(|| (num(f[n + 5]), num(f[n + 6]))),
                 line: i + 1,
             }

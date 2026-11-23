@@ -9,7 +9,7 @@ use crate::generic;
 use crate::refdata::{error, rows};
 
 /// (function, relative tolerance, absolute floor)
-const CASES: [(&str, f64, f64); 7] = [
+const CASES: [(&str, f64, f64); 15] = [
     ("gamma", 4e-15, 0.0),
     ("lgamma", 4e-15, 0.0),
     ("rgamma", 4e-15, 0.0),
@@ -20,6 +20,19 @@ const CASES: [(&str, f64, f64); 7] = [
     // exp(ln B) for arguments beyond Γ's range: error ~ |ln B| ε.
     ("beta", 5e-13, 0.0),
     ("lbeta", 4e-15, 0.0),
+    // The rest of the gamma family (#8). poch, binom and gen_harmonic pay
+    // |ln Γ| ε in f64 (exp of a difference of ln Γ values, or of -a ln i).
+    ("poch", 1e-12, 0.0),
+    // x = -3.75 is next to a zero of ln|Γ(1+x)| (x ≈ -3.74): absolute accuracy
+    // eps there gives 3e-14 relative.
+    ("lgam1p", 5e-14, 0.0),
+    ("binom", 1e-12, 0.0),
+    ("zetac", 1e-12, 0.0),
+    ("trigamma", 4e-15, 0.0),
+    ("digammainv", 4e-15, 0.0),
+    ("gen_harmonic", 4e-13, 0.0),
+    // 6e5 additions at n = 2e5: the f64 recurrence accumulates ~1e-14.
+    ("stirling2", 1e-13, 0.0),
 ];
 
 fn eval(name: &str, a: &[f64]) -> f64 {
@@ -31,6 +44,14 @@ fn eval(name: &str, a: &[f64]) -> f64 {
         "zeta" => generic::zeta::zeta(a[0], a[1]),
         "beta" => generic::beta::beta(a[0], a[1]),
         "lbeta" => generic::beta::lbeta(a[0], a[1]),
+        "poch" => generic::poch::poch(a[0], a[1]),
+        "lgam1p" => generic::lgam1p::lgam1p(a[0]),
+        "binom" => generic::binom::binom(a[0], a[1]),
+        "zetac" => generic::zeta::zetac(a[0]),
+        "trigamma" => generic::trigamma::trigamma(a[0]),
+        "digammainv" => generic::digammainv::digammainv(a[0]),
+        "gen_harmonic" => generic::gen_harmonic::gen_harmonic(a[0], a[1]),
+        "stirling2" => generic::stirling2::stirling2(a[0], a[1]),
         _ => unreachable!("{name}"),
     }
 }

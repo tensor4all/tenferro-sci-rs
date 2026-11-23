@@ -40,7 +40,7 @@ pub(crate) fn stirling_tail<T: Real>(x: T) -> T {
 
 /// ln Γ(2 + z) for |z| <= 1/2 (DLMF 5.7.3 with ln Γ(2+z) = ln Γ(1+z) + ln(1+z)):
 /// `(1-γ) z + Σ_{k>=2} (-1)^k (ζ(k)-1) z^k / k`.
-fn lgamma2p<T: Real>(z: T) -> T {
+pub(crate) fn lgamma2p<T: Real>(z: T) -> T {
     let eps = T::epsilon();
     let mut sum = (T::one() - c::<T>(EULER_GAMMA)) * z;
     let mz = -z;

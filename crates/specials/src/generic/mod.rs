@@ -10,11 +10,18 @@
 //! return the same non-finite values.
 
 pub(crate) mod beta;
+pub(crate) mod binom;
 pub(crate) mod digamma;
+pub(crate) mod digammainv;
 pub(crate) mod gamma;
+pub(crate) mod gen_harmonic;
+pub(crate) mod lgam1p;
+pub(crate) mod poch;
+pub(crate) mod stirling2;
 #[rustfmt::skip]
 #[allow(clippy::excessive_precision, clippy::approx_constant)]
 pub(crate) mod tables;
+pub(crate) mod trigamma;
 pub(crate) mod zeta;
 
 use crate::real::{k, Real};
