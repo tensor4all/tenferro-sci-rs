@@ -7,13 +7,19 @@
 //! `LICENSE-BSD-3-Clause-cephes`); `trigamma` is the MIT-licensed code of
 //! JuliaMath/SpecialFunctions.jl that xsf took (`LICENSE-MIT-julia-specialfunctions`).
 //!
+//! The Carlson code (`include/xsf/ellint_carlson/`) has no license header or
+//! file of its own in xsf; it is part of xsf and covered by xsf's license.
+//!
 //! Deviation from upstream: xsf reports domain and overflow errors through the
 //! process-global `sf_error`; this port returns the same values (NaN, ±inf)
 //! without a global flag.
 
+pub(crate) mod agm;
 pub(crate) mod beta;
 pub(crate) mod binom;
+pub(crate) mod carlson;
 pub(crate) mod digammainv;
+pub(crate) mod ellip;
 pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
 pub(crate) mod lambertw;
