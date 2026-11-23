@@ -37,13 +37,41 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
         "lgam1p" => specials::lgam1p(a[0]),
         "binom" => specials::binom(a[0], a[1]),
         "zetac" => specials::zetac(a[0]),
+        "ellipk" => specials::ellipk(a[0]),
+        "ellipkm1" => specials::ellipkm1(a[0]),
+        "ellipe" => specials::ellipe(a[0]),
+        "ellipkinc" => specials::ellipkinc(a[0], a[1]),
+        "ellipeinc" => specials::ellipeinc(a[0], a[1]),
+        "ellipj_sn" => specials::ellipj(a[0], a[1]).0,
+        "ellipj_cn" => specials::ellipj(a[0], a[1]).1,
+        "ellipj_dn" => specials::ellipj(a[0], a[1]).2,
+        "ellipj_ph" => specials::ellipj(a[0], a[1]).3,
         _ => unreachable!("{name}"),
     }
 }
 
-const NAMES: [&str; 12] = [
-    "gamma", "lgamma", "rgamma", "gammasgn", "digamma", "zeta", "beta", "lbeta", "poch", "lgam1p",
-    "binom", "zetac",
+const NAMES: [&str; 21] = [
+    "gamma",
+    "lgamma",
+    "rgamma",
+    "gammasgn",
+    "digamma",
+    "zeta",
+    "beta",
+    "lbeta",
+    "poch",
+    "lgam1p",
+    "binom",
+    "zetac",
+    "ellipk",
+    "ellipkm1",
+    "ellipe",
+    "ellipkinc",
+    "ellipeinc",
+    "ellipj_sn",
+    "ellipj_cn",
+    "ellipj_dn",
+    "ellipj_ph",
 ];
 
 /// One failing row.
@@ -127,6 +155,14 @@ fn dd_tolerance(name: &str, args: &[f64]) -> f64 {
         // beta is computed as exp(ln B): the relative error of B grows like
         // |ln B| eps, so the tolerance scales with max(1, |ln B|).
         "beta" => 5e-30 * specials::lbeta(args[0], args[1]).abs().max(1.0),
+        // Elliptic family (#11). Worst measured over the xsref points: ellipk 1.1e-30,
+        // ellipkm1 6.5e-32, ellipe 4.6e-32, ellipkinc 1.1e-31, ellipeinc 1.1e-31,
+        // ellipj_ph 4.7e-32. ellipj_sn, _cn and _dn also allow an absolute error
+        // of 24 eps |u| sqrt(max(1, 1 - m)) (see `refdata::jacobi_scale`).
+        "ellipk" => 5e-30,
+        "ellipkm1" | "ellipe" | "ellipkinc" | "ellipeinc" => 1e-30,
+        "ellipj_sn" | "ellipj_cn" | "ellipj_dn" => 1e-29,
+        "ellipj_ph" => 5e-30,
         _ => unreachable!("{name}"),
     }
 }
@@ -141,8 +177,15 @@ fn df64_matches_mpmath_on_xsref_points() {
             let Some(d) = r.dd else { continue };
             let a: Vec<Df64> = r.args.iter().map(|&x| Df64::from(x)).collect();
             let got = eval::<Df64>(name, &a);
-            let e = error(got, d, 0.0);
             let tol = dd_tolerance(name, &r.args);
+            // Absolute error 24 ε scale, ε = 2^-105 (measured worst 1.6 ε scale).
+            let scale =
+                refdata::jacobi_scale(name, r.args[0], r.args.get(1).copied().unwrap_or(0.0), d.0);
+            let e = error(
+                got,
+                d,
+                refdata::jacobi_floor(scale, 24.0, 2.0_f64.powi(-105), tol),
+            );
             if e.is_nan() || e > tol {
                 fails.push(Failure {
                     line: r.line,

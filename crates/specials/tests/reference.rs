@@ -27,6 +27,21 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
         "digammainv" => specials::digammainv(a[0]),
         "gen_harmonic" => specials::gen_harmonic(a[0], a[1]),
         "stirling2" => specials::stirling2(a[0], a[1]),
+        "ellipk" => specials::ellipk(a[0]),
+        "ellipkm1" => specials::ellipkm1(a[0]),
+        "ellipe" => specials::ellipe(a[0]),
+        "ellipkinc" => specials::ellipkinc(a[0], a[1]),
+        "ellipeinc" => specials::ellipeinc(a[0], a[1]),
+        "ellipj_sn" => specials::ellipj(a[0], a[1]).0,
+        "ellipj_cn" => specials::ellipj(a[0], a[1]).1,
+        "ellipj_dn" => specials::ellipj(a[0], a[1]).2,
+        "ellipj_ph" => specials::ellipj(a[0], a[1]).3,
+        "elliprc" => specials::elliprc(a[0], a[1]),
+        "elliprf" => specials::elliprf(a[0], a[1], a[2]),
+        "elliprd" => specials::elliprd(a[0], a[1], a[2]),
+        "elliprj" => specials::elliprj(a[0], a[1], a[2], a[3]),
+        "elliprg" => specials::elliprg(a[0], a[1], a[2]),
+        "agm" => specials::agm(a[0], a[1]),
         _ => unreachable!("{name}"),
     }
 }
@@ -36,7 +51,7 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
 /// The f64 figures are those of Cephes as SciPy ships it: `beta` and `lbeta`
 /// go through exp/differences of ln Γ for large arguments, and `lgamma` is
 /// accurate in absolute terms near its zeros at 1 and 2 (floor 1).
-const TOL: [(&str, f64, f64, f64, f64); 15] = [
+const TOL: [(&str, f64, f64, f64, f64); 30] = [
     ("gamma", 1e-15, 1e-15, 1e-29, 0.0),
     ("lgamma", 1e-15, 1e-15, 1e-29, 1.0),
     ("rgamma", 1e-15, 1e-15, 1e-29, 0.0),
@@ -63,6 +78,32 @@ const TOL: [(&str, f64, f64, f64, f64); 15] = [
     ("digammainv", 3e-15, 3e-15, 1e-30, 0.0),
     ("gen_harmonic", 5e-13, 5e-13, 1e-30, 0.0),
     ("stirling2", 1e-12, 1e-12, 1e-30, 0.0),
+    // The elliptic family (#11). Worst measured (f64 vs mpmath, f64 vs SciPy,
+    // Df64 vs mpmath): ellipk 2.1e-16 / 2.1e-16 / 4.0e-32, ellipkm1 2.1e-16 /
+    // 1.7e-16 / 5.7e-32, ellipe 2.5e-16 / 1.5e-16 / 4.5e-32, ellipkinc 2.8e-15 /
+    // 4.5e-16 / 1.1e-31, ellipeinc 6.2e-16 / 4.0e-16 / 2.6e-31, elliprc 2.4e-16 /
+    // 1.5e-16 / 3.9e-32, elliprf 2.1e-16 / 2.2e-16 / 5.7e-32, elliprd 3.3e-16 /
+    // 2.2e-16 / 7.1e-32, elliprj 5.1e-15 / 4.2e-16 / 2.2e-31, elliprg 3.1e-16 /
+    // 2.2e-16 / 7.9e-32, agm 2.2e-16 / 2.2e-16 / 4.0e-32. ellipj_sn, _cn and
+    // _dn are compared with an absolute floor (`f64_floor`, `jacobi_scale`), so
+    // their relative tolerance applies away from the zeros; ellipj_ph for
+    // `m >= 0.9999999999` is `2 atan(e^u) - pi/2`, which has an absolute error
+    // of 1e-17 (1e-12 relative at u = 1e-5).
+    ("ellipk", 1e-15, 1e-15, 5e-30, 0.0),
+    ("ellipkm1", 1e-15, 1e-15, 1e-30, 0.0),
+    ("ellipe", 1e-15, 1e-15, 1e-30, 0.0),
+    ("ellipkinc", 1e-14, 2e-15, 1e-30, 0.0),
+    ("ellipeinc", 3e-15, 2e-15, 1e-30, 0.0),
+    ("ellipj_sn", 1e-13, 1e-13, 1e-29, 0.0),
+    ("ellipj_cn", 1e-13, 1e-13, 1e-29, 0.0),
+    ("ellipj_dn", 1e-13, 1e-13, 1e-29, 0.0),
+    ("ellipj_ph", 5e-12, 1e-14, 5e-30, 0.0),
+    ("elliprc", 1e-15, 1e-15, 1e-30, 0.0),
+    ("elliprf", 1e-15, 1e-15, 1e-30, 0.0),
+    ("elliprd", 1e-15, 1e-15, 1e-30, 0.0),
+    ("elliprj", 2e-14, 2e-15, 1e-30, 0.0),
+    ("elliprg", 1e-15, 1e-15, 1e-30, 0.0),
+    ("agm", 1e-15, 1e-15, 1e-30, 0.0),
 ];
 
 /// The f64 tolerance against mpmath, where it depends on the arguments.
@@ -105,8 +146,35 @@ fn scipy_comparable(name: &str, a: &[f64]) -> bool {
         "zetac" => a[0] < 127.0,
         "binom" => a[1] <= 1e8 * a[0].abs(),
         "stirling2" => a[0] <= 50.0,
+        // SciPy 1.16.3 returns NaN for a negative parameter (added to xsf later).
+        "ellipj_sn" | "ellipj_cn" | "ellipj_dn" | "ellipj_ph" => a[1] >= 0.0,
+        // gh-467: SciPy 1.16.3 returns NaN or -inf when y z underflows with x = 0 or subnormal.
+        "elliprf" => {
+            let mut v = [a[0], a[1], a[2]];
+            v.sort_by(f64::total_cmp);
+            v[1] * v[2] >= f64::MIN_POSITIVE
+        }
         _ => true,
     }
+}
+
+/// False where xsf's `f64` `ellipj` for `m >= 0.9999999999` is outside the
+/// validity of its expansion in `1 - m`: `cosh(u)` overflows for `|u| > 710`
+/// (NaN), and the expansion needs `(1 - m) e^(2|u|)` small (the Cephes
+/// header: "the approximation applies only for phi < pi/2"). See
+/// `docs/upstream-issues.md`.
+fn ellipj_expansion_valid(name: &str, a: &[f64]) -> bool {
+    !name.starts_with("ellipj_")
+        || a[1] < 0.9999999999
+        || (a[0].abs() <= 700.0 && (1.0 - a[1]) * (2.0 * a[0].abs()).exp() <= 1e-3)
+}
+
+/// The error criterion of an `f64` Jacobi function: relative `tol`, or an
+/// absolute `100 eps scale` (see `refdata::jacobi_scale`; xsf: "accuracy
+/// deteriorates when u is large", worst measured 56 eps scale).
+fn f64_floor(name: &str, a: &[f64], reference: f64, tol: f64, floor: f64) -> f64 {
+    let scale = refdata::jacobi_scale(name, a[0], a.get(1).copied().unwrap_or(0.0), reference);
+    floor.max(refdata::jacobi_floor(scale, 100.0, f64::EPSILON, tol))
 }
 
 #[test]
@@ -115,17 +183,23 @@ fn f64_matches_mpmath_and_scipy() {
         for r in rows(name).iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
-            let e = error(got, r.reference, floor);
             let tol_mp = f64_tolerance(name, &a, tol_mp);
-            assert!(
-                e <= tol_mp,
-                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
-                r.line,
-                r.reference
-            );
+            if ellipj_expansion_valid(name, &a) {
+                let e = error(
+                    got,
+                    r.reference,
+                    f64_floor(name, &a, r.reference.0, tol_mp, floor),
+                );
+                assert!(
+                    e <= tol_mp,
+                    "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
+                    r.line,
+                    r.reference
+                );
+            }
             // digammainv and gen_harmonic are not in SciPy 1.16.3 (no value).
             if let Some(s) = r.scipy.filter(|_| scipy_comparable(name, &a)) {
-                let e = error(got, (s, 0.0), floor);
+                let e = error(got, (s, 0.0), f64_floor(name, &a, s, tol_sp, floor));
                 assert!(
                     e <= tol_sp,
                     "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
@@ -142,7 +216,18 @@ fn df64_matches_mpmath() {
         for r in rows(name) {
             let a: Vec<Df64> = r.args_as();
             let got = eval(name, &a);
-            let e = error(got, r.reference, 0.0);
+            // Absolute error 24 ε scale, ε = 2^-105 (measured worst 8.3 ε scale).
+            let scale = refdata::jacobi_scale(
+                name,
+                r.args[0].0,
+                r.args.get(1).map_or(0.0, |p| p.0),
+                r.reference.0,
+            );
+            let e = error(
+                got,
+                r.reference,
+                refdata::jacobi_floor(scale, 24.0, 2.0_f64.powi(-105), tol),
+            );
             assert!(
                 e <= tol,
                 "{name}{:?} (line {}): got {got:?}, mpmath {:?}, err {e:e}",

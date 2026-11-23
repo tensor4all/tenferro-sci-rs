@@ -78,6 +78,21 @@ pub fn data(name: &str) -> (&'static str, usize) {
         "digammainv" => (include_str!("../tests/data/digammainv.csv"), 1),
         "gen_harmonic" => (include_str!("../tests/data/gen_harmonic.csv"), 2),
         "stirling2" => (include_str!("../tests/data/stirling2.csv"), 2),
+        "ellipk" => (include_str!("../tests/data/ellipk.csv"), 1),
+        "ellipkm1" => (include_str!("../tests/data/ellipkm1.csv"), 1),
+        "ellipe" => (include_str!("../tests/data/ellipe.csv"), 1),
+        "ellipkinc" => (include_str!("../tests/data/ellipkinc.csv"), 2),
+        "ellipeinc" => (include_str!("../tests/data/ellipeinc.csv"), 2),
+        "ellipj_sn" => (include_str!("../tests/data/ellipj_sn.csv"), 2),
+        "ellipj_cn" => (include_str!("../tests/data/ellipj_cn.csv"), 2),
+        "ellipj_dn" => (include_str!("../tests/data/ellipj_dn.csv"), 2),
+        "ellipj_ph" => (include_str!("../tests/data/ellipj_ph.csv"), 2),
+        "elliprc" => (include_str!("../tests/data/elliprc.csv"), 2),
+        "elliprf" => (include_str!("../tests/data/elliprf.csv"), 3),
+        "elliprd" => (include_str!("../tests/data/elliprd.csv"), 3),
+        "elliprj" => (include_str!("../tests/data/elliprj.csv"), 4),
+        "elliprg" => (include_str!("../tests/data/elliprg.csv"), 3),
+        "agm" => (include_str!("../tests/data/agm.csv"), 2),
         _ => panic!("no reference data for {name}"),
     }
 }
@@ -88,19 +103,19 @@ pub fn rows(name: &str) -> Vec<Row> {
     parse(text, nargs)
 }
 
-/// SciPy's special values: `(function, args, value)`.
+/// SciPy's special values: `(function, args, value)`; a row has up to four arguments.
 pub fn special_values() -> Vec<(String, Vec<f64>, f64)> {
     include_str!("../tests/data/special_values.csv")
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .map(|l| {
             let f: Vec<&str> = l.split(',').collect();
-            let args = f[1..3]
+            let args = f[1..5]
                 .iter()
                 .filter(|s| !s.is_empty())
                 .map(|s| num(s))
                 .collect();
-            (f[0].to_string(), args, num(f[3]))
+            (f[0].to_string(), args, num(f[5]))
         })
         .collect()
 }
@@ -136,6 +151,30 @@ pub fn error<T: Real>(got: T, reference: (f64, f64), floor: f64) -> f64 {
     }
     let denom = r.abs().max(T::from_dd(floor, 0.0));
     (diff / denom).approx_f64()
+}
+
+/// Size of the absolute error that the phase of `sn`, `cn` and `dn` allows:
+/// `max(1, |u| √max(1, 1 - m)) max(1, |ref|)` for the Jacobi functions, 0 for
+/// every other function.
+///
+/// The phase of `sn` and `cn` is `φ = a_N 2^N u` (`u √(1 - m)` after the
+/// transformation of a negative `m`), computed with a relative error `ε`, so
+/// near a zero of `sn` or `cn` the result has an absolute rather than a
+/// relative error of about `ε` times this scale; `dn` carries the factor
+/// `max(1, |dn|)`. Callers turn `C ε scale` into the `floor` of [`error`]
+/// for their relative tolerance `tol` with [`jacobi_floor`].
+pub fn jacobi_scale(name: &str, u: f64, m: f64, reference: f64) -> f64 {
+    if !matches!(name, "ellipj_sn" | "ellipj_cn" | "ellipj_dn") {
+        return 0.0;
+    }
+    (u.abs() * (1.0 - m).max(1.0).sqrt()).max(1.0) * reference.abs().max(1.0)
+}
+
+/// The `floor` argument of [`error`] that allows an absolute error of `c eps
+/// scale` next to the relative tolerance `tol`: `error <= tol` then means
+/// `|got - ref| <= tol max(|ref|, floor)`.
+pub fn jacobi_floor(scale: f64, c: f64, eps: f64, tol: f64) -> f64 {
+    c * eps * scale / tol
 }
 
 /// Same-value check for special values: NaN matches NaN, zeros must have the same sign.
@@ -190,6 +229,15 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "lgam1p" => (include_str!("../tests/data/xsref/lgam1p.csv"), 1),
         "binom" => (include_str!("../tests/data/xsref/binom.csv"), 2),
         "zetac" => (include_str!("../tests/data/xsref/zetac.csv"), 1),
+        "ellipk" => (include_str!("../tests/data/xsref/ellipk.csv"), 1),
+        "ellipkm1" => (include_str!("../tests/data/xsref/ellipkm1.csv"), 1),
+        "ellipe" => (include_str!("../tests/data/xsref/ellipe.csv"), 1),
+        "ellipkinc" => (include_str!("../tests/data/xsref/ellipkinc.csv"), 2),
+        "ellipeinc" => (include_str!("../tests/data/xsref/ellipeinc.csv"), 2),
+        "ellipj_sn" => (include_str!("../tests/data/xsref/ellipj_sn.csv"), 2),
+        "ellipj_cn" => (include_str!("../tests/data/xsref/ellipj_cn.csv"), 2),
+        "ellipj_dn" => (include_str!("../tests/data/xsref/ellipj_dn.csv"), 2),
+        "ellipj_ph" => (include_str!("../tests/data/xsref/ellipj_ph.csv"), 2),
         _ => panic!("no xsref table for {name}"),
     };
     text.lines()
