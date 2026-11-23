@@ -203,15 +203,233 @@ FUNCS = {
 }
 
 
-def write_reference():
+# --------------------------------------------------------------------------
+# The rest of the gamma family (tenferro-sci-rs#8): poch, lgam1p, binom,
+# zetac, trigamma, digammainv, gen_harmonic, stirling2. The random draws come
+# after those of the functions above, so regenerating does not change them.
+# --------------------------------------------------------------------------
+
+
+def _is_pole(x):
+    return x <= 0 and x == mp.floor(x)
+
+
+def _extra(*xs):
+    """Extra bits so that sums of the arguments are exact."""
+    exps = [mp.mpf(x).exp + mp.mpf(x).bc for x in xs if mp.isfinite(x) and x != 0]
+    return min(max(exps) - min(exps), 4000) if len(exps) > 1 else 0
+
+
+def mp_poch(a, m):
+    with mp.workprec(mp.mp.prec + _extra(a, m)):
+        a, m = mp.mpf(a), mp.mpf(m)
+        if _is_pole(a + m) != _is_pole(a):
+            return None  # a zero or a pole: SciPy's special values are tested separately
+        return +mp.rf(a, m)
+
+
+def mp_lgam1p(x):
+    with mp.workprec(mp.mp.prec + _extra(1, x)):
+        x = mp.mpf(x)
+        if _is_pole(1 + x):
+            return None
+        v = mp.loggamma(1 + x)
+        return +(mp.re(v) if x < -1 else v)
+
+
+def mp_binom(n, k):
+    with mp.workprec(mp.mp.prec + _extra(n, k, 1)):
+        n, k = mp.mpf(n), mp.mpf(k)
+        if _is_pole(n + 1) or _is_pole(k + 1) or _is_pole(n - k + 1):
+            return None
+        return +(mp.gamma(n + 1) / (mp.gamma(k + 1) * mp.gamma(n - k + 1)))
+
+
+def mp_zetac(x):
+    if x == 1:
+        return None
+    return mp.zeta(x, 2) if x > 1 else mp.zeta(x) - 1
+
+
+def mp_trigamma(x):
+    return None if _is_pole(x) else mp.polygamma(1, x)
+
+
+def mp_digammainv(y):
+    """The x > 0 with digamma(x) = y, by Newton's method in mpmath."""
+    x = mp.exp(y) + mp.mpf(1) / 2 if y >= -2.22 else -1 / (y + mp.euler)
+    for _ in range(200):
+        dx = (mp.digamma(x) - y) / mp.polygamma(1, x)
+        x -= dx
+        if abs(dx) <= abs(x) * mp.mpf(2) ** (-mp.mp.prec + 8):
+            return x
+    raise RuntimeError(f"digammainv did not converge for {y}")
+
+
+def mp_gen_harmonic(n, a):
+    """sum_{i=1}^n i^-a for a positive integer n; zeta(a) - zeta(a, n+1) (all a != 1)."""
+    if a == 1:
+        return mp.digamma(n + 1) + mp.euler
+    with mp.workprec(mp.mp.prec + _extra(a, 1)):
+        return +(mp.zeta(mp.mpf(a)) - mp.zeta(mp.mpf(a), n + 1))
+
+
+def stirling2_exact(n, k):
+    """Exact S(n, k) by the recurrence; for n > 2000 (too slow in Python) closed
+    forms for k in {1, 2, n-3, n-2, n-1, n}. The Rust code uses the same closed forms
+    for every n, so n <= 2000 checks them against the recurrence."""
+    n, k = int(n), int(k)
+    if k < 0 or k > n:
+        return 0
+    if n == 0:
+        return 1 if k == 0 else 0
+    if k == 0:
+        return 0
+    if k == 1 or k == n:
+        return 1
+    if n > 2000:
+        if k == 2:
+            return 2 ** (n - 1) - 1
+        if k == n - 1:
+            return n * (n - 1) // 2
+        if k == n - 2:
+            return math.comb(n, 3) + 3 * math.comb(n, 4)
+        if k == n - 3:
+            return math.comb(n, 4) + 10 * math.comb(n, 5) + 15 * math.comb(n, 6)
+        raise ValueError(f"no exact reference for S({n}, {k})")
+    row = [1] + [0] * k  # S(0, 0..k)
+    for i in range(1, n + 1):
+        for j in range(min(i, k), 0, -1):
+            row[j] = j * row[j] + row[j - 1]
+        row[0] = 0
+    return row[k]
+
+
+def mp_stirling2(n, k):
+    return mp.mpf(stirling2_exact(n, k))
+
+
+POCH_AM = [
+    (3.0, 4.0), (0.5, 0.5), (10.5, -3.25), (100.0, 0.25), (2.5, 1e-10), (-3.5, 2.25),
+    (-10.25, 5.5), (10000.5, 0.75), (1e6, -0.3), (1e12, -0.7), (1e100, 0.5), (1.5, 40.0),
+    (-7.5, 30.0), (0.25, -2.5), (-2.0, 3.0 + 0.5), (1e-5, 1.5), (-1e-5, 0.5), (50.0, -49.5),
+    (-30.5, 60.0), (-150.5, 20.25), (THIRD, 2.0), (PI, MTHIRD), (MSEVENTH, 5.0),
+]
+LGAM1P_X = [
+    1e-300, 1e-30, 1e-10, 0.1, -0.1, 0.3, -0.3, 0.5, -0.5, 0.75, 1.0 - 1e-10, 1.0 + 1e-10,
+    1.25, 1.499, 1.5, 2.0, 2.5, 10.0, 100.5, 1e10, 1e300, -0.9, -0.999999, -1.5, -2.5, -3.75,
+    -10.25, -50.5, THIRD, MTHIRD, PI, MSEVENTH,
+]
+BINOM_NK = [
+    (10.0, 3.0), (5.0, 2.5), (0.5, 2.0), (-2.5, 3.0), (-0.5, 1.5), (20.5, 10.25), (100.0, 50.0),
+    (1e5, 60.5), (60.0, 30.0), (-10.5, 7.0), (250.5, 99.5), (250.5, 100.5), (200.0, 100.0),
+    (200.0, 99.0), (1.5, 3e8), (-10.5, 500000000000.25), (20.5, 2100000000.25), (2.0, 1e12 + 0.5),
+    (1e12, 3.5), (1e300, 2.5), (2.5, -0.5), (2.5, -0.999), (5.5, -2.5), (1e-9, 3.0), (1e-9, 0.5),
+    (1000.0, 500.0), (1018.0, 509.0), (-102.8, 64.0), (-223.5, 101.0), (7.0, 0.0), (0.0, 0.0),
+    (0.3, 0.0), (THIRD, 2.0), (PI, MTHIRD), (TENE, 4.0),
+]
+ZETAC_X = [
+    2.0, 3.0, 1.5, 1.0000001, 1.0 + 1e-10, 10.5, 25.0, 50.5, 100.25, 500.0, 1000.0, 1074.0,
+    1076.0, 0.0, 0.5, 0.999999, -0.5, -1.0, -2.5, -3.0, -10.5, -14.5, -30.5, -100.5, -159.5,
+    -160.5, -170.25, THIRD, MTHIRD, PI, TENE, MSEVENTH,
+]
+TRIGAMMA_X = [
+    0.1, 0.5, 1.0, 2.0, 3.0, 10.0, -7.5, -3.2, -0.5, 1e-6, 1e-10, -1e-10, 100.0, 1e6, 1e150,
+    1e-150, -100.5, 20.0, 1e300, THIRD, MTHIRD, PI, TENE, MSEVENTH,
+]
+DIGAMMAINV_Y = [
+    -1e100, -1e10, -10.423754940411076, -4.2274535333762655, -3.1320337800208065,
+    -1.9635100260214235, -0.5772156649015329, 0.0, 2.251752589066721, 11.512920464961896,
+    115.12925464970229, 460.51701859880916, 700.0, 709.0, -2.22, -2.2, -2.3, 1.0, 5.0, 40.0,
+    ("dd", mp.digamma(THIRD[1])), ("dd", mp.digamma(PI[1])), PI, MTHIRD,
+]
+GENH_NA = [
+    (8.0, 9.0), (1000.0, 2.5), (10.0, 1.5), (10000.0, 1.25), (10000.0, 1.00001), (80.0, 1.000002),
+    (75.0, 1 + 1e-12), (100.0, 1 + 1e-14), (100.0, 1 + 8e-16), (100.0, 1.0), (7.0, 1.0),
+    (8000.0, 1.0), (5.0, 1 - 1e-12), (25000.0, 1 - 1e-12), (1000.0, 0.995), (1000.0, 0.75),
+    (10000.0, 0.25), (5.0, 1e-8), (15.0, 1e-16), (100.0, 0.0), (4.0, -1.0), (75.0, -1.5),
+    (40.0, 0.5), (41.0, 0.5), (43.0, 2.5), (44.0, 2.5), (42.0, 1.5), (43.0, 1.5), (100000.0, 1.5),
+    (1e8, 0.5), (1e8, 2.5), (2.0, 30.0), (50.0, 3.0), (50.0, -2.0), (60.0, -2.5),
+    (100.0, THIRD), (100.0, PI), (100.0, ("dd", 1 + mp.mpf("1e-25"))),
+    (100.0, ("dd", 1 - mp.mpf("1e-25"))), (1000.0, ("dd", 2 + mp.mpf("1e-30"))), (100.0, MTHIRD),
+]
+STIRLING2_NK = (
+    [(float(n), float(k)) for n in range(0, 11) for k in range(0, n + 1)]
+    + [(51.0, 7.0), (60.0, 30.0), (100.0, 50.0), (219.0, 110.0), (219.0, 50.0), (150.0, 20.0)]
+    + [(220.0, 110.0), (300.0, 5.0), (300.0, 299.0), (500.0, 20.0), (1000.0, 2.0), (1000.0, 3.0),
+       (1000.0, 999.0), (1000.0, 998.0), (2000.0, 1990.0), (5000.0, 2.0), (5000.0, 4999.0),
+       (100000.0, 99999.0), (100000.0, 99998.0), (200000.0, 199997.0), (3000.0, 2997.0), (2000.0, 1000.0), (1000.0, 0.0), (60.0, 58.0), (60.0, 59.0), (60.0, 2.0), (100.0, 98.0), (1024.0, 2.0), (1025.0, 2.0), (1026.0, 2.0), (1500.0, 1498.0), (0.0, 1.0),
+       (7.0, 9.0), (-1.0, 2.0), (3.0, -1.0)]
+)
+
+NRAND2 = 60
+POCH_AM += [(a_, 0.5) for a_ in around(21)] + [(a_, -0.5) for a_ in around(21)]
+POCH_AM += [(a_, 0.5) for a_ in around(-20.5)] + [(a_, -0.25) for a_ in around(-20.75)]
+POCH_AM += [(("dd", -n + s * mp.mpf("1e-20")), 2.5) for n in (0, 1, 2) for s in (1, -1)]
+POCH_AM += [(rnd(-50, 60), rnd(-5, 5)) for _ in range(NRAND2)]
+POCH_AM += [(rnd(21, 1e5, log=True), rnd(-1, 1)) for _ in range(NRAND2 // 2)]
+LGAM1P_X += [p for t in (0.5, -0.5, 1.5) for p in around(t)]
+LGAM1P_X += [("dd", 1 + s * mp.mpf("1e-20")) for s in (1, -1)] + [("dd", s * mp.mpf("1e-25")) for s in (1, -1)]
+LGAM1P_X += [("dd", -1 + s * mp.mpf("1e-20")) for s in (1, -1)]
+LGAM1P_X += [rnd(-0.99, 30) for _ in range(NRAND2)] + [rnd(-3.4, -1.01) for _ in range(NRAND2 // 2)]
+BINOM_NK += [(250.5, k_) for k_ in around(100)] + [(1e5 + 0.5, k_) for k_ in around(99.5)]
+BINOM_NK += [(rnd(-50, 200), rnd(-0.9, 150)) for _ in range(NRAND2)]
+BINOM_NK += [(rnd(0.1, 400), float(RNG.randint(0, 120))) for _ in range(NRAND2 // 2)]
+ZETAC_X += [p for t in (25, -160, 1.0 + 1e-3) for p in around(t)]
+ZETAC_X += [("dd", 1 + mp.mpf("1e-25")), ("dd", mp.mpf("1e-30")), ("dd", -mp.mpf("1e-30"))]
+ZETAC_X += [rnd(1.0001, 60) for _ in range(NRAND2)] + [rnd(-14, 1) for _ in range(NRAND2 // 2)]
+ZETAC_X += [rnd(-170, -20) for _ in range(NRAND2 // 2)]
+TRIGAMMA_X += near_poles(range(0, 4)) + [("dd", mp.mpf("1e-25")), ("dd", -mp.mpf("1e-25"))]
+TRIGAMMA_X += [rnd(-30, -0.01) for _ in range(NRAND2)] + [rnd(1e-3, 1e4, log=True) for _ in range(NRAND2)]
+DIGAMMAINV_Y += [("dd", mp.mpf("-2.22") * (1 + s * mp.mpf(2) ** -70)) for s in (1, -1)]
+DIGAMMAINV_Y += [rnd(-50, 50) for _ in range(NRAND2)] + [rnd(-1e6, -3) for _ in range(NRAND2 // 3)]
+GENH_NA += [(float(RNG.randint(41, 3000)), rnd(-3, 12)) for _ in range(NRAND2)]
+GENH_NA += [(float(RNG.randint(2, 60)), rnd(-3, 12)) for _ in range(NRAND2 // 2)]
+STIRLING2_NK += [(float(n_), float(RNG.randint(2, n_ - 1))) for n_ in [RNG.randint(12, 120) for _ in range(NRAND2)]]
+
+
+def _sc_lgam1p(x):
+    from scipy.special import _ufuncs
+
+    return _ufuncs._lgam1p(x)
+
+
+def _sc_stirling2(n, k):
+    return sc.stirling2(int(n), int(k), exact=False)
+
+
+def _none(*args):
+    return math.nan
+
+
+FUNCS.update(
+    {
+        "poch": (2, POCH_AM, mp_poch, sc.poch),
+        "lgam1p": (1, LGAM1P_X, mp_lgam1p, _sc_lgam1p),
+        "binom": (2, BINOM_NK, mp_binom, sc.binom),
+        "zetac": (1, ZETAC_X, mp_zetac, sc.zetac),
+        "trigamma": (1, TRIGAMMA_X, mp_trigamma, lambda x: sc.polygamma(1, x)),
+        "digammainv": (1, DIGAMMAINV_Y, mp_digammainv, None),
+        "gen_harmonic": (2, GENH_NA, mp_gen_harmonic, None),
+        "stirling2": (2, STIRLING2_NK, mp_stirling2, _sc_stirling2),
+    }
+)
+
+
+def write_reference(only=None):
     DATA.mkdir(parents=True, exist_ok=True)
     for name, (nargs, points, mpf, scf) in FUNCS.items():
+        if only and name not in only:
+            continue
         cols = [f"a{i}_hi,a{i}_lo" for i in range(nargs)]
         lines = [HEADER, "# columns: " + ",".join(cols) + ",ref_hi,ref_lo,scipy\n"]
         for p in points:
             args = [arg(a) for a in (p if nargs > 1 else (p,))]
-            ref = dd(stable(mpf, *[mpv(a) for a in args]))
-            if all(lo == 0.0 for _, lo in args):
+            v = stable(mpf, *[mpv(a) for a in args])
+            if v is None:
+                continue  # a zero or pole: covered by special_values.csv
+            ref = dd(v)
+            if scf is not None and all(lo == 0.0 for _, lo in args):
                 with np.errstate(all="ignore"):
                     s = fmt(scf(*[hi for hi, _ in args]))
             else:
@@ -230,11 +448,31 @@ SPECIAL = [
     ("beta", sc.beta, [(-1.0, 0.5), (-1.0, 1.5), (-0.0, 1.0), (math.nan, 1.0)]),
     ("lbeta", sc.betaln, [(-1.0, 0.5), (-2.0, 1.5), (math.nan, 1.0)]),
 ]
+# #8. digammainv and gen_harmonic are not in SciPy 1.16.3: their values come from
+# xsf's own tests (digammainv: nan, +-inf, y > ln(DBL_MAX); gen_harmonic: n < 1, nan).
+SPECIAL += [
+    ("poch", sc.poch, [(-2.0, 3.0), (-1.0, 2.0), (0.0, 3.0), (1.0, -1.0), (math.nan, 1.0), (1.0, math.nan), (math.inf, 1.0)]),
+    ("lgam1p", lambda x: _sc_lgam1p(x), [(-1.0,), (-2.0,), (0.0,), (1.0,), (math.nan,), (math.inf,)]),
+    ("binom", sc.binom, [(-1.0, 2.0), (-2.0, 1.0), (math.nan, 1.0), (1.0, math.nan), (5.5, -2.0), (5.0, -3.0), (0.0, -10.0), (math.inf, 2.0)]),
+    ("zetac", sc.zetac, [(1.0,), (math.inf,), (math.nan,), (1076.0,), (1e300,)]),
+    ("trigamma", lambda x: sc.polygamma(1, x), [(0.0,), (-1.0,), (-5.0,), (math.inf,), (math.nan,)]),
+    ("digammainv", lambda y: {math.inf: math.inf, -math.inf: 0.0, 800.0: math.inf}.get(y, math.nan), [(math.nan,), (math.inf,), (-math.inf,), (800.0,)]),
+    ("gen_harmonic", lambda n, a: math.nan, [(0.0, 1.0), (-3.0, 1.0), (math.nan, 0.75), (3.0, math.nan), (2.5, 1.0)]),
+    ("stirling2", _sc_stirling2, [(5.0, 0.0), (3.0, 4.0), (-1.0, -1.0), (-1.0, 2.0)]),
+]
 
 
-def write_special_values():
-    lines = [HEADER, "# columns: function,a0,a1,scipy  (exact non-finite or zero results)\n"]
+def write_special_values(only=None):
+    path = DATA / "special_values.csv"
+    if only and path.exists():
+        # Keep the rows of the other functions; replace those of `only`.
+        old = [l for l in path.read_text().splitlines(keepends=True) if l.split(",")[0] not in only]
+        lines = old
+    else:
+        lines = [HEADER, "# columns: function,a0,a1,scipy  (exact non-finite or zero results)\n"]
     for name, f, cases in SPECIAL:
+        if only and name not in only:
+            continue
         for args in cases:
             with np.errstate(all="ignore"):
                 v = float(f(*args))
@@ -252,6 +490,7 @@ def write_special_values():
 NB = 30  # Bernoulli numbers B_2 .. B_60
 NZ = 80  # zeta(k) - 1 for k = 2 ..= NZ
 NT = 120  # Taylor coefficients of digamma around its zeros
+NZ0 = 36  # Taylor coefficients of zeta(s) around s = 0 (radius 1; used for |s| < 0.1)
 
 
 def rs_pair(v) -> str:
@@ -308,6 +547,11 @@ def write_tables():
             f"`ψ⁽ⁿ⁾(r)/n!` for `n = 1..={NT}` at `r = DIGAMMA_NEGROOT`.",
             taylor(negroot),
         ),
+        *table(
+            "ZETA_TAYLOR0",
+            f"`ζ⁽ⁿ⁾(0)/n!` for `n = 0..{NZ0}` (Taylor series of ζ(s) about 0, DLMF 25.2.1 / 25.6.1).",
+            [mp.zeta(0, derivative=n) / mp.factorial(n) for n in range(NZ0)],
+        ),
         "/// `√(2π)`.\n",
         f"pub(crate) const SQRT_2PI: (f64, f64) = {rs_pair(mp.sqrt(2 * mp.pi))};\n",
         "/// `ln √(2π)`.\n",
@@ -327,7 +571,16 @@ def write_tables():
 
 
 if __name__ == "__main__":
-    write_reference()
-    write_special_values()
-    write_tables()
-    print("wrote", DATA, "and", CRATE / "src" / "generic" / "tables.rs")
+    import sys
+
+    # With function names: write only those functions' data (reference rows and
+    # special values), leaving the other files untouched.
+    only = sys.argv[1:] or None
+    if only == ["tables"]:
+        write_tables()
+        raise SystemExit(0)
+    write_reference(only)
+    write_special_values(only)
+    if not only:
+        write_tables()
+    print("wrote", DATA, "" if only else "and " + str(CRATE / "src" / "generic" / "tables.rs"))

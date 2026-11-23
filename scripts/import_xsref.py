@@ -132,6 +132,42 @@ def ref_lbeta(a, b):
         return +v
 
 
+def ref_poch(a, m):
+    with mp.workprec(mp.mp.prec + extra_bits(a, m)):
+        a, m = mp.mpf(a), mp.mpf(m)
+        s = a + m
+        if is_pole(s) != is_pole(a):
+            # A zero or a pole of (a)_m: SciPy's value is checked through xsref.
+            return None
+        return +mp.rf(a, m)
+
+
+def ref_lgam1p(x):
+    with mp.workprec(mp.mp.prec + extra_bits(1, x)):
+        x = mp.mpf(x)
+        if is_pole(1 + x):
+            return mp.inf
+        v = mp.loggamma(1 + x)
+        return +(mp.re(v) if x < -1 else v)
+
+
+def ref_binom(n, k):
+    if n < 0 and n == math.floor(n):
+        return None
+    with mp.workprec(mp.mp.prec + extra_bits(n, k, 1)):
+        n, k = mp.mpf(n), mp.mpf(k)
+        if is_pole(n - k + 1) or is_pole(k + 1):
+            return mp.mpf(0) if not is_pole(n + 1) else None
+        return +(mp.gamma(n + 1) / (mp.gamma(k + 1) * mp.gamma(n - k + 1)))
+
+
+def ref_zetac(x):
+    if x == 1.0:
+        return None
+    # zeta(x, 2) = zeta(x) - 1 without cancellation.
+    return mp.zeta(x, 2) if x > 1 else mp.zeta(x) - 1
+
+
 # (crate name, xsref name, signature, reference)
 FUNCS = [
     ("gamma", "gamma", "d-d", ref_gamma),
@@ -142,6 +178,10 @@ FUNCS = [
     ("zeta", "zeta", "d_d-d", ref_zeta),
     ("beta", "beta", "d_d-d", ref_beta),
     ("lbeta", "betaln", "d_d-d", ref_lbeta),
+    ("poch", "poch", "d_d-d", ref_poch),
+    ("lgam1p", "lgam1p", "d-d", ref_lgam1p),
+    ("binom", "binom", "d_d-d", ref_binom),
+    ("zetac", "zetac", "d-d", ref_zetac),
 ]
 
 
@@ -149,7 +189,7 @@ def fmt(x: float) -> str:
     return repr(float(x))
 
 
-def main(xsref: Path):
+def main(xsref: Path, only: list[str] | None = None):
     commit = subprocess.run(
         ["git", "-C", str(xsref), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
@@ -157,6 +197,8 @@ def main(xsref: Path):
     OUT.mkdir(parents=True, exist_ok=True)
     mp.mp.prec = BASE_PREC
     for name, xname, sig, ref in FUNCS:
+        if only and name not in only:
+            continue
         d = tables / xname
         inp = pq.read_table(d / f"In_{sig}.parquet").to_pylist()
         out = pq.read_table(d / f"Out_{sig}.parquet").to_pylist()
@@ -188,6 +230,6 @@ def main(xsref: Path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         raise SystemExit(__doc__)
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]), sys.argv[2:] or None)
