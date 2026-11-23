@@ -194,18 +194,34 @@ cases:
   `F = asinh(tan(phi))` is finite, 38.025003373828866 (mpmath 1.3.0). The result
   is also `+inf` for `phi <= -pi/2` (the sign of the integral is lost).
 - **Upstream:** not reported.
-- **Here:** `f64` matches xsf (and the xsref table, which records the `inf`).
-  `Df64` compares with the double-double pi/2 and gives the finite value; the
-  xsref row is checked against the mpmath value. The special-value table does
-  not contain this row.
+- **Evidence:** the xsref `ellipkinc` rows `(+-1.5707963267948966, 1.0)` record
+  the finite value `+-38.025003373828866` with tolerance `inf` on every
+  platform, i.e. xsref knows xsf disagrees; the exact value
+  `atanh(sin(1.5707963267948966))` is 38.02500337382886806180240516117
+  (mpmath 1.3.0, 60 digits).
+- **Here:** `f64` is the faithful port, so it returns `inf` (the xsref check is
+  vacuous on those two rows because of the infinite tolerance). `Df64` compares
+  with the double-double pi/2 and returns the finite value, which agrees with
+  the exact one to 1.5e-31 (relative); `df64_matches_mpmath_on_xsref_points`
+  checks it. The special-value table does not contain this row.
 
-## mpmath: `ellipf(pi/2, 1)` returns a finite number
+## mpmath: `ellipf(phi, 1)` loses accuracy near `phi = pi/2` at working precision
 
-- **Affects:** mpmath 1.3.0, `mp.ellipf(mp.pi/2, 1)` at 256 bits.
-- **Example:** it returns 179.28598978266705; F is infinite there.
+- **Affects:** mpmath 1.3.0, `mp.ellipf(phi, 1)` for `phi` within a few
+  working-precision units of pi/2 (F(phi | 1) = atanh(sin phi) diverges at pi/2,
+  so `pi/2 - phi` cancels).
+- **Examples:** at 256 bits `mp.ellipf(mp.pi/2, 1)` returns 179.286 (the
+  argument is 5.4846e-78 below pi/2, and the exact value, computed at 2000 bits
+  for the same rounded argument, is 178.59284260210710691: 0.4% off). At 15
+  digits `mp.ellipf(mpf(1.5707963267948966), 1)` returns 38.718, where the
+  exact value is 38.0250033738 (50 and 1200 digits agree).
 - **Upstream:** not reported.
-- **Here:** `scripts/import_xsref.py` and `scripts/gen_specials_reference.py`
-  give no mpmath value for `m = 1` and `abs(phi) >= pi/2`.
+- **Here:** the reference scripts compute every value at two working precisions
+  that must agree (`stable()`), and an `f64` argument such as
+  1.5707963267948966 is 6.1e-17 below pi/2, far above the 256-bit resolution,
+  so it is evaluated correctly (38.0250033738...). The scripts give no mpmath
+  value for `m = 1` and `abs(phi) >= pi/2` (computed at the working precision),
+  where F is infinite.
 
 ## xprec: `Df64::sqrt` loses digits below about 1e-292
 
