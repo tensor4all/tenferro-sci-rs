@@ -302,6 +302,10 @@ fn stirling2_overflow_is_plus_infinity_beyond_the_work_limit() {
         (1e7, 5.0),
         (1e300, 3.0),
         (1e6, 999000.0),
+        // n - k > 64 beyond the work limit: always an overflow (see generic/stirling2.rs).
+        (1e6, 5e5),
+        (30000070.0, 3e7),
+        (55256.0 + 65.0, 55256.0),
     ] {
         assert_eq!(
             specials::stirling2(n, k),

@@ -11,11 +11,9 @@
 //! recurrence by the tests for `n <= 2000`) cover the large-`n` cases that matter most.
 //!
 //! Beyond the work limit, `n - k <= 64` uses the exact sum of positive terms in
-//! [`near_diagonal`]. Otherwise (`n` in the millions or more, with `k` not
-//! near 2 or `n`, for results that do not overflow) there is no double-double
-//! algorithm here: the result is xsf's second-order Temme asymptotic
-//! approximation evaluated in `f64`, converted to the type, so it has only the
-//! accuracy of that approximation (about 1e-3 there).
+//! [`near_diagonal`]. Every other argument beyond the limit overflows
+//! (`S(n, k) >= k^(n-k)`, see the bound in [`stirling2`]), so the double-double
+//! result is exact to working precision or `+∞` everywhere.
 //!
 //! The argument contract is shared with the `f64` path and applied by
 //! [`prepare`] before either kernel runs: NaN gives NaN; `n < 0` or `k < 0`
@@ -133,6 +131,14 @@ pub(crate) fn stirling2<T: Real>(n: T, kk: T) -> T {
         if rows <= NEAR_DIAGONAL_MAX as f64 {
             return near_diagonal(n, rows as usize);
         }
+        // S(n, k) >= k^(n-k). Here n - k > 64 and (k-1)(n-k) > 3e7, which together
+        // force (n-k) ln k > ln(DBL_MAX) (k <= 55256 gives (k-1)(n-k) <= 3e7 for
+        // n - k <= 709.78/ln k; larger k gives 709.78/ln k < 65): the value overflows.
+        if rows * kk.approx_f64().ln() > xsf::consts::MAXLOG {
+            return T::infinity();
+        }
+        // Not reached (see above); kept so that a change of the limits cannot
+        // return garbage.
         return T::from_dd(
             xsf::stirling2::stirling2_temme(n.approx_f64(), kk.approx_f64()),
             0.0,

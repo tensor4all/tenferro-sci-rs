@@ -178,23 +178,24 @@ fn stirling2_n_minus_3(n: f64) -> f64 {
 }
 
 #[test]
-fn stirling2_df64_beyond_the_work_limit_is_the_f64_temme_value() {
-    // (k-1)(n-k) = 3.6e7 > 3e7: the double-double path has no algorithm here and
-    // returns xsf's Temme approximation, which has the accuracy of that
-    // approximation (1e-3 here), not of double-double.
+fn stirling2_df64_beyond_the_work_limit_is_exact() {
+    // (k-1)(n-k) = 3.6e7 > 3e7, beyond the recurrence: n - k = 3 <= 64 takes the
+    // exact sum of `near_diagonal` in both strategies (xsf's Temme gave NaN for
+    // small n - k and large n). The reference is the closed form for S(n, n-3)
+    // evaluated in f64.
     let (n, k) = (1.2e7, 1.2e7 - 3.0);
     let exact = stirling2_n_minus_3(n);
     let df = specials::stirling2(Df64::from(n), Df64::from(k));
-    assert_eq!(
-        df.hi(),
-        specials::stirling2(n, k),
-        "the fallback is the f64 value"
-    );
     let e = (df.hi() - exact).abs() / exact;
     assert!(
-        e < 1e-2,
+        e < 1e-14,
         "S({n}, {k}): {:e} vs {exact:e}, error {e:e}",
         df.hi()
+    );
+    let f = specials::stirling2(n, k);
+    assert!(
+        ((f - exact) / exact).abs() < 1e-14,
+        "f64 S({n}, {k}) = {f:e}"
     );
     // Within the limit (cost 6e5): the exact recurrence, to double-double.
     let (n, k) = (2e5, 2e5 - 3.0);

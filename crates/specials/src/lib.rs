@@ -32,12 +32,16 @@
 //! | `betaln(a, b)` | [`lbeta`] | 2e-29 |
 //! | `poch(a, m)` | [`poch`] | 1e-29 (grows like `ε m ln a` for `a` beyond 1e10) |
 //! | `lgam1p(x)` | [`lgam1p`] | 1e-29 (relative also next to the zeros `x = 0` and `x = 1`) |
-//! | `binom(n, k)` | [`binom`] | 5e-29 |
+//! | `binom(n, k)` | [`binom`] | 5e-29 (grows like `ε abs(ln Γ)` for huge arguments: about 1e-22 at `k = 1e9`) |
 //! | `zetac(x)` | [`zetac`] | 5e-29 (1e-29 for `x > -160`) |
-//! | `polygamma(1, x)` (xsf `trigamma`) | [`trigamma`] | 1e-30 |
+//! | `polygamma(1, x)` (xsf `trigamma`) | [`trigamma`] | 1e-30 while the result is above 1e-292 (`x` below about 1e292) |
 //! | `digammainv(y)` (xsf `digammainv`) | [`digammainv`] | 1e-30 for `y >= -1e290` (see [`digammainv`]) |
 //! | `_gen_harmonic(n, a)` (xsf `gen_harmonic`) | [`gen_harmonic`] | 1e-30 for `a >= -3`; for `a < -3` it grows like `ε abs(a) ln n` (3.4e-30 measured at `a = -68`, `n = 70`) |
-//! | `stirling2(n, k)` | [`stirling2`] | 1e-30 (exact below 2^106; `f64`-level (about 1e-3) only where [`stirling2`] says so) |
+//! | `stirling2(n, k)` | [`stirling2`] | 1e-30 (exact below 2^106) |
+//!
+//! A double-double result below about 1e-292 has a subnormal low word, so its
+//! relative accuracy falls towards that of `f64` at the bottom of the range;
+//! the figures above hold for results above that.
 //!
 //! # Validation
 //!
@@ -449,9 +453,8 @@ pub fn gen_harmonic<T: Real>(n: T, a: T) -> T {
 /// which is `+∞` without evaluating Temme. The `Df64` path evaluates the
 /// recurrence (with closed forms for `k = 2`, `n - 1` and `n - 2`) up to a cost
 /// of `(k-1)(n-k) <= 3e7` and is exact below 2^106. Beyond that cost it uses the
-/// exact sum of Graham, Knuth and Patashnik (6.43) for `n - k <= 64`, and
-/// otherwise falls back to the `f64` Temme value (relative error up to about
-/// 1e-3), which also rounds the arguments to `f64`.
+/// exact sum of Graham, Knuth and Patashnik (6.43) for `n - k <= 64`; every
+/// other argument beyond that cost overflows to `+∞`.
 ///
 /// # Examples
 ///
