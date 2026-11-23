@@ -41,7 +41,7 @@
 //! | `ellipk(m)` | [`ellipk`] | 5e-30 |
 //! | `ellipkm1(p)` | [`ellipkm1`] | 1e-30 |
 //! | `ellipe(m)` | [`ellipe`] | 1e-30 |
-//! | `ellipkinc(phi, m)` | [`ellipkinc`] | 1e-30 (the argument `phi` enters the result with the condition number of `F`, up to `1/√(1 - m)` near `phi = π/2`) |
+//! | `ellipkinc(phi, m)` | [`ellipkinc`] | 1e-30 (the argument `phi` enters the result with the condition number of `F`, up to `1/√(1 - m)` near `phi = π/2`; for `m = 1` and `phi = 1.5707963267948966` `f64` gives `+∞` as xsf, `Df64` the finite exact value) |
 //! | `ellipeinc(phi, m)` | [`ellipeinc`] | 1e-30 |
 //! | `ellipj(u, m)` (`sn`, `cn`, `dn`) | [`ellipj`] | 1e-29, plus an absolute error of 24 ε `max(1, abs(u) √max(1, 1 - m))` `max(1, abs(value))`, ε = 2^-105: the phase of `u` carries a relative error ε |
 //! | `ellipj(u, m)` (`ph`) | [`ellipj`] | 5e-30 |
@@ -603,8 +603,11 @@ pub fn ellipe<T: Real>(m: T) -> T {
 ///
 /// F is odd in `φ` and `F(φ + nπ | m) = F(φ | m) + 2n K(m)`. `ellipkinc(φ, 0) = φ`;
 /// NaN for `m > 1`; `ellipkinc(±∞, m) = ±∞` and `ellipkinc(φ, -∞) = 0`. For
-/// `m = 1` the integral is `asinh(tan φ)`, and `+∞` for `|φ| >= π/2` as in xsf
-/// (the `f64` path compares with the `f64` value of π/2).
+/// `m = 1` the integral is `asinh(tan φ)`, and `+∞` for `|φ| >= π/2`. Each type
+/// compares with its own value of π/2: the `f64` value 1.5707963267948966 is
+/// 6.1e-17 below π/2, so `ellipkinc(1.5707963267948966_f64, 1.0)` is `+∞` as in
+/// xsf, while the same number as a double-double gives the exact
+/// `atanh(sin φ)` = 38.025003373828866.
 ///
 /// # Examples
 ///
