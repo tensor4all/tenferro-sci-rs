@@ -186,6 +186,31 @@ cases:
   descent for every `m < 1` and the closed forms at `m = 1`, and is checked at
   these points.
 
+## scipy/xsf: `elliprj` is NaN for one huge `x`, `y` or `z`
+
+- **Affects:** xsf `31177fd9` (`include/xsf/ellint_carlson/_rj.hh`) and SciPy 1.18.1
+  (checked), `elliprj(x, y, z, p)` when one of `x`, `y`, `z` exceeds about
+  3.7e156 (10^156.57, in the `f64` path of this crate: 1e156 is finite, 1e157 is
+  NaN) with the others of order 1.
+- **Example:** `elliprj(1, 2, z, 4)` is `5.97353250106694e-79` for `z = 1e156`
+  and NaN for `z = 1e157, 1e160, 1e170, 1e180, 1e300` (the true value at
+  `z = 1e180` is `5.97353250106694e-91`, which `Df64` returns). A huge `p` is
+  not affected: `elliprj(1, 2, 3, 1e300)` is `2.1808378064067243e-300`.
+- **Cause:** not investigated further; the duplication overflows in an
+  intermediate product of the large argument.
+- **Neighbors:** `elliprf` has no such limit (finite up to `f64::MAX`). `elliprd`,
+  `elliprg` (one huge argument in third position) and `elliprc(1, y)` are NaN
+  only within a factor of about 3 of `f64::MAX` (above 6e307, 6e307 and 9e307),
+  where the result is far below the smallest subnormal anyway for `elliprd` and
+  `elliprc` (`elliprd(1, 2, 1e300)` is `0.0`).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port and has the same NaNs. No
+  xsref table exists for `elliprj`, and the largest argument of any `elliprj`
+  reference row is 1e90, so no test row is affected. The `Df64` path is
+  accurate (checked to 5e-32 at ratios up to 1e180) and returns NaN, by design,
+  when the largest and smallest nonzero argument differ by more than 2^600
+  (`elliprj` in `lib.rs`; `df64_elliprj_ratio_limit_is_fail_fast`).
+
 ## scipy/xsf: `ellipkinc(phi, 1)` is `+inf` at the `f64` value of pi/2, where `F` is finite
 
 - **Affects:** xsf `31177fd9` (`cephes/ellik.h`), `abs(phi) >= (double)M_PI_2`.
