@@ -9,5 +9,7 @@ rust-version = "1.96"
 repository = "https://github.com/tensor4all/tenferro-sci-rs"
 
 [workspace.dependencies]
+# Exact pin: the families it provides are re-exported by `specials`.
+few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
 xprec = "0.2.3"

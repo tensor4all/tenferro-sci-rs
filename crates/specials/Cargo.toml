@@ -16,5 +16,6 @@ default = ["xprec"]
 xprec = ["dep:xprec"]
 
 [dependencies]
+few_special_functions.workspace = true
 num-traits.workspace = true
 xprec = { workspace = true, optional = true }
