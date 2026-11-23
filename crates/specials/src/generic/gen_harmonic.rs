@@ -14,6 +14,7 @@
 //! double-double epsilon. The special values follow xsf's `gen_harmonic`.
 
 use super::tables::ZETA_M1;
+use super::{add, div, mul};
 use crate::real::{c, k, Real};
 
 /// `i^-a` for a positive `i`: an integer power when `a` is an integer, else
@@ -50,13 +51,15 @@ fn pow_neg<T: Real>(i: T, a: T) -> T {
 /// `Σ_{i=lo}^{hi} i^-a` over integers, smallest terms first.
 fn sum_powers<T: Real>(lo: u64, hi: u64, a: T) -> T {
     let mut sum = T::zero();
+    // `add`, not `+`: once a term overflows the double-double sum carries (inf, NaN), and a
+    // raw addition turns the whole sum into NaN instead of the infinity the f64 path gives.
     if a >= T::zero() {
         for i in (lo..=hi).rev() {
-            sum = sum + pow_neg(k::<T>(i as f64), a);
+            sum = add(sum, pow_neg(k::<T>(i as f64), a));
         }
     } else {
         for i in lo..=hi {
-            sum = sum + pow_neg(k::<T>(i as f64), a);
+            sum = add(sum, pow_neg(k::<T>(i as f64), a));
         }
     }
     sum
@@ -96,13 +99,31 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
     }
     let nn = big_n.approx_f64() as u64;
     let head = sum_powers(1, nn - 1, a);
-    if head.is_infinite() || head.is_nan() {
-        return head;
+    // Judge the value, not the type predicate: a double-double that overflowed carries
+    // (hi = inf, lo = NaN), and `is_infinite()` on that pair is false, so the guard would
+    // let the NaN through and the result would differ from the f64 path.
+    let head_f64 = head.approx_f64();
+    if !head_f64.is_finite() {
+        return if head_f64.is_nan() {
+            T::nan()
+        } else {
+            T::infinity()
+        };
     }
 
     let eps = T::epsilon();
     let one = T::one();
     let pn = pow_neg(n, a); // n^-a
+                            // `a < 0` and large `|a|` overflow here, and then the sum diverges: return +inf rather
+                            // than carry an infinity into the correction loop, where `inf - inf` is NaN in both
+                            // strategies and only the double-double one used to survive to the result.
+    if !pn.approx_f64().is_finite() {
+        return if pn.approx_f64().is_nan() {
+            T::nan()
+        } else {
+            T::infinity()
+        };
+    }
     let p_big = pow_neg(big_n, a); // N^-a
                                    // Integral.
     let oma = one - a;
@@ -115,7 +136,9 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
         }
         big_n * p_big * u.exp_m1() / oma
     };
-    let mut tail = integral + (p_big + pn) / k(2.0);
+    // `add`/`mul`, not raw operators: `p_big` can be infinite (1000^-(-300)), and a raw
+    // multiply would make the Df64 error term NaN where the f64 path returns +inf.
+    let mut tail = add(integral, div(add(p_big, pn), k(2.0)));
     // Correction terms; `xn = n^(-a-2j+1)` and `xb = N^(-a-2j+1)`.
     let mut xn = pn / n;
     let mut xb = p_big / big_n;
@@ -126,13 +149,16 @@ pub(crate) fn gen_harmonic<T: Real>(n: T, a: T) -> T {
     let mut bern = k::<T>(2.0) * inv_two_pi2 * zeta_even::<T>(1); // B_2/2!
     let mut poch_odd = a; // (a)_{2j-1}
     for j in 1..60_usize {
-        let term = -bern * poch_odd * (xn - xb);
-        tail = tail + term;
+        let term = -mul(mul(bern, poch_odd), add(xn, -xb));
+        tail = add(tail, term);
         if term.abs() <= eps * (head + tail).abs() {
             break;
         }
         // Advance to j + 1.
-        poch_odd = poch_odd * (a + k(2.0 * j as f64 - 1.0)) * (a + k(2.0 * j as f64));
+        poch_odd = mul(
+            mul(poch_odd, add(a, k(2.0 * j as f64 - 1.0))),
+            add(a, k(2.0 * j as f64)),
+        );
         xn = xn * in2;
         xb = xb * ib2;
         let sign = if (j + 1) % 2 == 1 {

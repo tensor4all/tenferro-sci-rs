@@ -6,7 +6,7 @@
 //! ψ'(1-x) <= ψ'(1) < 1.65 for `x <= 0`.
 
 use super::zeta::zeta;
-use super::{div, mul, sinpi};
+use super::{add, div, mul, sinpi};
 use crate::real::{k, Real};
 
 /// ψ'(x). Poles at zero and the negative integers give `+∞`; NaN at `-∞`.
@@ -27,5 +27,7 @@ pub(crate) fn trigamma<T: Real>(x: T) -> T {
         return T::infinity();
     }
     let c = div(T::PI(), sinpi(x));
-    mul(c, c) - zeta(k(2.0), T::one() - x)
+    // `add`, not `-`: the subtrahend can overflow to infinity for tiny `|x|`, and a raw
+    // subtraction would turn the error term into NaN where the f64 path returns +inf.
+    add(mul(c, c), -zeta(k(2.0), T::one() - x))
 }

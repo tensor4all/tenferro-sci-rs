@@ -878,3 +878,29 @@ fn stirling2_gh_354<T: Num>() {
 fn stirling2_gh_354_test() {
     for_both!(stirling2_gh_354);
 }
+
+// ------------------------------------------------- non-finite agreement between strategies
+//
+// Both strategies must return the same non-finite value (`generic/mod.rs`). A double-double
+// intermediate that overflows carries `(inf, NaN)`, so a raw `*`/`+` turned it into NaN where
+// the f64 path returns +inf. Review reproducer, reported against the gamma-family PR.
+fn non_finite_agreement() {
+    let cases = [(1000.0f64, -300.0f64), (1000.0, -400.0), (2000.0, -350.0)];
+    for (n, a) in cases {
+        let f = specials::gen_harmonic(n, a);
+        let d = specials::gen_harmonic(xprec::Df64::from(n), xprec::Df64::from(a)).to_f64();
+        assert_eq!(f, f64::INFINITY, "gen_harmonic({n},{a}) f64");
+        assert_eq!(d, f64::INFINITY, "gen_harmonic({n},{a}) Df64");
+    }
+    for x in [-1e-200f64, -1e-160, -1e-155] {
+        let f = specials::trigamma(x);
+        let d = specials::trigamma(xprec::Df64::from(x)).to_f64();
+        assert_eq!(f, f64::INFINITY, "trigamma({x}) f64");
+        assert_eq!(d, f64::INFINITY, "trigamma({x}) Df64");
+    }
+}
+
+#[test]
+fn non_finite_agreement_test() {
+    non_finite_agreement();
+}
