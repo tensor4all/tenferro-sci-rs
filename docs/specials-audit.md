@@ -1,10 +1,8 @@
 # Numerical audit guide for `specials`
 
-Apply this guide when implementing or reviewing a change to a special-function
-kernel, its public dispatch, its reference tests, or a dependency whose
-functions the crate re-exports. The repository's
-[numerical validation rules](../REPOSITORY_RULES.md#numerical-validation)
-also apply.
+When this guide applies is stated once, in the repository's
+[numerical validation rules](../REPOSITORY_RULES.md#numerical-validation),
+which also apply.
 
 ## Map the public paths
 
@@ -60,23 +58,31 @@ where they pin a boundary. A random sweep complements this set.
 - Store fixtures and versioned regeneration scripts with the tests. A
   regression test for a fix must fail on the old behavior. Record skipped
   cases and why they are skipped.
-- Check which configuration actually runs a test before citing it. As of
-  `main` at `8bf9363`, every public-API `f64` reference and parity suite is
-  gated as a whole file by `#![cfg(feature = "xprec")]`:
-  `crates/specials/tests/reference.rs`, `xsref.rs`, `xsf_regressions.rs`,
-  `review_regressions.rs` and `carlson_scaling.rs`. Under `cargo test -p specials --no-default-features`
-  they compile to zero tests; only the unit tests,
-  `tests/few_special_functions.rs` and the doc tests run. A green run without
-  `xprec` therefore proves nothing about `f64` accuracy or SciPy parity. Cite
-  the default-feature run and name the tests in its output. A new test that
-  claims to cover `f64` without `xprec` gates only its `Df64` items and shows
-  its test names, with a nonzero count, in the `--no-default-features` output.
+- Check which configuration actually runs a test before citing it. When
+  this guide was written (`main` at `8bf9363`), every public-API `f64`
+  reference and parity suite was gated as a whole file by
+  `#![cfg(feature = "xprec")]`: `crates/specials/tests/reference.rs`,
+  `xsref.rs`, `xsf_regressions.rs`, `review_regressions.rs` and
+  `carlson_scaling.rs`. Under `cargo test -p specials --no-default-features`
+  these files compile to zero tests. What still runs there is the unit test
+  `generic_algorithms_in_f64_match_mpmath` (the adaptive algorithms
+  instantiated with `f64`, not the public `f64` dispatch),
+  `tests/few_special_functions.rs` (the re-exported families against mpmath)
+  and the doc tests (public-API values with loose bounds). A green run without
+  `xprec` is therefore no evidence for the rows of those five files; cite the
+  default-feature run, with the test names, for them. A failure without
+  `xprec` is real evidence, like any other. Check the `running N tests` lines
+  rather than assuming a file ran.
+- To make a new test cover `f64` without `xprec`, gate only its `Df64` items
+  and show its test names, with a nonzero count, in the
+  `--no-default-features` output. The existing suites above do not do this
+  yet; [#30](https://github.com/tensor4all/tenferro-sci-rs/issues/30) tracks
+  restructuring them. Update this item when it lands.
 - CI (`.github/workflows/checks.yml`) builds and tests only the default
   features, which include `xprec`. No lane builds or tests
-  `--no-default-features`, so a configuration without `xprec` is checked only
-  by the run a PR shows, and nothing catches it breaking later. Restructuring
-  the suites and adding such a lane is tracked in
-  [#30](https://github.com/tensor4all/tenferro-sci-rs/issues/30).
+  `--no-default-features`, and the PR template does not ask for such a run, so
+  nothing checks that configuration unless someone runs it (#30 above also
+  covers adding a lane).
 
 ## Check numerical range and computational work
 
