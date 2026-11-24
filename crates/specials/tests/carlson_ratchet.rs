@@ -624,10 +624,11 @@ fn f64_homogeneity_tol(name: &str, a: &[f64]) -> f64 {
 #[cfg(feature = "xprec")]
 const DF64_HOMOGENEITY_TOL: f64 = 4e-30;
 
-/// Base points of [`f64_homogeneity`] and [`df64_homogeneity`]: every
-/// function, `p` of both signs, a zero argument, and spreads of 2^40, 2^598
-/// and 2^600 (the largest ratio of the `Df64` R_J), where no NaN is
-/// documented.
+/// The 27 base points of [`f64_homogeneity`] and [`df64_homogeneity`]: every
+/// function, `p` of both signs, a zero argument, and spreads of 2^40, 2^582
+/// (an R_J base that reaches a largest argument of 2^1022 with a normal
+/// result), 2^598 and 2^600 (the largest ratio of the `Df64` R_J), where no
+/// NaN is documented.
 fn homogeneity_bases() -> Vec<(&'static str, Vec<f64>)> {
     let mut bases: Vec<(&str, Vec<f64>)> = vec![
         ("elliprc", vec![1.0, 2.0]),
