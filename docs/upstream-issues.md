@@ -277,9 +277,10 @@ cases:
   `2^-272 R_G(1, 2, 3) = 1.847e-82` (homogeneity, DLMF 19.16.2 and 19.16.3).
 - **Upstream:** not reported.
 - **Here:** the `f64` wrappers `xsf::carlson::elliprj` and `elliprg` scale the
-  arguments by an exact power of four when one lies beyond 2^±300 (a deviation
-  from the port, stated in its header); arguments within 2^±300 take xsf's path
-  unchanged. `crates/specials/tests/carlson_scaling.rs` checks both strategies
+  arguments by an exact power of four when one lies beyond 2^±300 and none is
+  subnormal (a deviation from the port, stated in its header); other arguments
+  take xsf's path unchanged, including xsf's treatment of a subnormal argument
+  as zero. `crates/specials/tests/carlson_scaling.rs` checks both strategies
   at 2^±520 and 2^±600 (tensor4all/tenferro-sci-rs#25).
 
 ## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments

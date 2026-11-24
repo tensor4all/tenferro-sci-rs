@@ -224,3 +224,22 @@ fn elliprj_at_the_ratio_limit_centered_near_2_99() {
         assert!(ed <= DF64_TOL, "Df64 p={p:e}: {g:?}, error {ed:e}");
     }
 }
+
+/// The `f64` scaling leaves xsf's treatment of a subnormal argument as zero
+/// alone: with a subnormal argument the arguments are not scaled, and the
+/// results are SciPy 1.18.1's (`scipy.special.elliprg`, `elliprj`).
+#[test]
+fn f64_keeps_xsf_subnormal_as_zero() {
+    // 2^e for the subnormal and normal exponents used here.
+    let p = |e: i32| 2.0_f64.powi(e + 64) / 2.0_f64.powi(64);
+    // R_G(0, 0, z) = √z / 2 with z = 2^-1023, itself subnormal: 2^-512.5.
+    let half_sqrt = 5.2738433074315e-155;
+    assert_eq!(specials::elliprg(p(-1060), p(-1023), p(-1023)), half_sqrt);
+    assert_eq!(specials::elliprg(p(-1030), p(-1030), p(-1023)), half_sqrt);
+    // Two arguments of R_J zero: the pole.
+    assert_eq!(
+        specials::elliprj(p(-1030), p(-1030), p(-400), p(-400)),
+        f64::INFINITY
+    );
+    assert!(specials::elliprj(p(-1060), p(-1060), p(-1023), p(-1023)).is_nan());
+}

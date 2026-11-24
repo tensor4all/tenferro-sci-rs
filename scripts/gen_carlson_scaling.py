@@ -20,9 +20,10 @@ rescaled, is 76.5 instead of -0.565 (see `docs/upstream-issues.md`).
 Every value is computed at 200 and 300 bits, which must agree to 1e-40, and
 printed as a double-double pair `(hi, lo)`. For `p < 0` the value of R_J is
 the Cauchy principal value of DLMF 19.20.14, evaluated from R_J with a
-positive fourth argument, R_F and R_C, and checked against the real part of
-`mp.elliprj` at the base point (at the wide-ratio point it is not: mpmath's
-own value there depends on the working precision).
+positive fourth argument, R_F and R_C. It is checked against Carlson (1995)
+Eq. 2.26, another transformation to positive arguments (the one xsf uses),
+and, at the base points, against the real part of `mp.elliprj` (not at the
+wide-ratio point, where mpmath's value depends on the working precision).
 """
 
 from __future__ import annotations
@@ -60,12 +61,25 @@ def rj_principal(x, y, z, p):
             + 3 * rc(x * z / y, p * q / y)) / (y - p)
 
 
+def rj_principal_carlson(x, y, z, p):
+    """Carlson (1995) Eq. 2.26 for p < 0, with x <= y <= z: the transformation
+    xsf uses, independent of DLMF 19.20.14, which the Df64 path uses."""
+    x, y, z = sorted(mp.mpf(v) for v in (x, y, z))
+    p = mp.mpf(p)
+    q = (x + y - p - x * y / z) / (1 - p / z)
+    pq = -p * q
+    return ((q - z) * mp.elliprj(x, y, z, q) - 3 * mp.elliprf(x, y, z)
+            + 3 * mp.sqrt(x * y * z / (x * y + pq)) * mp.elliprc(x * y + pq, pq)) / (z - p)
+
+
 def rj(x, y, z, p, check=True):
     """R_J; for p < 0 the principal value, checked against mpmath's real part
     unless `check` is false (see the module docstring)."""
     if p > 0:
         return mp.elliprj(x, y, z, p)
     v = rj_principal(x, y, z, p)
+    w = rj_principal_carlson(x, y, z, p)
+    assert abs(w - v) <= abs(v) * mp.mpf(10) ** -40, (v, w)
     if check:
         assert abs(mp.re(mp.elliprj(x, y, z, p)) - v) <= abs(v) * mp.mpf(10) ** -40
     return v
@@ -95,7 +109,8 @@ def main() -> None:
     assert rjp == dd(stable(lambda: mp.elliprd(*a[:3])))
     print("elliprj", "(2^-201, 1, 2^399, 2^399)", rjp)
     # mpmath's real part is wrong here at 200 and 300 bits (-7.9e-179, -1.58e-178)
-    # and reaches the DLMF 19.20.14 value only at 600 bits, so it is not checked.
+    # and reaches the DLMF 19.20.14 value only at 600 bits, so it is not checked;
+    # Carlson (1995) Eq. 2.26 is (in `rj`).
     print("elliprj", "(2^-201, 1, 2^399, -2^399)",
           dd(stable(lambda: rj(2.0**-201, 1.0, t, -t, check=False))))
 

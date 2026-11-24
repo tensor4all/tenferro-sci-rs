@@ -16,10 +16,11 @@
 //! asymptotic case `tinyx` (never selected upstream) and the compensated
 //! complex arithmetic are not ported; `std::sort` on at most three entries is
 //! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] scale their
-//! arguments by an exact power of four when one lies beyond 2^±300 (see
-//! [`scale_exponent`]): xsf forms products of up to three arguments before
-//! any scaling and returns NaN from about 2^±341 (R_J) and 2^±512 (R_G) on,
-//! although the integrals are finite there (tensor4all/tenferro-sci-rs#25).
+//! arguments by an exact power of four when one lies beyond 2^±300 and none
+//! is subnormal (see [`scale_exponent`]): xsf forms products of up to three
+//! arguments before any scaling and returns NaN or 0 from about 2^±341 (R_J)
+//! and 2^±512 (R_G) on, although the integrals are finite and nonzero there
+//! (tensor4all/tenferro-sci-rs#25).
 
 use core::f64::consts::PI;
 
@@ -987,18 +988,29 @@ pub(crate) fn elliprf(x: f64, y: f64, z: f64) -> f64 {
 /// R_G `z (x + y)`, which leave the `f64` range from 2^±341 and 2^±512 on.
 const UNSCALED_BITS: i32 = 300;
 
-/// `j` such that the arguments scaled by `4^-j` lie within
-/// 2^±[`UNSCALED_BITS`] (not in xsf; tensor4all/tenferro-sci-rs#25).
+/// `j` for scaling the arguments by `4^-j` before xsf forms its products
+/// (not in xsf; tensor4all/tenferro-sci-rs#25). R_G and R_J are homogeneous
+/// of degree 1/2 and -3/2 (DLMF 19.16.3, 19.16.2), and scaling a normal
+/// argument by a power of four is exact.
 ///
-/// 0 (no scaling, the path of xsf) when they already do. Otherwise the
-/// geometric mean of the largest and the smallest nonzero finite argument is
-/// centered at 1; when their ratio is too wide for that, only the largest is
-/// brought toward the bound, as far as every nonzero argument stays above
-/// 2^-1000. Scaling by a power of four is then exact, and R_G and R_J are
-/// homogeneous of degree 1/2 and -3/2 (DLMF 19.16.3, 19.16.2).
+/// 0, so that xsf's path is unchanged, when every nonzero finite argument
+/// lies within 2^±[`UNSCALED_BITS`], and when one is subnormal: xsf treats a
+/// subnormal argument as zero, and scaling it up would undo that. Otherwise:
+///
+/// * if the largest and the smallest nonzero argument are at most
+///   2^(2 [`UNSCALED_BITS`]) apart, their geometric mean is centered at 1, so
+///   every argument lies within 2^±([`UNSCALED_BITS`] + 2);
+/// * if they are farther apart and the largest is above
+///   2^[`UNSCALED_BITS`], it is scaled down toward that bound, but only as
+///   far as the smallest stays above 2^-1000 (possibly not at all);
+/// * if they are farther apart and the largest is below
+///   2^-[`UNSCALED_BITS`], it is scaled up to that bound.
 fn scale_exponent(args: &[f64]) -> i32 {
     let (mut max, mut min) = (i32::MIN, i32::MAX);
     for v in args.iter().map(|a| a.abs()) {
+        if v.is_subnormal() {
+            return 0;
+        }
         if v != 0.0 && v.is_finite() {
             let e = v.log2().floor() as i32;
             max = max.max(e);
