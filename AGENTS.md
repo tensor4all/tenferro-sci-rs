@@ -13,10 +13,9 @@ Then read, in this order:
 3. [`CONTRIBUTING.md`](CONTRIBUTING.md), which points to the rules shared by
    every tensor4all Rust repository (issues, PR evidence, gates, review).
 
-For changes to `specials`, the
-[numerical validation rules](REPOSITORY_RULES.md#numerical-validation) require
-the [special-functions audit guide](docs/specials-audit.md); that section
-states when it applies.
+The [numerical validation rules](REPOSITORY_RULES.md#numerical-validation)
+state when the [special-functions audit guide](docs/specials-audit.md) must be
+applied.
 
 Short version of the repository rules:
 

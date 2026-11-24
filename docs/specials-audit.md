@@ -59,20 +59,28 @@ where they pin a boundary. A random sweep complements this set.
   regression test for a fix must fail on the old behavior. Record skipped
   cases and why they are skipped.
 - Check which configuration actually runs a test before citing it. When
-  this guide was written (`main` at `8bf9363`), every public-API `f64`
-  reference and parity suite was gated as a whole file by
-  `#![cfg(feature = "xprec")]`: `crates/specials/tests/reference.rs`,
-  `xsref.rs`, `xsf_regressions.rs`, `review_regressions.rs` and
-  `carlson_scaling.rs`. Under `cargo test -p specials --no-default-features`
-  these files compile to zero tests. What still runs there is the unit test
+  this guide was written (`main` at `8bf9363`), the five suites with the
+  public-API `f64` reference and parity rows of the ported functions were
+  gated as a whole file by `#![cfg(feature = "xprec")]`:
+  `crates/specials/tests/reference.rs`, `xsref.rs`, `xsf_regressions.rs`,
+  `review_regressions.rs` and `carlson_scaling.rs`. Under
+  `cargo test -p specials --no-default-features` these files compile to zero
+  tests. What still runs there: two unit tests,
   `generic_algorithms_in_f64_match_mpmath` (the adaptive algorithms
-  instantiated with `f64`, not the public `f64` dispatch),
-  `tests/few_special_functions.rs` (the re-exported families against mpmath)
-  and the doc tests (public-API values with loose bounds). A green run without
-  `xprec` is therefore no evidence for the rows of those five files; cite the
+  instantiated with `f64`, not the public `f64` dispatch) and
+  `sinpi_is_exact_at_half_integers_and_odd_in_x` (the third,
+  `near_diagonal_matches_the_recurrence`, is gated); the ungated
+  `tests/few_special_functions.rs` (the public re-exported families against
+  mpmath); and the doc tests. The doc-test count is 32 in both
+  configurations, because examples such as the double-double one in
+  `src/lib.rs` and a line in `src/real.rs` sit behind
+  `# #[cfg(feature = "xprec")]` and assert nothing without the feature, so
+  that count does not show what was checked. A green run without `xprec` is
+  therefore no evidence for the rows of the five gated files; cite the
   default-feature run, with the test names, for them. A failure without
-  `xprec` is real evidence, like any other. Check the `running N tests` lines
-  rather than assuming a file ran.
+  `xprec` is real evidence, like any other. Check the `running N tests` lines,
+  and which assertions a passing test contains, rather than assuming a file
+  ran.
 - To make a new test cover `f64` without `xprec`, gate only its `Df64` items
   and show its test names, with a nonzero count, in the
   `--no-default-features` output. The existing suites above do not do this
