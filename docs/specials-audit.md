@@ -59,9 +59,24 @@ where they pin a boundary. A random sweep complements this set.
   [the upstream findings log](upstream-issues.md).
 - Store fixtures and versioned regeneration scripts with the tests. A
   regression test for a fix must fail on the old behavior. Record skipped
-  cases and why they are skipped. Keep public `f64` tests runnable without
-  `xprec`; put the feature gate on assertions that need `Df64` and confirm
-  the relevant test names run in both configurations.
+  cases and why they are skipped.
+- Check which configuration actually runs a test before citing it. As of
+  `main` at `8bf9363`, every public-API `f64` reference and parity suite is
+  gated as a whole file by `#![cfg(feature = "xprec")]`:
+  `crates/specials/tests/reference.rs`, `xsref.rs`, `xsf_regressions.rs`,
+  `review_regressions.rs` and `carlson_scaling.rs`. Under `cargo test -p specials --no-default-features`
+  they compile to zero tests; only the unit tests,
+  `tests/few_special_functions.rs` and the doc tests run. A green run without
+  `xprec` therefore proves nothing about `f64` accuracy or SciPy parity. Cite
+  the default-feature run and name the tests in its output. A new test that
+  claims to cover `f64` without `xprec` gates only its `Df64` items and shows
+  its test names, with a nonzero count, in the `--no-default-features` output.
+- CI (`.github/workflows/checks.yml`) builds and tests only the default
+  features, which include `xprec`. No lane builds or tests
+  `--no-default-features`, so a configuration without `xprec` is checked only
+  by the run a PR shows, and nothing catches it breaking later. Restructuring
+  the suites and adding such a lane is tracked in
+  [#30](https://github.com/tensor4all/tenferro-sci-rs/issues/30).
 
 ## Check numerical range and computational work
 
@@ -78,7 +93,9 @@ iteration bounds, costly primitives, allocations, and duplicate evaluations
 on fallback paths. Compare ordinary, boundary and worst supported regimes.
 Use deterministic work counts or a progress test for termination regressions.
 For timing claims, follow the shared
-[benchmark rules](https://github.com/tensor4all/tensor4all-agent-rules/blob/main/rules/benchmark/index.md).
+[benchmark rules](https://github.com/tensor4all/tensor4all-agent-rules/blob/7e0caf09745b422610aaf45710301d59a0ef3514/rules/benchmark/index.md)
+(pinned to the revision this guide was written against; check `main` of
+`tensor4all-agent-rules` for later changes).
 Pin the revision, build mode and case matrix. Verify the timed results against
 the same contract. Report source-level cost findings and timeouts with their
 limits when an isolated timing comparison is unavailable.
