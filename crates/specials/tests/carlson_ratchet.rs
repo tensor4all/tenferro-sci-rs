@@ -32,7 +32,7 @@
 //! threshold band lives) and runs in every configuration; `xprec::Df64` takes
 //! `Strategy::Adaptive` (the duplication algorithms, where the generic overflow
 //! lived) and needs the `xprec` feature (on by default). Only the `Df64` tests
-//! are gated, so `cargo test --no-default-features` still runs the five tests
+//! are gated, so `cargo test --no-default-features` still runs the six tests
 //! that do not need it.
 //!
 //! Checks:
@@ -42,8 +42,9 @@
 //!   regime ([`f64_tolerance`], `df64_tolerance`). A row may allow NaN for one
 //!   strategy where the crate documents NaN; a finite value must then still be
 //!   within tolerance.
-//! * [`table_contents_are_pinned`]: the rows per regime and the reproducers of
-//!   the review findings are still in the table.
+//! * [`table_contents_are_pinned`], [`nan_flags_follow_the_documented_rule`]:
+//!   the rows per regime and the reproducers of the review findings are still
+//!   in the table, and a row may pass as NaN only where the crate documents it.
 //! * [`f64_matches_scipy`]: the `f64` path against SciPy 1.16.3 wherever it
 //!   does not scale the arguments, including SciPy's NaN and 0.
 //! * [`f64_homogeneity`], `df64_homogeneity` and the `beyond_spread_600`
@@ -131,10 +132,13 @@ fn rel<T: Real>(got: T, want: (f64, f64)) -> f64 {
 /// argument beyond 2^±300, none subnormal, and exponents at most 600 apart.
 ///
 /// Used only to leave such rows out of [`f64_matches_scipy`] (SciPy does not
-/// scale). No tolerance depends on it. If the crate's private rule drifts from
-/// this copy, a row the crate no longer scales is skipped there but still
-/// checked against mpmath at the tight tolerance, and a row it newly scales
-/// fails the SciPy comparison loudly.
+/// scale), and [`SCIPY_ROWS`] pins how many rows that leaves. No tolerance
+/// depends on it. If the crate's private rule drifts from this copy, a row the
+/// crate no longer scales is skipped there but still checked against mpmath at
+/// the ordinary tolerance. A row it newly scales is caught by the SciPy
+/// comparison only where xsf's unscaled value is off by more than 1e-10 (where
+/// it is better, the crate returns that unscaled value unchanged, so the
+/// output is the same either way).
 fn f64_window(name: &str, args: &[f64]) -> bool {
     if !matches!(name, "elliprg" | "elliprj") || args.iter().any(|v| v.is_subnormal()) {
         return false;
@@ -215,8 +219,12 @@ fn f64_tolerance(r: &Row) -> f64 {
     tf
 }
 
-/// The largest tolerance of a principal value: the documented 1e-10 above
-/// which a scaling path returns NaN (`pv_ill_conditioned` in the crate).
+/// The largest tolerance of a principal value, 1e-10. Where the crate scales,
+/// it returns NaN when `cond ε > 1e-10` (`pv_ill_conditioned`), with `cond`
+/// its own estimate, so a finite value it returns is expected within about
+/// that. This test allows `4 cond ε` up to the cap: for a row with
+/// `2.5e-11 < cond ε <= 1e-10` the cap, not `4 cond ε`, would bind. No row
+/// with a finite value has `cond ε` above 1.6e-11 today.
 const PV_MAX: f64 = 1e-10;
 
 /// The `Df64` counterpart of [`f64_tolerance`]: 1e-30, and `4 cond ε`, at
@@ -255,7 +263,10 @@ fn check_table<T: Real>(label: &str, tolerance: fn(&Row) -> f64, nan_ok: fn(&Row
             .entry((r.regime.as_str(), r.name.as_str()))
             .or_default();
         // In `f64_top_range` the documented failure includes 0 (xsf).
-        let excused = nan_ok && (got.is_nan() || (r.regime == "f64_top_range" && got == T::zero()));
+        // R_C in `f64_top_range` also returns 0 there (xsf); nothing else may.
+        let excused = nan_ok
+            && (got.is_nan()
+                || (r.regime == "f64_top_range" && r.name == "elliprc" && got == T::zero()));
         w.2 += 1;
         if got.is_nan() || excused {
             w.1 += 1;
@@ -306,6 +317,8 @@ fn df64_reference_table() {
 const ROW_COUNTS: &[(&str, &str, usize)] = &[
     ("f64_top_range", "elliprc", 6),
     ("f64_top_range", "elliprf", 3),
+    ("f64_top_range", "elliprg", 1),
+    ("f64_top_range", "elliprj", 3),
     ("kept_xsf", "elliprg", 2),
     ("kept_xsf", "elliprj", 1),
     ("ordinary", "elliprc", 8),
@@ -366,6 +379,41 @@ fn required_rows() -> Vec<(&'static str, Vec<f64>)> {
     ]
 }
 
+/// The rows the reference test excuses with NaN are exactly those the crate
+/// documents NaN for, so a regeneration cannot weaken a row by setting its
+/// flag: `f64` R_J and R_G with exponents more than 600 bits apart (left to
+/// xsf), `f64` R_C and R_F at 2^1022 and above (`f64_top_range`), `Df64` R_J
+/// with a ratio above 2^600 (`RJ_RATIO_BITS`), and the ill-conditioned
+/// principal values in both strategies.
+#[test]
+fn nan_flags_follow_the_documented_rule() {
+    let mut failures = Vec::new();
+    for r in table() {
+        let nz: Vec<f64> = r
+            .args
+            .iter()
+            .filter(|v| **v != 0.0)
+            .map(|v| v.abs())
+            .collect();
+        let exps: Vec<i32> = nz.iter().map(|v| v.log2().floor() as i32).collect();
+        let floor_spread = exps.iter().max().unwrap_or(&0) - exps.iter().min().unwrap_or(&0);
+        let max = nz.iter().copied().fold(0.0, f64::max);
+        let min = nz.iter().copied().fold(f64::INFINITY, f64::min);
+        let ill = r.regime == "pv_ill_conditioned";
+        let f64_rule = ill
+            || (matches!(r.name.as_str(), "elliprj" | "elliprg") && floor_spread > 600)
+            || (matches!(r.name.as_str(), "elliprc" | "elliprf") && max.log2() >= F64_TOP_BITS);
+        let df64_rule = ill || (r.name == "elliprj" && (max / min).log2() > 600.0);
+        if r.f64_nan_ok != f64_rule || r.df64_nan_ok != df64_rule {
+            failures.push(format!(
+                "line {} {}{:?}: flags ({}, {}), rule ({f64_rule}, {df64_rule})",
+                r.line, r.name, r.args, r.f64_nan_ok, r.df64_nan_ok
+            ));
+        }
+    }
+    assert_no_failures(failures);
+}
+
 /// The table has the pinned number of rows in every regime and contains the
 /// reproducers of [`required_rows`], so a regeneration cannot silently drop
 /// the rows this suite exists for.
@@ -388,6 +436,10 @@ fn table_contents_are_pinned() {
         );
     }
 }
+
+/// Rows of [`f64_matches_scipy`]: every row outside [`f64_window`]. Pinned so
+/// that a drift of that copy cannot empty the comparison.
+const SCIPY_ROWS: usize = 515;
 
 /// The `f64` path against SciPy 1.16.3 where it does not scale the arguments
 /// (there it is xsf's code, unchanged): 2e-15 for R_J and 1e-15 for the
@@ -417,6 +469,7 @@ fn f64_matches_scipy() {
         }
     }
     println!("{checked} rows compared with SciPy");
+    assert_eq!(checked, SCIPY_ROWS, "rows compared with SciPy");
     assert!(
         failures.is_empty(),
         "{} failures:\n{}",
@@ -458,8 +511,9 @@ fn pow2(e: i32) -> f64 {
 /// `docs/upstream-issues.md`, "`elliprj` is NaN for one huge ..."): for example
 /// `elliprc(2^1022, -2^1022)` is NaN and `elliprf(2^1022, 2^1023, 3 2^1022)`
 /// is NaN, pinned with SciPy's values by the `f64_top_range` rows. There
-/// [`f64_homogeneity`] accepts NaN or 0 from `f64`, never a wrong nonzero
-/// value. The `Df64` path is checked up to `f64::MAX`.
+/// [`f64_homogeneity`] accepts NaN or 0 from the `f64` R_C, NaN from R_F and
+/// R_J, and only the value from R_D and R_G; never a wrong nonzero value. The
+/// `Df64` path is checked up to `f64::MAX`.
 const F64_TOP_BITS: f64 = 1022.0;
 
 /// Exponent spread, in bits, of the nonzero arguments.
@@ -592,6 +646,8 @@ fn homogeneity_bases() -> Vec<(&'static str, Vec<f64>)> {
         ("elliprj", vec![2.0, 3.0, 4.0, -0.5]),
         ("elliprj", vec![1e-6, 1.0, 1e6, 1e-3]),
         ("elliprj", vec![pow2(-20), 1.0, pow2(20), -pow2(10)]),
+        // Reaches a largest argument of 2^1022 with a normal result.
+        ("elliprj", vec![pow2(-582), pow2(-581), 1.0, pow2(-580)]),
     ];
     for (s, p) in [(598, 1.0), (600, 1.0), (600, -1.0)] {
         let half = s / 2;
@@ -640,17 +696,19 @@ fn f64_homogeneity() {
         let base = eval(name, &a);
         assert!(base.is_finite(), "{name}{a:?} = {base:e}");
         let top = |s: &[f64]| s.iter().any(|v| v.abs().log2() >= F64_TOP_BITS);
+        // What the top binades may return instead of the value: xsf's R_C
+        // gives NaN or 0 there, R_F and R_J NaN; R_D and R_G must stay
+        // accurate (see F64_TOP_BITS).
+        let at_top = match name {
+            "elliprc" => Allow::NanZeroOrValue,
+            "elliprf" | "elliprj" => Allow::NanOrValue,
+            _ => Allow::Value,
+        };
         let (w, n, nans, bad) = check_homogeneity(
             name,
             &a,
             base,
-            |s| {
-                if top(s) {
-                    Allow::NanZeroOrValue
-                } else {
-                    Allow::Value
-                }
-            },
+            |s| if top(s) { at_top } else { Allow::Value },
             |_| f64_homogeneity_tol(name, &a),
         );
         println!("{name}{a:?}: {w:.1e} over {n} exponents ({nans} NaN or 0 at the top)");
