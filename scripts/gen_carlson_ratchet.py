@@ -251,7 +251,12 @@ def ratio_near_one():
     for s in (-600, -520, 520, 600):
         for name, pts in shapes.items():
             for a in pts:
-                add(name, "ratio_near_one", [math.ldexp(v, s) for v in a])
+                # The `f64` window keeps xsf's unscaled value here (it agrees
+                # with the scaled one to within `AGREE = 1e-10`), which is
+                # 6.1e-13 off: the documented ceiling of `kept_xsf` applies.
+                kept = name == "elliprg" and s == -520 and a == (1, u1, u2)
+                add(name, "kept_xsf" if kept else "ratio_near_one",
+                    [math.ldexp(v, s) for v in a])
 
 
 def spreads():
@@ -315,7 +320,7 @@ def threshold_band():
     `y <= 1e-26` (Carlson & Gustafson 1994, Proposition J3, an expansion
     in y / z)."""
     one_e9 = 1e-9
-    for p in (5e-10, one_e9, math.nextafter(one_e9, 1.0), 2e-9, 1e-8):
+    for p in (5e-10, one_e9, math.nextafter(one_e9, 1.0), 2e-9, 1e-8, 1e-6, 1e-4):
         for xyz in [(1, 2, 3), (1, 1, 1), (1e-3, 1e-2, 1e-1), (1e-12, 1e-10, 1e-8), (0, 1e-6, 1)]:
             add("elliprj", "threshold_p", (*xyz, p))
     one_e26 = 1e-26
