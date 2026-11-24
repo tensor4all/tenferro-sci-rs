@@ -209,7 +209,7 @@ cases:
   9.2964523864998226e-155), `elliprc(2^1020, -2^1022)` is 0.0 (mpmath
   6.420273070929153e-155), and `elliprf(2^1022, 2^1023, 1.5 2^1023)` is NaN
   (mpmath 1.084362095977639e-154). SciPy 1.16.3 gives the same values, and so
-  does the `f64` path; the `Df64` path is exact there
+  does the `f64` path; the `Df64` path is accurate there to 3e-32
   (`crates/specials/tests/carlson_ratchet.rs`, `F64_TOP_BITS`; found for
   tensor4all/tenferro-sci-rs#27).
 - **Upstream:** not reported.
