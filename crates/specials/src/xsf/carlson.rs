@@ -1008,12 +1008,13 @@ enum Scaling {
     /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the power of four that
     /// brings the argument beyond 2^±[`UNSCALED_BITS`] just inside it (to
     /// 2^±299 or 2^±300), which leaves every argument within
-    /// 2^±([`UNSCALED_BITS`] + 1), so every product of three stays in range. xsf picks some asymptotic
-    /// expansions by absolute thresholds (`p <= 1e-9`, `y <= 1e-26`), so its
-    /// value can depend on the scale by about 1e-11; xsf's unscaled value is
-    /// therefore kept when it agrees with the scaled one to [`AGREE`], and the
-    /// scaled value is used when it does not (the unscaled one is then
-    /// damaged by underflow: off by more than 1e-10, up to a wrong sign).
+    /// 2^±([`UNSCALED_BITS`] + 1), so every product of three stays in range.
+    /// xsf's value depends on the scale (underflow at the caller's arguments;
+    /// absolute thresholds of its asymptotic expansions, `p <= 1e-9`,
+    /// `y <= 1e-26`), so both the unscaled and the scaled value are computed
+    /// and [`arbiter`] chooses: the unscaled one unless an independent
+    /// evaluation shows it to be off by more than [`AGREE`] and the scaled one
+    /// is closer.
     Window(i32),
 }
 
@@ -1142,8 +1143,9 @@ pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
     let scaling = scaling(&[x, y, z, p]);
     // Where the arguments are scaled, a principal value whose transformation
     // cancels has lost its digits whichever of the unscaled and the scaled
-    // value is returned (the condition number does not depend on the scale,
-    // so the two agree); return NaN rather than that.
+    // value is returned (in exact arithmetic the condition number does not
+    // depend on the scale; it is evaluated here at the scaled arguments, where
+    // every product is in range); return NaN rather than that.
     // Only where xsf takes that path (Carlson 1995, text above Eq. 2.26:
     // `x, y, z` real, nonnegative, at most one zero, `p < 0`, all finite); the
     // pole of two zero arguments, an infinite argument and the domain errors
