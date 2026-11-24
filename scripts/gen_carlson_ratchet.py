@@ -382,9 +382,10 @@ def kept_xsf():
 
 def top_range():
     """Arguments in the top binades: xsf's R_C and R_F overflow in a sum of
-    their arguments and return NaN or 0 although the result is about 1e-154
-    (`docs/upstream-issues.md`, "`elliprj` is NaN for one huge ..."), with
-    neighbors one and two binades lower, which are accurate."""
+    their arguments and return NaN (R_C also 0) although the result is about
+    1e-154 (`docs/upstream-issues.md`, "`elliprj` is NaN for one huge ..."),
+    with neighbors one and two binades lower, which are accurate; and R_J and
+    R_G there, which must be accurate."""
     top = [("elliprc", (p2(1022), -p2(1022))), ("elliprc", (p2(1020), -p2(1022))),
            ("elliprc", (p2(1022), p2(1023))), ("elliprf", (p2(1022), p2(1023), p2(1023, 1.5))),
            ("elliprf", (p2(1021), p2(1022), p2(1022, 1.5)))]
@@ -393,6 +394,14 @@ def top_range():
     for name, a in [("elliprc", (p2(1021), -p2(1021))), ("elliprc", (p2(1019), -p2(1021))),
                     ("elliprc", (p2(1020), p2(1021))), ("elliprf", (p2(1020), p2(1021), p2(1021, 1.5)))]:
         add(name, "f64_top_range", a)
+    # R_J and R_G with their largest argument at 2^1022, where the result is
+    # still normal: accurate in both strategies within an exponent spread of
+    # 600 (the `f64` window), and NaN or the value beyond (one huge `z`, the
+    # `add` rule).
+    for a in [(p2(440), p2(441), p2(1022), p2(442)), (p2(440), p2(441), p2(1022), -p2(442)),
+              (1.0, 2.0, p2(1022), 4.0)]:
+        add("elliprj", "f64_top_range", a)
+    add("elliprg", "f64_top_range", (p2(1021), p2(1022), p2(1022, 1.5)))
 
 
 def ill_conditioned():
