@@ -359,9 +359,9 @@ fn f64_scaling_corrects_wrong_finite_values() {
 
 /// Principal values whose transformation (DLMF 19.20.14 in the `Df64` path,
 /// Carlson 1995 Eq. 2.26 in xsf) cancels completely, with condition numbers
-/// of 1e45 to 1e91: `|p|` far below `y`, spreads of 150 to 500 bits, all at
-/// scales `main` evaluates as NaN (found in review round 7, where the scaled
-/// evaluation returned +2.7e154 for -1.6e81). Both strategies must give NaN
+/// of 1e45 to 1e91: `|p|` far below `y`, spreads of 150 to 500 bits, at
+/// scales where both paths scale their arguments (found in review, where the
+/// scaled evaluation returned +2.7e154 for -1.6e81). Both strategies must give NaN
 /// or the value, never a wrong finite number. References: mpmath 1.3.0 with
 /// 400 extra bits, `scripts/gen_carlson_scaling.py`.
 #[test]
@@ -370,6 +370,11 @@ fn ill_conditioned_principal_value_is_nan_not_wrong() {
         ((-675, -475, -175, -575), -1.6484213442199829e+81),
         ((-675, -625, -475, -650), -2.4165269490410304e+216),
         ((-625, -575, -425, -600), -6.396493574267708e+193),
+        // Scaled by the `f64` window, where the unscaled and the scaled value
+        // agree (the condition number does not depend on the scale), so the
+        // check must not depend on which one is returned (review of 62f0191:
+        // 2.26e-72 for -2.78e-145).
+        ((-175, 25, 325, -75), -2.7833734563365376e-145),
     ];
     for ((ex, ey, ez, ep), want) in cases {
         let a = [pow2(ex), pow2(ey), pow2(ez), -pow2(ep)];

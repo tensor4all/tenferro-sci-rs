@@ -148,7 +148,8 @@ def main() -> None:
     def wide(e):
         with mp.workprec(mp.mp.prec + 400):
             return +rj(2.0**e[0], 2.0**e[1], 2.0**e[2], -2.0**e[3], check=False)
-    for e in [(-675, -475, -175, -575), (-675, -625, -475, -650), (-625, -575, -425, -600)]:
+    for e in [(-675, -475, -175, -575), (-675, -625, -475, -650), (-625, -575, -425, -600),
+              (-175, 25, 325, -75), (-275, -75, 225, -175)]:
         print("elliprj", e, dd(stable(lambda: wide(e))))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",

@@ -348,9 +348,9 @@ pub(crate) fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 ///
 /// The combination cancels catastrophically for some arguments (`|p|` far
 /// below `y` with a wide spread: condition numbers of 1e45 and more), at any
-/// scale. Where the arguments had to be scaled, which `main` evaluated as NaN,
-/// such a result is NaN as before rather than a value without correct digits
-/// ([`PV_COND_MAX`]; tensor4all/tenferro-sci-rs#25).
+/// scale. Where the arguments are scaled, such a result is NaN rather than a
+/// value without correct digits ([`pv_ill_conditioned`];
+/// tensor4all/tenferro-sci-rs#25).
 fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
     let j = rj_scale_exponent(&[x, y, z, p]);
     let (r, cond) = rj_principal_core(
@@ -359,16 +359,21 @@ fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
         ldexp(z, -2 * j),
         ldexp(p, -2 * j),
     );
-    if j != 0 && (cond.is_nan() || cond > PV_COND_MAX) {
+    if j != 0 && pv_ill_conditioned(cond, T::epsilon().approx_f64()) {
         return T::nan();
     }
     ldexp(r, -3 * j)
 }
 
-/// Largest condition number of the principal-value combination (DLMF
-/// 19.20.14, Carlson 1995 Eq. 2.26), `(|t1| + |t2| + |t3|) / |t1 + t2 + t3|`,
-/// accepted for a scaled evaluation: beyond it at least six digits are lost.
-pub(crate) const PV_COND_MAX: f64 = 1e6;
+/// Whether the principal-value combination (DLMF 19.20.14, Carlson 1995
+/// Eq. 2.26), with condition number `cond` = `(|t1| + |t2| + |t3|) /
+/// |t1 + t2 + t3|`, can lose more than a relative 1e-10 when its terms carry
+/// relative errors of `eps`: then fewer than about ten digits are left. The
+/// condition number is scale invariant, so the test applies to the unscaled
+/// and the scaled evaluation alike.
+pub(crate) fn pv_ill_conditioned(cond: f64, eps: f64) -> bool {
+    cond.is_nan() || cond * eps > 1e-10
+}
 
 /// [`rj_principal`] for arguments already scaled by [`rj_scale_exponent`],
 /// with the condition number of the combination.

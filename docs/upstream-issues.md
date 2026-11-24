@@ -302,16 +302,18 @@ cases:
   of three terms (R_J with a positive fourth argument, R_F, R_C) that cancel.
   With `x << |p| << y << z` and a wide spread their condition number reaches
   1e45 to 1e91 (mpmath 1.3.0 at 400 bits).
-- **Example:** `elliprj(2^-175, 2^25, 2^325, -2^-75)` is `-2.78337e-145`
-  (DLMF 19.20.14 and Eq. 2.26 in mpmath, agreeing at 400 and 800 bits); SciPy
-  and the `f64` path give `2.263919769706678e-72`, the `Df64` path
-  `5.026911708464872e-88`.
+- **Example:** `elliprj(2^-275, 2^-75, 2^225, -2^-175)` is
+  `-3.972563343495336e-100` (DLMF 19.20.14 and Eq. 2.26 in mpmath with 400
+  extra bits, agreeing to 1e-40); SciPy and the `f64` path give
+  `6.462348535570529e-27`, the `Df64` path `7.174648137343064e-43`.
 - **Upstream:** not reported.
-- **Here:** at arguments within 2^±300 both paths return the value as
-  computed, as before. Where they scale the arguments
-  (tensor4all/tenferro-sci-rs#25) they compute the condition number of the
-  DLMF 19.20.14 combination and return NaN above 1e6, as `main` and SciPy did
-  at those scales, instead of a value without correct digits. A remedy for
+- **Here:** where a path scales the arguments (tensor4all/tenferro-sci-rs#25;
+  the `f64` path when one lies beyond 2^±300 and they are at most 2^600 apart,
+  the `Df64` path also when their center lies beyond 2^±100), it computes the
+  condition number of the DLMF 19.20.14 combination and returns NaN when it
+  can cost more than a relative 1e-10 (above about 9e5 for `f64`, 2e21 for
+  `Df64`), instead of a value without correct digits. Elsewhere, as in the
+  example, both paths return the value as computed, as before. A remedy for
   all scales (a transformation that does not cancel there) is separate work.
 
 ## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments

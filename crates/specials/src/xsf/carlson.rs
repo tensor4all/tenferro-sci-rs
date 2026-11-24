@@ -25,7 +25,7 @@
 
 use core::f64::consts::PI;
 
-use crate::generic::carlson::PV_COND_MAX;
+use crate::generic::carlson::pv_ill_conditioned;
 use crate::generic::ldexp;
 
 /// Exit status of the Carlson routines (`ellint_common.hh`). The variants no
@@ -1054,19 +1054,19 @@ fn usable(r: f64) -> bool {
 const AGREE: f64 = 1e-10;
 
 /// Evaluates `f` (R_G or R_J at arguments scaled by `4^-j`, rescaled) as
-/// [`Scaling`] says; returns the value and the `j` it was evaluated with.
-fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> (f64, i32) {
+/// [`Scaling`] says.
+fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> f64 {
     match scaling {
-        Scaling::None => (f(0), 0),
+        Scaling::None => f(0),
         Scaling::Window(j) => {
             let r = f(0);
             let rs = f(j);
             if usable(r) && (!usable(rs) || (r - rs).abs() <= AGREE * rs.abs()) {
-                (r, 0)
+                r
             } else if usable(rs) {
-                (rs, j)
+                rs
             } else {
-                (r, 0)
+                r
             }
         }
     }
@@ -1097,24 +1097,24 @@ pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
         rg(s(x), s(y), s(z), RERR, &mut r);
         ldexp(r, j)
     })
-    .0
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
-    let (r, j) = scaled(scaling(&[x, y, z, p]), |j| {
+    let scaling = scaling(&[x, y, z, p]);
+    // Where the arguments are scaled, a principal value whose transformation
+    // cancels has lost its digits whichever of the unscaled and the scaled
+    // value is returned (the condition number does not depend on the scale,
+    // so the two agree); return NaN rather than that.
+    if let (Scaling::Window(j), true) = (scaling, p < 0.0) {
+        let s = |v: f64| ldexp(v, -2 * j);
+        if pv_ill_conditioned(pv_condition(s(x), s(y), s(z), s(p)), f64::EPSILON) {
+            return f64::NAN;
+        }
+    }
+    scaled(scaling, |j| {
         let s = |v: f64| ldexp(v, -2 * j);
         let mut r = 0.0;
         rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
         ldexp(r, -3 * j)
-    });
-    // A scaled principal value whose transformation cancels has no correct
-    // digits; return NaN, as xsf does at these scales, rather than that.
-    if j != 0 && p < 0.0 {
-        let s = |v: f64| ldexp(v, -2 * j);
-        let cond = pv_condition(s(x), s(y), s(z), s(p));
-        if cond.is_nan() || cond > PV_COND_MAX {
-            return f64::NAN;
-        }
-    }
-    r
+    })
 }
