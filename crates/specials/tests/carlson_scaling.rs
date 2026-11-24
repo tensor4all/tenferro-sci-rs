@@ -294,3 +294,31 @@ fn f64_keeps_xsf_value_where_it_is_finite() {
         "elliprj{a:?} = {got:e}, error {err:e}"
     );
 }
+
+/// Values xsf gets wrong but finite beyond 2^±300 (on `main`: -2.1e137 for a
+/// true 3.72e157, and 1.632e-76 for 1.609e-76): the arguments are at most
+/// 2^600 apart, so the `f64` wrappers center them at 1. Each is compared,
+/// rescaled exactly, with mpmath's value at the base point
+/// (`scripts/gen_carlson_scaling.py`).
+#[test]
+fn f64_centered_scaling_corrects_wrong_finite_values() {
+    let (e, a) = (-392, [3e-100, 1.0, 2e80, -1e-70]);
+    let want = 3.6742346141747673e-20;
+    let s: Vec<f64> = a.iter().map(|v| v * pow2(e)).collect();
+    let got = specials::elliprj(s[0], s[1], s[2], s[3]) * pow2(3 * e / 2);
+    let err = ((got - want) / want).abs();
+    assert!(
+        err <= f64_tol("elliprj"),
+        "elliprj{a:?} at 2^{e}: error {err:e}"
+    );
+
+    let (e, a) = (-568, [1e-20, 1.0, 1e20]);
+    let want = 5000000000.0;
+    let s: Vec<f64> = a.iter().map(|v| v * pow2(e)).collect();
+    let got = specials::elliprg(s[0], s[1], s[2]) * pow2(-e / 2);
+    let err = ((got - want) / want).abs();
+    assert!(
+        err <= f64_tol("elliprg"),
+        "elliprg{a:?} at 2^{e}: error {err:e}"
+    );
+}

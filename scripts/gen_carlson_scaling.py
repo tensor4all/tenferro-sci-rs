@@ -126,6 +126,11 @@ def main() -> None:
           dd(stable(lambda: rj(2.0**-1000, t, 2 * t, 3 * t))))
     print("elliprg", "(2^-900, 2^560, 2^561)",
           dd(stable(lambda: mp.elliprg(2.0**-900, 2.0**560, 2.0**561))))
+    # Base points of values xsf gets wrong but finite at 2^-392 and 2^-568 (the
+    # test scales them exactly).
+    print("elliprj", "(3e-100, 1, 2e80, -1e-70)",
+          dd(stable(lambda: rj(3e-100, 1.0, 2e80, -1e-70, check=False))))
+    print("elliprg", "(1e-20, 1, 1e20)", dd(stable(lambda: mp.elliprg(1e-20, 1.0, 1e20))))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))

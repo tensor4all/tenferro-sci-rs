@@ -796,11 +796,12 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// (about 4e180), where its duplication leaves the range of the type; below
 /// that it is accurate to 1e-30 (checked up to a ratio of 1e180).
 ///
-/// The `f64` path returns xsf's value when it is finite and nonzero, and
-/// otherwise, when an argument lies beyond 2^±300, evaluates again with the
-/// arguments scaled by a power of four, so that the products xsf forms stay
-/// in range. It does not handle a largest argument above about 2^340 with the
-/// smallest nonzero one more than about 2^1340 below it
+/// The `f64` path scales its arguments by a power of four when one lies
+/// beyond 2^±300 and none is subnormal, so that the products xsf forms stay
+/// in range: arguments at most 2^600 apart are centered at 1; arguments
+/// farther apart are scaled only when xsf's own value is NaN, infinite or 0.
+/// It does not handle a largest argument above about 2^340 with the smallest
+/// nonzero one more than about 2^1340 below it
 /// (`elliprj(2^-1000, 2^400, 2^400, 2^400)`), nor a subnormal argument (which
 /// xsf treats as zero) next to arguments below about 2^-340 or above about
 /// 2^340: there it returns NaN, as SciPy does.
