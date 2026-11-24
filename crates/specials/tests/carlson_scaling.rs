@@ -243,3 +243,27 @@ fn f64_keeps_xsf_subnormal_as_zero() {
     );
     assert!(specials::elliprj(p(-1060), p(-1060), p(-1023), p(-1023)).is_nan());
 }
+
+/// The documented limit of the `f64` R_J: up to a largest argument of about
+/// 2^338 above a smallest one of 2^-1000 it is accurate (here against
+/// R_J(x, y, z, z) = R_D(x, y, z), DLMF 19.20.18, with the `f64` tolerance of
+/// R_J); beyond it the arguments cannot all be scaled into range, and the
+/// result is NaN, as in SciPy, not a wrong finite value.
+#[test]
+fn f64_elliprj_spread_limit() {
+    let x = pow2(-1000);
+    for e in [300, 320, 336] {
+        let h = pow2(e);
+        let rj = specials::elliprj(x, h, h, h);
+        let rd = specials::elliprd(x, h, h);
+        let err = ((rj - rd) / rd).abs();
+        assert!(
+            err <= f64_tol("elliprj"),
+            "2^{e}: R_J {rj:e}, R_D {rd:e}, error {err:e}"
+        );
+    }
+    for e in [344, 400] {
+        let h = pow2(e);
+        assert!(specials::elliprj(x, h, h, h).is_nan(), "2^{e}");
+    }
+}
