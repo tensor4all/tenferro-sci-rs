@@ -280,7 +280,7 @@ cases:
   arguments by an exact power of four when one lies beyond 2^±300, none is
   subnormal and they are at most 2^600 apart (a deviation from the port, stated
   in its header): they are moved by the smallest power of four that brings them
-  within 2^±300, so that every product of three stays in range, and xsf's
+  within 2^±301, so that every product of three stays in range, and xsf's
   unscaled value is kept where it agrees with the scaled one to 1e-10 (xsf picks
   some asymptotic expansions by absolute thresholds, so its value moves with the
   scale by about 1e-11). Arguments farther apart are not scaled: no power of
