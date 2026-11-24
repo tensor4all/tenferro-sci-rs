@@ -15,9 +15,15 @@
 //! in `res`, with no global error flag; the complex branches, the unused
 //! asymptotic case `tinyx` (never selected upstream) and the compensated
 //! complex arithmetic are not ported; `std::sort` on at most three entries is
-//! an insertion sort.
+//! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] scale their
+//! arguments by an exact power of four when one lies beyond 2^±300 (see
+//! [`scale_exponent`]): xsf forms products of up to three arguments before
+//! any scaling and returns NaN from about 2^±341 (R_J) and 2^±512 (R_G) on,
+//! although the integrals are finite there (tensor4all/tenferro-sci-rs#25).
 
 use core::f64::consts::PI;
+
+use crate::generic::ldexp;
 
 /// Exit status of the Carlson routines (`ellint_common.hh`). The variants no
 /// routine here produces are kept so that `is_horrible` mirrors upstream.
@@ -976,14 +982,57 @@ pub(crate) fn elliprf(x: f64, y: f64, z: f64) -> f64 {
     r
 }
 
+/// Largest exponent, in bits, of a nonzero argument that [`elliprg`] and
+/// [`elliprj`] pass to xsf unscaled. R_J forms `(p - x)(p - y)(p - z)` and
+/// R_G `z (x + y)`, which leave the `f64` range from 2^±341 and 2^±512 on.
+const UNSCALED_BITS: i32 = 300;
+
+/// `j` such that the arguments scaled by `4^-j` lie within
+/// 2^±[`UNSCALED_BITS`] (not in xsf; tensor4all/tenferro-sci-rs#25).
+///
+/// 0 (no scaling, the path of xsf) when they already do. Otherwise the
+/// geometric mean of the largest and the smallest nonzero finite argument is
+/// centered at 1; when their ratio is too wide for that, only the largest is
+/// brought toward the bound, as far as every nonzero argument stays above
+/// 2^-1000. Scaling by a power of four is then exact, and R_G and R_J are
+/// homogeneous of degree 1/2 and -3/2 (DLMF 19.16.3, 19.16.2).
+fn scale_exponent(args: &[f64]) -> i32 {
+    let (mut max, mut min) = (i32::MIN, i32::MAX);
+    for v in args.iter().map(|a| a.abs()) {
+        if v != 0.0 && v.is_finite() {
+            let e = v.log2().floor() as i32;
+            max = max.max(e);
+            min = min.min(e);
+        }
+    }
+    if max == i32::MIN || (max <= UNSCALED_BITS && min >= -UNSCALED_BITS) {
+        0
+    } else if max - min <= 2 * UNSCALED_BITS {
+        (max + min).div_euclid(4)
+    } else if max > UNSCALED_BITS {
+        (max - UNSCALED_BITS + 1)
+            .div_euclid(2)
+            .min((min + 1000).div_euclid(2))
+            .max(0)
+    } else if max < -UNSCALED_BITS {
+        (max + UNSCALED_BITS).div_euclid(2)
+    } else {
+        0
+    }
+}
+
 pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
+    let j = scale_exponent(&[x, y, z]);
+    let s = |v: f64| ldexp(v, -2 * j);
     let mut r = 0.0;
-    rg(x, y, z, RERR, &mut r);
-    r
+    rg(s(x), s(y), s(z), RERR, &mut r);
+    ldexp(r, j)
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
+    let j = scale_exponent(&[x, y, z, p]);
+    let s = |v: f64| ldexp(v, -2 * j);
     let mut r = 0.0;
-    rj(x, y, z, p, RERR, &mut r, false);
-    r
+    rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
+    ldexp(r, -3 * j)
 }

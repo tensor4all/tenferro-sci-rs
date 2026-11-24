@@ -341,8 +341,23 @@ pub(crate) fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 }
 
 /// R_J for `x <= y <= z`, `y > 0`, `p < 0`: the Cauchy principal value
-/// (DLMF 19.20.14).
+/// (DLMF 19.20.14). The combination forms `x z`, `(z - y)(y - x)` and `p g`
+/// before any of the R_J, R_F and R_C it calls can scale, so the arguments are
+/// scaled first, by an exact power of four, as in [`rj_scaled`]: R_J is
+/// homogeneous of degree -3/2 (DLMF 19.20.14 is homogeneous term by term).
 fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
+    let j = rj_scale_exponent(&[x, y, z, p]);
+    let r = rj_principal_core(
+        ldexp(x, -2 * j),
+        ldexp(y, -2 * j),
+        ldexp(z, -2 * j),
+        ldexp(p, -2 * j),
+    );
+    ldexp(r, -3 * j)
+}
+
+/// [`rj_principal`] for arguments already scaled by [`rj_scale_exponent`].
+fn rj_principal_core<T: Real>(x: T, y: T, z: T, p: T) -> T {
     let g = y + (z - y) * (y - x) / (y - p);
     let rj = rj_scaled(x, y, z, g);
     let rf = elliprf(x, y, z);
@@ -353,6 +368,11 @@ fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
 /// Like [`scale_exponent`], but centers the geometric mean of the largest and
 /// the smallest nonzero argument at 1: R_J forms `p (p + λ)²` and `(p Σ√x)²`,
 /// which leave the double-double range unless the arguments straddle 1.
+///
+/// 0 (no scaling) while the center is within 2^±100 and every nonzero
+/// argument within 2^±[`RJ_UNSCALED_BITS`]; a center below 2^100 alone does
+/// not suffice, because a ratio of 2^600 then puts the largest argument at
+/// up to 2^400 and its cube past the range (tensor4all/tenferro-sci-rs#25).
 fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
     let logs: Vec<f64> = args
         .iter()
@@ -363,12 +383,16 @@ fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
     let max = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let min = logs.iter().copied().fold(f64::INFINITY, f64::min);
     let center = ((max + min) / 2.0).round() as i32;
-    if center.abs() < 100 {
+    if center.abs() < 100 && max <= RJ_UNSCALED_BITS && min >= -RJ_UNSCALED_BITS {
         0
     } else {
         center / 2
     }
 }
+
+/// Largest exponent, in bits, of an argument R_J evaluates unscaled: the
+/// cubes `p (p + λ)²` and `(p Σ√x)²` then stay within 2^±900.
+const RJ_UNSCALED_BITS: f64 = 300.0;
 
 fn rj_scaled<T: Real>(x: T, y: T, z: T, p: T) -> T {
     let j = rj_scale_exponent(&[x, y, z, p]);

@@ -258,3 +258,42 @@ cases:
 - **Here:** `generic::sqrt` scales arguments below 2^-900 by an exact power of
   four; the elliptic algorithms use it. This is the square-root counterpart of
   the subnormal low word noted in `generic/mod.rs`.
+
+## scipy/xsf: `elliprj` and `elliprg` are NaN or 0 for large or small arguments
+
+- **Affects:** xsf `31177fd9` (`include/xsf/ellint_carlson/_rj.hh`, `_rg.hh`),
+  and SciPy 1.18.1's `scipy.special.elliprj` and `elliprg`, which give the same
+  values.
+- **Cause:** the arguments are never scaled, and R_J forms
+  `(p - x)(p - y)(p - z)` (and `x y` in the principal value for `p < 0`,
+  Carlson 1995 Eq. 2.26), R_G `z (x + y)`, before anything else. From about
+  2^±341 (R_J) and 2^±512 (R_G) on the products leave the `f64` range,
+  although the argument ratios are 1 and the integrals finite.
+- **Example:** `elliprj(2**520, 2**520, 2**520, -2**520)`,
+  `elliprj(2**344, 2**345, 3*2**344, 2**346)` and `elliprg(2**520, 2**520, 2**520)`
+  are NaN; `elliprg(2**-544, 2**-543, 3*2**-544)` is 0. The values are
+  `2^-780 R_J(1, 1, 1, -1) = -8.887435110666537e-236`,
+  `2^-516 R_J(1, 2, 3, 4) = 1.118043e-156`, `2^260 = 1.85e78` and
+  `2^-272 R_G(1, 2, 3) = 1.847e-82` (homogeneity, DLMF 19.16.2 and 19.16.3).
+- **Upstream:** not reported.
+- **Here:** the `f64` wrappers `xsf::carlson::elliprj` and `elliprg` scale the
+  arguments by an exact power of four when one lies beyond 2^±300 (a deviation
+  from the port, stated in its header); arguments within 2^±300 take xsf's path
+  unchanged. `crates/specials/tests/carlson_scaling.rs` checks both strategies
+  at 2^±520 and 2^±600 (tensor4all/tenferro-sci-rs#25).
+
+## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments
+
+- **Affects:** mpmath 1.3.0, `mp.elliprj(x, y, z, p)` for real `p < 0`, whose
+  real part is the Cauchy principal value at ordinary arguments.
+- **Example:** at 200 bits, `re(elliprj(2^520, 2^520, 2^520, -2^520)) · 2^780`
+  is 76.496… instead of `R_J(1, 1, 1, -1) = -0.56516…`; at
+  `(2^-201, 1, 2^399, -2^399)` the real part is -7.9e-179 at 200 bits,
+  -1.58e-178 at 300 bits and -2.84332914131e-178 at 600 bits, against
+  -2.843329141308721e-178 from DLMF 19.20.14 (stable at 200 and 300 bits).
+  At `2^-520` times `(1, 1, 1, -1)` it did not return within two minutes.
+- **Upstream:** not reported.
+- **Here:** `scripts/gen_carlson_scaling.py` computes the principal value from
+  DLMF 19.20.14 (R_J with a positive fourth argument, R_F, R_C), at base points
+  of ordinary size, where it checks it against mpmath's real part, and the test
+  scales by the exact power of two of the homogeneity.
