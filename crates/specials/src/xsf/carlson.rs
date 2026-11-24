@@ -15,12 +15,14 @@
 //! in `res`, with no global error flag; the complex branches, the unused
 //! asymptotic case `tinyx` (never selected upstream) and the compensated
 //! complex arithmetic are not ported; `std::sort` on at most three entries is
-//! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] scale their
-//! arguments by an exact power of four when one lies beyond 2^±300 and none
-//! is subnormal (see [`scale_exponent`]): xsf forms products of up to three
-//! arguments before any scaling and returns NaN or 0 from about 2^±341 (R_J)
-//! and 2^±512 (R_G) on, although the integrals are finite and nonzero there
-//! (tensor4all/tenferro-sci-rs#25).
+//! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] return xsf's
+//! value whenever it is finite and nonzero; otherwise, when an argument lies
+//! beyond 2^±300 and none is subnormal, they evaluate again with the
+//! arguments scaled by an exact power of four (see [`scale_exponent`]) and
+//! return that value if it is finite and nonzero, else xsf's: xsf
+//! forms products of up to three arguments before any scaling and returns
+//! NaN or 0 from about 2^±341 (R_J) and 2^±512 (R_G) on, although the
+//! integrals are finite and nonzero there (tensor4all/tenferro-sci-rs#25).
 
 use core::f64::consts::PI;
 
@@ -993,9 +995,13 @@ const UNSCALED_BITS: i32 = 300;
 /// of degree 1/2 and -3/2 (DLMF 19.16.3, 19.16.2), and scaling a normal
 /// argument by a power of four is exact.
 ///
-/// 0, so that xsf's path is unchanged, when every nonzero finite argument
-/// lies within 2^±[`UNSCALED_BITS`], and when one is subnormal: xsf treats a
-/// subnormal argument as zero, and scaling it up would undo that. Otherwise:
+/// Used only when xsf's unscaled value is NaN, infinite or 0 (see
+/// [`usable`]), so a scaling that moves an underflow elsewhere cannot spoil
+/// a value xsf got right.
+///
+/// 0 (no retry) when every nonzero finite argument lies within
+/// 2^±[`UNSCALED_BITS`], and when one is subnormal: xsf treats a subnormal
+/// argument as zero, and scaling it up would undo that. Otherwise:
 ///
 /// * if the largest and the smallest nonzero argument are at most
 ///   2^(2 [`UNSCALED_BITS`]) apart, their geometric mean is centered at 1, so
@@ -1033,18 +1039,48 @@ fn scale_exponent(args: &[f64]) -> i32 {
     }
 }
 
+/// True for a value of R_G or R_J that the wrappers keep: finite and
+/// nonzero. xsf's unscaled value is kept whenever it is; otherwise (NaN,
+/// infinite or 0, which a product leaving the range produces) the wrappers
+/// evaluate again with the arguments scaled and keep that value only if it
+/// is, so that a scaled evaluation never replaces xsf's NaN, infinity or 0
+/// by a different failure.
+fn usable(r: f64) -> bool {
+    r.is_finite() && r != 0.0
+}
+
 pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
-    let j = scale_exponent(&[x, y, z]);
-    let s = |v: f64| ldexp(v, -2 * j);
     let mut r = 0.0;
-    rg(s(x), s(y), s(z), RERR, &mut r);
-    ldexp(r, j)
+    rg(x, y, z, RERR, &mut r);
+    let j = scale_exponent(&[x, y, z]);
+    if usable(r) || j == 0 {
+        return r;
+    }
+    let s = |v: f64| ldexp(v, -2 * j);
+    let mut rs = 0.0;
+    rg(s(x), s(y), s(z), RERR, &mut rs);
+    let rs = ldexp(rs, j);
+    if usable(rs) {
+        rs
+    } else {
+        r
+    }
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
-    let j = scale_exponent(&[x, y, z, p]);
-    let s = |v: f64| ldexp(v, -2 * j);
     let mut r = 0.0;
-    rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
-    ldexp(r, -3 * j)
+    rj(x, y, z, p, RERR, &mut r, false);
+    let j = scale_exponent(&[x, y, z, p]);
+    if usable(r) || j == 0 {
+        return r;
+    }
+    let s = |v: f64| ldexp(v, -2 * j);
+    let mut rs = 0.0;
+    rj(s(x), s(y), s(z), s(p), RERR, &mut rs, false);
+    let rs = ldexp(rs, -3 * j);
+    if usable(rs) {
+        rs
+    } else {
+        r
+    }
 }

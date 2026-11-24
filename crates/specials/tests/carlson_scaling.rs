@@ -277,3 +277,20 @@ fn f64_wide_ratio_arms() {
         "elliprg{a:?} = {got:e}, error {err:e}"
     );
 }
+
+/// Where xsf's unscaled `f64` value is right although an argument lies far
+/// beyond 2^300, the wrappers return it unchanged: scaling 2^578 down would
+/// push 2^-362 so low that the products of the small arguments underflow
+/// (NaN at 4b828a6, found in review). Reference: mpmath 1.3.0,
+/// `scripts/gen_carlson_scaling.py` (DLMF 19.20.14 against Carlson 1995 Eq. 2.26).
+#[test]
+fn f64_keeps_xsf_value_where_it_is_finite() {
+    let a = [pow2(-168), pow2(-362), pow2(-129), -pow2(578)];
+    let want = -1.1789147522121987e-153;
+    let got = specials::elliprj(a[0], a[1], a[2], a[3]);
+    let err = ((got - want) / want).abs();
+    assert!(
+        err <= f64_tol("elliprj"),
+        "elliprj{a:?} = {got:e}, error {err:e}"
+    );
+}
