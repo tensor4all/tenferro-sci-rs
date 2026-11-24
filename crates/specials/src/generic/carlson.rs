@@ -341,18 +341,61 @@ pub(crate) fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 }
 
 /// R_J for `x <= y <= z`, `y > 0`, `p < 0`: the Cauchy principal value
-/// (DLMF 19.20.14).
+/// (DLMF 19.20.14). The combination forms `x z`, `(z - y)(y - x)` and `p g`
+/// before any of the R_J, R_F and R_C it calls can scale, so the arguments are
+/// scaled first, by an exact power of four, as in [`rj_scaled`]: R_J is
+/// homogeneous of degree -3/2 (DLMF 19.20.14 is homogeneous term by term).
+///
+/// The combination cancels catastrophically for some arguments (`|p|` far
+/// below `y` with a wide spread: condition numbers of 1e45 and more), at any
+/// scale. Where the arguments are scaled, such a result is NaN rather than a
+/// value without correct digits ([`pv_ill_conditioned`];
+/// tensor4all/tenferro-sci-rs#25).
 fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
+    let j = rj_scale_exponent(&[x, y, z, p]);
+    let (r, cond) = rj_principal_core(
+        ldexp(x, -2 * j),
+        ldexp(y, -2 * j),
+        ldexp(z, -2 * j),
+        ldexp(p, -2 * j),
+    );
+    if j != 0 && pv_ill_conditioned(cond, T::epsilon().approx_f64()) {
+        return T::nan();
+    }
+    ldexp(r, -3 * j)
+}
+
+/// Whether the principal-value combination (DLMF 19.20.14, Carlson 1995
+/// Eq. 2.26), with condition number `cond` = `(|t1| + |t2| + |t3|) /
+/// |t1 + t2 + t3|`, can lose more than a relative 1e-10 when its terms carry
+/// relative errors of `eps`: then fewer than about ten digits are left. The
+/// condition number is scale invariant, so the test applies to the unscaled
+/// and the scaled evaluation alike.
+pub(crate) fn pv_ill_conditioned(cond: f64, eps: f64) -> bool {
+    cond.is_nan() || cond * eps > 1e-10
+}
+
+/// [`rj_principal`] for arguments already scaled by [`rj_scale_exponent`],
+/// with the condition number of the combination.
+fn rj_principal_core<T: Real>(x: T, y: T, z: T, p: T) -> (T, f64) {
     let g = y + (z - y) * (y - x) / (y - p);
     let rj = rj_scaled(x, y, z, g);
     let rf = elliprf(x, y, z);
     let rc = elliprc(x * z / y, p * g / y);
-    ((g - y) * rj - k::<T>(3.0) * rf + k::<T>(3.0) * rc) / (y - p)
+    let terms = [(g - y) * rj, -(k::<T>(3.0) * rf), k::<T>(3.0) * rc];
+    let sum = terms[0] + terms[1] + terms[2];
+    let cond = terms.iter().map(|t| t.abs().approx_f64()).sum::<f64>() / sum.abs().approx_f64();
+    (sum / (y - p), cond)
 }
 
 /// Like [`scale_exponent`], but centers the geometric mean of the largest and
 /// the smallest nonzero argument at 1: R_J forms `p (p + λ)²` and `(p Σ√x)²`,
 /// which leave the double-double range unless the arguments straddle 1.
+///
+/// 0 (no scaling) while the center is within 2^±100 and every nonzero
+/// argument within 2^±[`RJ_UNSCALED_BITS`]; a center below 2^100 alone does
+/// not suffice, because a ratio of 2^600 then puts the largest argument at
+/// up to 2^400 and its cube past the range (tensor4all/tenferro-sci-rs#25).
 fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
     let logs: Vec<f64> = args
         .iter()
@@ -363,12 +406,16 @@ fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
     let max = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let min = logs.iter().copied().fold(f64::INFINITY, f64::min);
     let center = ((max + min) / 2.0).round() as i32;
-    if center.abs() < 100 {
+    if center.abs() < 100 && max <= RJ_UNSCALED_BITS && min >= -RJ_UNSCALED_BITS {
         0
     } else {
         center / 2
     }
 }
+
+/// Largest exponent, in bits, of an argument R_J evaluates unscaled: the
+/// cubes `p (p + λ)²` and `(p Σ√x)²` then stay within about 2^±905.
+const RJ_UNSCALED_BITS: f64 = 300.0;
 
 fn rj_scaled<T: Real>(x: T, y: T, z: T, p: T) -> T {
     let j = rj_scale_exponent(&[x, y, z, p]);

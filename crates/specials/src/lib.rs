@@ -759,7 +759,10 @@ pub fn elliprf<T: Real>(x: T, y: T, z: T) -> T {
 /// (DLMF 19.16.3), symmetric in its arguments.
 ///
 /// Defined for `x, y, z >= 0`; `+∞` if an argument is infinite, NaN for a
-/// negative argument.
+/// negative argument. The `f64` path scales its arguments as [`elliprj`]
+/// does; arguments more than 2^600 apart are not scaled and get xsf's value,
+/// as in SciPy: NaN from a largest argument of about 2^512 on, and possibly a
+/// wrong finite value elsewhere (see `docs/upstream-issues.md`).
 ///
 /// # Examples
 ///
@@ -793,6 +796,33 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// argument (in absolute value) differ by more than a factor of 2^600
 /// (about 4e180), where its duplication leaves the range of the type; below
 /// that it is accurate to 1e-30 (checked up to a ratio of 1e180).
+///
+/// The `f64` path scales its arguments by a power of four when one lies
+/// beyond 2^±300, none is subnormal and they are at most 2^600 apart: they
+/// are moved until the outlying one is just inside 2^±300, which leaves all
+/// of them within 2^±301, so that the products xsf forms stay in range. It
+/// evaluates xsf both unscaled and scaled (xsf's value depends on the scale,
+/// through underflow and through absolute thresholds of its asymptotic
+/// expansions) and keeps the unscaled value, which is what the port returned
+/// before, unless it is NaN, infinite or 0, or the precision-adaptive
+/// algorithm evaluated in `f64` shows it to be off by more than 1e-10 and the
+/// scaled value is closer. The result is xsf's at one of the two scales, with
+/// xsf's accuracy there, which for some argument shapes is about 1e-10 rather
+/// than the 1e-14 of the reference grid (also at ordinary scales). Arguments farther apart, or with a
+/// subnormal one (which xsf treats as zero), are not scaled: no power of four
+/// brings them within range, and they get xsf's value, as in SciPy: NaN where
+/// its products leave the range (from a largest argument of about 2^340, or
+/// below about 2^-340, on; for example
+/// `elliprj(2^-1000, 2^400, 2^400, 2^400)`), and possibly a wrong finite value
+/// elsewhere.
+///
+/// For `p < 0`, both paths evaluate the principal value by a transformation
+/// (DLMF 19.20.14 for `Df64`, Carlson 1995 Eq. 2.26 in xsf) that cancels
+/// catastrophically when `|p|` is far below `y` and the arguments spread
+/// widely. Where a path scales the arguments, such a value is NaN when the
+/// cancellation of the transformation it evaluates can cost more than a
+/// relative 1e-10; elsewhere it is returned as computed and can be wrong, in
+/// both paths and in SciPy (see `docs/upstream-issues.md`).
 ///
 /// # Examples
 ///

@@ -1,0 +1,188 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["mpmath==1.3.0"]
+# ///
+"""Print the reference values hard-coded in
+`crates/specials/tests/carlson_scaling.rs` (tensor4all/tenferro-sci-rs#25:
+Carlson's R_C, R_D, R_F, R_G and R_J at arguments near 2^±520 and 2^±600).
+
+Run from the repository root:
+
+    uv run scripts/gen_carlson_scaling.py
+
+The test evaluates each function at `2^e` times a base point and compares the
+result, multiplied by the exact power of two `2^(-d e)` (`d` the degree of
+homogeneity), with the value printed here for the base point. The values are
+computed at the base point because mpmath 1.3.0 does not evaluate R_J for
+`p < 0` correctly there: its real part at `(2^520, 2^520, 2^520, -2^520)`,
+rescaled, is 76.5 instead of -0.565 (see `docs/upstream-issues.md`).
+
+Every value is computed at 200 and 300 bits, which must agree to 1e-40, and
+printed as a double-double pair `(hi, lo)`. For `p < 0` the value of R_J is
+the Cauchy principal value of DLMF 19.20.14, evaluated from R_J with a
+positive fourth argument, R_F and R_C. It is checked against Carlson (1995)
+Eq. 2.26, another transformation to positive arguments (the one xsf uses),
+and, at the base points, against the real part of `mp.elliprj` (not at the
+wide-ratio point, where mpmath's value depends on the working precision).
+"""
+
+from __future__ import annotations
+
+import datetime
+import platform
+
+import mpmath as mp
+
+
+def dd(v) -> tuple[float, float]:
+    mp.mp.prec = 600
+    v = mp.mpf(v)
+    hi = float(v)
+    return hi, float(v - mp.mpf(hi))
+
+
+def stable(f):
+    vals = []
+    for prec in (200, 300):
+        mp.mp.prec = prec
+        vals.append(f())
+    mp.mp.prec = 300
+    a, b = vals
+    assert abs(a - b) <= abs(b) * mp.mpf(10) ** -40, (a, b)
+    return b
+
+
+def rj_principal(x, y, z, p):
+    """DLMF 19.20.14 for p < 0, with x <= y <= z."""
+    x, y, z = sorted(mp.mpf(v) for v in (x, y, z))
+    p = mp.mpf(p)
+    q = y + (z - y) * (y - x) / (y - p)
+    return ((q - y) * mp.elliprj(x, y, z, q) - 3 * mp.elliprf(x, y, z)
+            + 3 * rc(x * z / y, p * q / y)) / (y - p)
+
+
+def rj_principal_carlson(x, y, z, p):
+    """Carlson (1995) Eq. 2.26 for p < 0, with x <= y <= z: the transformation
+    xsf uses, independent of DLMF 19.20.14, which the Df64 path uses."""
+    x, y, z = sorted(mp.mpf(v) for v in (x, y, z))
+    p = mp.mpf(p)
+    q = (x + y - p - x * y / z) / (1 - p / z)
+    pq = -p * q
+    return ((q - z) * mp.elliprj(x, y, z, q) - 3 * mp.elliprf(x, y, z)
+            + 3 * mp.sqrt(x * y * z / (x * y + pq)) * mp.elliprc(x * y + pq, pq)) / (z - p)
+
+
+def rj(x, y, z, p, check=True):
+    """R_J; for p < 0 the principal value, checked against mpmath's real part
+    unless `check` is false (see the module docstring)."""
+    if p > 0:
+        return mp.elliprj(x, y, z, p)
+    v = rj_principal(x, y, z, p)
+    w = rj_principal_carlson(x, y, z, p)
+    assert abs(w - v) <= abs(v) * mp.mpf(10) ** -40, (v, w)
+    if check:
+        assert abs(mp.re(mp.elliprj(x, y, z, p)) - v) <= abs(v) * mp.mpf(10) ** -40
+    return v
+
+
+def rc(x, y):
+    """R_C; for y < 0 its Cauchy principal value, the real part of mpmath's."""
+    return mp.re(mp.elliprc(x, y))
+
+
+def main() -> None:
+    print(f"// mpmath {mp.__version__}, Python {platform.python_version()}, "
+          f"{datetime.date.today().isoformat()}")
+    for a in [(1, 1, 1, -1), (1, 2, 3, 4), (1, 2, 3, -4), (0, 1, 2, -1), (0, 1, 2, 3),
+              (2, 3, 4, -0.5)]:
+        print("elliprj", a, dd(stable(lambda: rj(*a))))
+    for name, f in [("elliprf", mp.elliprf), ("elliprd", mp.elliprd), ("elliprg", mp.elliprg)]:
+        for a in [(1, 1, 1), (1, 2, 3), (0, 1, 2)]:
+            print(name, a, dd(stable(lambda: f(*a))))
+    for a in [(1, 1), (1, 2), (0, 1), (1, -1), (2, -1)]:
+        print("elliprc", a, dd(stable(lambda: rc(*a))))
+    # A ratio of 2^600, the limit of the Df64 R_J, centered at 2^99: R_J(x, y, z, z)
+    # is R_D(x, y, z) (DLMF 19.20.18).
+    t = 2.0**399
+    a = (2.0**-201, 1.0, t, t)
+    rjp = dd(stable(lambda: rj(*a)))
+    assert rjp == dd(stable(lambda: mp.elliprd(*a[:3])))
+    print("elliprj", "(2^-201, 1, 2^399, 2^399)", rjp)
+    # mpmath's real part is wrong here at 200 and 300 bits (-7.9e-179, -1.58e-178)
+    # and reaches the DLMF 19.20.14 value only at 600 bits, so it is not checked;
+    # Carlson (1995) Eq. 2.26 is (in `rj`).
+    print("elliprj", "(2^-201, 1, 2^399, -2^399)",
+          dd(stable(lambda: rj(2.0**-201, 1.0, t, -t, check=False))))
+    # Spreads beyond 2^600, which the f64 path leaves unscaled (xsf gives NaN
+    # or these values): scaled down from 2^381, scaled up from 2^-350.4, and
+    # the four points of the review of 470803a.
+    h = 2.0**380
+    print("elliprj", "(2^-900, 2^380, 2^381, 3*2^380)",
+          dd(stable(lambda: rj(2.0**-900, h, 2 * h, 3 * h))))
+    print("elliprj", "(2^-900, 2^380, 2^381, -3*2^380)",
+          dd(stable(lambda: rj(2.0**-900, h, 2 * h, -3 * h, check=False))))
+    t = 2.0**-352
+    print("elliprj", "(2^-1000, 2^-352, 2^-351, 3*2^-352)",
+          dd(stable(lambda: rj(2.0**-1000, t, 2 * t, 3 * t))))
+    print("elliprg", "(2^-900, 2^560, 2^561)",
+          dd(stable(lambda: mp.elliprg(2.0**-900, 2.0**560, 2.0**561))))
+    for e in [(-400, -360, 500, -500), (-400, -360, 500, -400), (-300, -260, 600, -400)]:
+        print("elliprj", e, dd(stable(lambda: mp.elliprj(*[2.0**v for v in e]))))
+    print("elliprg", "(1.78e-245, 2.71e-104, 2.85e-306)",
+          dd(stable(lambda: mp.elliprg(1.78e-245, 2.71e-104, 2.85e-306))))
+    # Base points of values xsf gets wrong but finite at 2^-392 and 2^-568 (the
+    # test scales them exactly).
+    print("elliprj", "(3e-100, 1, 2e80, -1e-70)",
+          dd(stable(lambda: rj(3e-100, 1.0, 2e80, -1e-70, check=False))))
+    print("elliprg", "(1e-20, 1, 1e20)", dd(stable(lambda: mp.elliprg(1e-20, 1.0, 1e20))))
+    # Review round 6: xsf's unscaled value is right, and the scaled one moves by
+    # 1e-11 (xsf's absolute asymptotic thresholds). Evaluated at the arguments
+    # times 4^200 and scaled back exactly: R_J(4^k a) = 2^(-3k) R_J(a).
+    a6 = (2.53438683249964e-208, 2.917058701014637e-114, 3.916777135234618e-89,
+          -4.5006477943934846e-101)
+    print("elliprj", a6, dd(stable(lambda: rj(*[mp.mpf(v) * mp.mpf(4)**200 for v in a6],
+                                              check=False) * mp.mpf(2)**600)))
+    # Review round 7: principal values whose transformation cancels (condition
+    # numbers 1e45 to 1e91, so 400 more bits), at exact powers of two; the test
+    # accepts NaN or these values.
+    def wide(e):
+        with mp.workprec(mp.mp.prec + 400):
+            return +rj(2.0**e[0], 2.0**e[1], 2.0**e[2], -2.0**e[3], check=False)
+    for e in [(-675, -475, -175, -575), (-675, -625, -475, -650), (-625, -575, -425, -600),
+              (-175, 25, 325, -75), (-275, -75, 225, -175)]:
+        print("elliprj", e, dd(stable(lambda: wide(e))))
+    # Review of b6d45b0: values the f64 window keeps from xsf's unscaled
+    # evaluation (it agrees with the scaled one to 1e-10), whose error is xsf's
+    # own, up to about 1e-10. Evaluated at the arguments times 4^k and scaled
+    # back exactly (R_G: degree 1/2, R_J: degree -3/2).
+    def shifted(f, e, k, deg2):
+        return f(*[mp.mpf(2)**(v + 2 * k) for v in e]) * mp.mpf(2)**(-deg2 * k)
+    print("elliprg", (-763, -368, -695),
+          dd(stable(lambda: shifted(mp.elliprg, (-763, -368, -695), 232, 1))))
+    print("elliprj", (-431, -326, -330, -365),
+          dd(stable(lambda: shifted(mp.elliprj, (-431, -326, -330, -365), 180, -3))))
+    # Review of 3a7bc8c: principal values xsf evaluates to about 1e-12 (its
+    # Eq. 2.26 is conditioned at 1e4) although DLMF 19.20.14 is conditioned at
+    # 1e6, so the f64 check must use xsf's combination.
+    for a in [(8.302154427603948e-102, 5.927836371317247e-61, 1.0047079450892522e-21,
+               -2.218151451072381e-81),
+              (6.0170982496602805e-96, 1.1830348712965332e-95, 9.305027156391948e-60,
+               -8.436824658532037e-96),
+              (6.911304916951263e-92, 8.656115050435896e-92, 1.9001214587812377e-14,
+               -7.738772926465598e-92)]:
+        def wide_a(a=a):
+            with mp.workprec(mp.mp.prec + 400):
+                return +rj(*a, check=False)
+        print("elliprj", a, dd(stable(wide_a)))
+    # Review of 0873683: the window moves y across xsf's absolute threshold
+    # y <= 1e-26, where xsf's expansion is 1.9e-6 off; the unscaled value is
+    # right. Evaluated at the arguments times 4^150, scaled back exactly.
+    for e in [(-322, -110, -92, -50), (-312, -100, -82, -40)]:
+        print("elliprj", e, dd(stable(lambda: shifted(mp.elliprj, e, 150, -3))))
+    # Where xsf's unscaled value is right although an argument is far beyond 2^300.
+    print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
+          dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))
+
+
+if __name__ == "__main__":
+    main()

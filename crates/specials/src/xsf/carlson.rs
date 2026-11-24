@@ -15,9 +15,18 @@
 //! in `res`, with no global error flag; the complex branches, the unused
 //! asymptotic case `tinyx` (never selected upstream) and the compensated
 //! complex arithmetic are not ported; `std::sort` on at most three entries is
-//! an insertion sort.
+//! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] scale their
+//! arguments by an exact power of four when one lies beyond 2^±300, none is
+//! subnormal and they are at most 2^600 apart (see [`Scaling`]): xsf forms
+//! products of up to three arguments before any scaling and returns NaN, 0
+//! or a wrong value from about 2^±341 (R_J) and 2^±512 (R_G) on, although
+//! the integrals are finite there (tensor4all/tenferro-sci-rs#25). All other
+//! arguments take xsf's path unchanged.
 
 use core::f64::consts::PI;
+
+use crate::generic::carlson::pv_ill_conditioned;
+use crate::generic::ldexp;
 
 /// Exit status of the Carlson routines (`ellint_common.hh`). The variants no
 /// routine here produces are kept so that `is_horrible` mirrors upstream.
@@ -976,14 +985,188 @@ pub(crate) fn elliprf(x: f64, y: f64, z: f64) -> f64 {
     r
 }
 
+/// Largest exponent, in bits, of a nonzero argument that [`elliprg`] and
+/// [`elliprj`] pass to xsf unscaled. R_J forms `(p - x)(p - y)(p - z)` and
+/// R_G `z (x + y)`, which leave the `f64` range from 2^±341 and 2^±512 on.
+const UNSCALED_BITS: i32 = 300;
+
+/// How [`elliprg`] and [`elliprj`] scale their arguments by `4^-j` before
+/// xsf forms its products (not in xsf; tensor4all/tenferro-sci-rs#25). R_G
+/// and R_J are homogeneous of degree 1/2 and -3/2 (DLMF 19.16.3, 19.16.2),
+/// and scaling a normal argument by a power of four is exact.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Scaling {
+    /// Every nonzero finite argument lies within 2^±[`UNSCALED_BITS`], one is
+    /// subnormal (xsf treats a subnormal argument as zero, and scaling it up
+    /// would undo that), or the largest and the smallest nonzero argument are
+    /// more than 2^(2 [`UNSCALED_BITS`]) apart: xsf's path, unchanged. No
+    /// power of four brings such a spread within range, and evaluating xsf
+    /// on it with only the largest moved into range gave values off by up to
+    /// 13 orders of magnitude where xsf returns NaN (review of 470803a).
+    None,
+    /// The largest and the smallest nonzero argument are at most
+    /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the power of four that
+    /// brings the argument beyond 2^±[`UNSCALED_BITS`] just inside it (to
+    /// 2^±299 or 2^±300), which leaves every argument within
+    /// 2^±([`UNSCALED_BITS`] + 1), so every product of three stays in range.
+    /// xsf's value depends on the scale (underflow at the caller's arguments;
+    /// absolute thresholds of its asymptotic expansions, `p <= 1e-9`,
+    /// `y <= 1e-26`), so both the unscaled and the scaled value are computed
+    /// and [`arbiter`] chooses: the unscaled one unless an independent
+    /// evaluation shows it to be off by more than [`AGREE`] and the scaled one
+    /// is closer.
+    Window(i32),
+}
+
+fn scaling(args: &[f64]) -> Scaling {
+    let (mut max, mut min) = (i32::MIN, i32::MAX);
+    for v in args.iter().map(|a| a.abs()) {
+        if v.is_subnormal() {
+            return Scaling::None;
+        }
+        if v != 0.0 && v.is_finite() {
+            let e = v.log2().floor() as i32;
+            max = max.max(e);
+            min = min.min(e);
+        }
+    }
+    if max == i32::MIN
+        || (max <= UNSCALED_BITS && min >= -UNSCALED_BITS)
+        || max - min > 2 * UNSCALED_BITS
+    {
+        Scaling::None
+    } else if max > UNSCALED_BITS {
+        Scaling::Window((max - UNSCALED_BITS + 1).div_euclid(2))
+    } else {
+        Scaling::Window((min + UNSCALED_BITS).div_euclid(2))
+    }
+}
+
+/// True for a value of R_G or R_J that can be kept: finite and nonzero. A
+/// product leaving the range gives NaN, an infinity or 0.
+fn usable(r: f64) -> bool {
+    r.is_finite() && r != 0.0
+}
+
+/// Relative agreement between xsf's unscaled and scaled value within which
+/// [`Scaling::Window`] keeps the unscaled one without further evaluation.
+/// xsf's value depends on the scale both through underflow (the unscaled
+/// value is then wrong) and through absolute thresholds of its asymptotic
+/// expansions (`p <= 1e-9`, `y <= 1e-26`; either value can then be the wrong
+/// one, by up to 2e-6), so a disagreement is settled by [`arbiter`].
+const AGREE: f64 = 1e-10;
+
+/// The value [`Scaling::Window`] returns when xsf's unscaled value `r` and
+/// scaled value `rs` disagree beyond [`AGREE`] (or one is not [`usable`]).
+///
+/// Invariant: a usable `r` (xsf's value at the caller's arguments, which is
+/// what the port returned before scaling existed) is returned unchanged
+/// unless an independent evaluation, `reference` (the precision-adaptive
+/// algorithm of [`crate::generic::carlson`] evaluated in `f64`, which scales
+/// its own arguments and has no absolute thresholds), shows it to be off by
+/// more than [`AGREE`] and `rs` is closer to `reference`. Only an unusable
+/// `r` (NaN, infinite or 0) is replaced without that evidence, by a usable
+/// `rs`. A scaled evaluation therefore never replaces a value the reference
+/// agrees with, and when the reference is unusable `r` is kept.
+fn arbiter(r: f64, rs: f64, reference: impl FnOnce() -> f64) -> f64 {
+    if !usable(r) {
+        return if usable(rs) { rs } else { r };
+    }
+    if !usable(rs) {
+        return r;
+    }
+    let reference = reference();
+    let r_off = (r - reference).abs();
+    if usable(reference) && r_off > AGREE * reference.abs() && (rs - reference).abs() < r_off {
+        rs
+    } else {
+        r
+    }
+}
+
+/// Evaluates `f` (R_G or R_J at arguments scaled by `4^-j`, rescaled) as
+/// [`Scaling`] says; `reference` (see [`arbiter`]) only when the unscaled and
+/// the scaled value disagree.
+fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64, reference: impl FnOnce() -> f64) -> f64 {
+    match scaling {
+        Scaling::None => f(0),
+        Scaling::Window(j) => {
+            let r = f(0);
+            let rs = f(j);
+            if usable(r) && usable(rs) && (r - rs).abs() <= AGREE * rs.abs() {
+                r
+            } else {
+                arbiter(r, rs, reference)
+            }
+        }
+    }
+}
+
+/// Condition number `(|t1| + |t2| + |t3|) / |t1 + t2 + t3|` of the
+/// combination [`rj_cpv_dispatch`] evaluates for the principal value of R_J
+/// with `p < 0` (Carlson 1995 Eq. 2.26, for sorted `x <= y <= z`): the terms
+/// `(q - z) R_J(x, y, z, q)`, `-3 R_F(x, y, z)` and
+/// `3 sqrt(x y z / (x y + p q)) R_C(x y + p q, p q)` with
+/// `q = (x + y - p - x y / z) / (1 - p / z)`, formed as it forms them. The
+/// condition number of DLMF 19.20.14, which the `Df64` path evaluates, is a
+/// different one and can be much larger (review of 3a7bc8c).
+fn pv_condition(x: f64, y: f64, z: f64, p: f64) -> f64 {
+    let mut v = [x, y, z];
+    sort3(&mut v, |a, b| a < b);
+    let [x, y, z] = v;
+    let xy = x * y;
+    let q = (nsum2(&[x, y, -p], 3) - xy / z) / (1.0 - p / z);
+    let pq = q * -p;
+    let xypq = xy + pq;
+    let (mut a, mut b, mut c) = (0.0, 0.0, 0.0);
+    rj(x, y, z, q, RERR, &mut a, false);
+    rf(x, y, z, RERR, &mut b);
+    rc(xypq, pq, RERR, &mut c);
+    let t = [(q - z) * a, -3.0 * b, 3.0 * (xy * z / xypq).sqrt() * c];
+    (t[0].abs() + t[1].abs() + t[2].abs()) / (t[0] + t[1] + t[2]).abs()
+}
+
 pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
-    let mut r = 0.0;
-    rg(x, y, z, RERR, &mut r);
-    r
+    scaled(
+        scaling(&[x, y, z]),
+        |j| {
+            let s = |v: f64| ldexp(v, -2 * j);
+            let mut r = 0.0;
+            rg(s(x), s(y), s(z), RERR, &mut r);
+            ldexp(r, j)
+        },
+        || crate::generic::carlson::elliprg(x, y, z),
+    )
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
-    let mut r = 0.0;
-    rj(x, y, z, p, RERR, &mut r, false);
-    r
+    let scaling = scaling(&[x, y, z, p]);
+    // Where the arguments are scaled, a principal value whose transformation
+    // cancels has lost its digits whichever of the unscaled and the scaled
+    // value is returned (in exact arithmetic the condition number does not
+    // depend on the scale; it is evaluated here at the scaled arguments, where
+    // every product is in range); return NaN rather than that.
+    // Only where xsf takes that path (Carlson 1995, text above Eq. 2.26:
+    // `x, y, z` real, nonnegative, at most one zero, `p < 0`, all finite); the
+    // pole of two zero arguments, an infinite argument and the domain errors
+    // keep xsf's value.
+    let mut v = [x, y, z];
+    sort3(&mut v, |a, b| a < b);
+    let principal = p < 0.0 && p.is_finite() && v[0] >= 0.0 && v[1] > 0.0 && v[2].is_finite();
+    if let (Scaling::Window(j), true) = (scaling, principal) {
+        let s = |v: f64| ldexp(v, -2 * j);
+        if pv_ill_conditioned(pv_condition(s(x), s(y), s(z), s(p)), f64::EPSILON) {
+            return f64::NAN;
+        }
+    }
+    scaled(
+        scaling,
+        |j| {
+            let s = |v: f64| ldexp(v, -2 * j);
+            let mut r = 0.0;
+            rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
+            ldexp(r, -3 * j)
+        },
+        || crate::generic::carlson::elliprj(x, y, z, p),
+    )
 }

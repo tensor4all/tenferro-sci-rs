@@ -258,3 +258,86 @@ cases:
 - **Here:** `generic::sqrt` scales arguments below 2^-900 by an exact power of
   four; the elliptic algorithms use it. This is the square-root counterpart of
   the subnormal low word noted in `generic/mod.rs`.
+
+## scipy/xsf: `elliprj` and `elliprg` are NaN or 0 for large or small arguments
+
+- **Affects:** xsf `31177fd9` (`include/xsf/ellint_carlson/_rj.hh`, `_rg.hh`),
+  and SciPy 1.18.1's `scipy.special.elliprj` and `elliprg`, which give the same
+  values.
+- **Cause:** the arguments are never scaled, and R_J forms
+  `(p - x)(p - y)(p - z)` (and `x y` in the principal value for `p < 0`,
+  Carlson 1995 Eq. 2.26), R_G `z (x + y)`, before anything else. From about
+  2^±341 (R_J) and 2^±512 (R_G) on the products leave the `f64` range,
+  although the argument ratios are 1 and the integrals finite.
+- **Example:** `elliprj(2**520, 2**520, 2**520, -2**520)`,
+  `elliprj(2**344, 2**345, 3*2**344, 2**346)` and `elliprg(2**520, 2**520, 2**520)`
+  are NaN; `elliprg(2**-544, 2**-543, 3*2**-544)` is 0. The values are
+  `2^-780 R_J(1, 1, 1, -1) = -8.887435110666537e-236`,
+  `2^-516 R_J(1, 2, 3, 4) = 1.118043e-156`, `2^260 = 1.85e78` and
+  `2^-272 R_G(1, 2, 3) = 1.847e-82` (homogeneity, DLMF 19.16.2 and 19.16.3).
+- **Upstream:** not reported.
+- **Here:** the `f64` wrappers `xsf::carlson::elliprj` and `elliprg` scale the
+  arguments by an exact power of four when one lies beyond 2^±300, none is
+  subnormal and they are at most 2^600 apart (a deviation from the port, stated
+  in its header): they are moved by the power of four that brings the outlying
+  argument just inside 2^±300, which leaves all of them within 2^±301, so that
+  every product of three stays in range, and xsf is evaluated both unscaled and
+  scaled: its value depends on the scale (underflow, and absolute thresholds of
+  its asymptotic expansions such as `y <= 1e-26`, across which it moves by up to
+  2e-6), so the unscaled value, which is what the port returned before, is kept
+  unless it is NaN, infinite or 0, or the precision-adaptive algorithm evaluated
+  in `f64` shows it to be off by more than 1e-10 and the scaled value is closer:
+  a scaled evaluation never replaces a value that independent evaluation agrees
+  with. Arguments farther apart are not scaled: no power of four brings them
+  within range, and evaluating xsf with only the largest moved into range gave
+  values off by up to 13 orders of magnitude where xsf returns NaN. At such
+  spreads xsf's own value can also be wrong but finite, as on `main`:
+  `elliprg(6.271122910098695e-280, 8.009645382365165e-60,
+  2.6711411019225204e-264)` is 1.3071070935084508e-30 (SciPy 1.18.1 and the
+  `f64` path) for 1.4150658449666896e-30 (mpmath at 250 bits, and the `Df64`
+  path). Arguments within 2^±300 take xsf's path unchanged, and so does xsf's
+  treatment of a subnormal argument as zero. Beyond 2^±300 xsf can also return a
+  wrong finite value, e.g. `elliprj(3e-100, 1, 2e80, -1e-70)` times 2^-392 is
+  -2.1e137 instead of 3.72e157; the scaling corrects it.
+  `crates/specials/tests/carlson_scaling.rs` checks both strategies at 2^±520
+  and 2^±600 (tensor4all/tenferro-sci-rs#25).
+
+## scipy/xsf: `elliprj` for `p < 0` cancels catastrophically when `|p|` is far below `y`
+
+- **Affects:** xsf `31177fd9` (`_rj.hh`, the principal value of Carlson 1995
+  Eq. 2.26), SciPy 1.18.1's `scipy.special.elliprj`, and this repository's own
+  `Df64` path (DLMF 19.20.14), at every scale.
+- **Cause:** both transformations write the principal value as a combination
+  of three terms (R_J with a positive fourth argument, R_F, R_C) that cancel.
+  With `x << |p| << y << z` and a wide spread their condition number reaches
+  1e45 to 1e91 (mpmath 1.3.0 at 400 bits).
+- **Example:** `elliprj(2^-275, 2^-75, 2^225, -2^-175)` is
+  `-3.972563343495336e-100` (DLMF 19.20.14 and Eq. 2.26 in mpmath with 400
+  extra bits, agreeing to 1e-40); SciPy and the `f64` path give
+  `6.462348535570529e-27`, the `Df64` path `7.174648137343064e-43`.
+- **Upstream:** not reported.
+- **Here:** where a path scales the arguments (tensor4all/tenferro-sci-rs#25;
+  the `f64` path when one lies beyond 2^±300 and they are at most 2^600 apart,
+  the `Df64` path also when their center lies beyond 2^±100), it computes the
+  condition number of the combination it evaluates (Eq. 2.26 for `f64`, DLMF
+  19.20.14 for `Df64`; the two can differ by orders of magnitude) and returns
+  NaN when it can cost more than a relative 1e-10 (above about 4.5e5 for `f64`,
+  4.1e21 for `Df64`), instead of a value without correct digits. Elsewhere, as
+  in the example, both paths return the value as computed, as before. A remedy
+  for all scales (a transformation that does not cancel there) is separate work.
+
+## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments
+
+- **Affects:** mpmath 1.3.0, `mp.elliprj(x, y, z, p)` for real `p < 0`, whose
+  real part is the Cauchy principal value at ordinary arguments.
+- **Example:** at 200 bits, `re(elliprj(2^520, 2^520, 2^520, -2^520)) · 2^780`
+  is 76.496… instead of `R_J(1, 1, 1, -1) = -0.56516…`; at
+  `(2^-201, 1, 2^399, -2^399)` the real part is -7.9e-179 at 200 bits,
+  -1.58e-178 at 300 bits and -2.84332914131e-178 at 600 bits, against
+  -2.843329141308721e-178 from DLMF 19.20.14 (stable at 200 and 300 bits).
+  At `2^-520` times `(1, 1, 1, -1)` it did not return within two minutes.
+- **Upstream:** not reported.
+- **Here:** `scripts/gen_carlson_scaling.py` computes the principal value from
+  DLMF 19.20.14 (R_J with a positive fourth argument, R_F, R_C), at base points
+  of ordinary size, where it checks it against mpmath's real part, and the test
+  scales by the exact power of two of the homogeneity.
