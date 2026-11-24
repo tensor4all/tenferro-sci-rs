@@ -198,18 +198,31 @@ cases:
   not affected: `elliprj(1, 2, 3, 1e300)` is `2.1808378064067243e-300`.
 - **Cause:** not investigated further; the duplication overflows in an
   intermediate product of the large argument.
-- **Neighbors:** `elliprf` has no such limit (finite up to `f64::MAX`). `elliprd`,
-  `elliprg` (one huge argument in third position) and `elliprc(1, y)` are NaN
-  only within a factor of about 3 of `f64::MAX` (above 6e307, 6e307 and 9e307),
-  where the result is far below the smallest subnormal anyway for `elliprd` and
-  `elliprc` (`elliprd(1, 2, 1e300)` is `0.0`).
+- **Neighbors:** with one huge argument, `elliprf` has no such limit (finite
+  up to `f64::MAX`). `elliprd`, `elliprg` (one huge argument in third
+  position) and `elliprc(1, y)` are NaN only within a factor of about 3 of
+  `f64::MAX` (above 6e307, 6e307 and 9e307), where the result is far below the
+  smallest subnormal anyway for `elliprd` and `elliprc`
+  (`elliprd(1, 2, 1e300)` is `0.0`). With several arguments in the top two
+  binades, R_C and R_F overflow in a sum of the arguments although the result
+  is about 1e-154: `elliprc(2^1022, -2^1022)` is NaN (mpmath
+  9.2964523864998226e-155), `elliprc(2^1020, -2^1022)` is 0.0 (mpmath
+  6.420273070929153e-155), and `elliprf(2^1022, 2^1023, 1.5 2^1023)` is NaN
+  (mpmath 1.084362095977639e-154). SciPy 1.16.3 gives the same values, and so
+  does the `f64` path; the `Df64` path is exact there
+  (`crates/specials/tests/carlson_ratchet.rs`, `F64_TOP_BITS`; found for
+  tensor4all/tenferro-sci-rs#27).
 - **Upstream:** not reported.
-- **Here:** the `f64` path is the faithful port and has the same NaNs. No
-  xsref table exists for `elliprj`, and the largest argument of any `elliprj`
-  reference row is 1e90, so no test row is affected. The `Df64` path is
-  accurate (checked to 5e-32 at ratios up to 1e180) and returns NaN, by design,
-  when the largest and smallest nonzero argument differ by more than 2^600
-  (`elliprj` in `lib.rs`; `df64_elliprj_ratio_limit_is_fail_fast`).
+- **Here:** since tensor4all/tenferro-sci-rs#26 the `f64` path moves arguments
+  that are at most 2^600 apart into 2^±300 (`Scaling::Window`), which removes
+  these NaNs for `elliprj`: `elliprj(1, 2, 1e157, 4)` is
+  1.888996838041373e-79 (mpmath 1.8889968380413732e-79; SciPy 1.16.3 NaN).
+  Farther apart, the `f64` path keeps xsf's value and its NaN
+  (`elliprj(1, 2, 1e300, 4)`). `carlson_ratchet.rs` checks rows with one
+  argument 2^500 to 2^600 above the others (regime `xsf_one_huge`). The `Df64`
+  path is accurate (checked to 5e-32 at ratios up to 1e180) and returns NaN,
+  by design, when the largest and smallest nonzero argument differ by more
+  than 2^600 (`elliprj` in `lib.rs`; `df64_elliprj_ratio_limit_is_fail_fast`).
 
 ## scipy/xsf: `ellipkinc(phi, 1)` is `+inf` at the `f64` value of pi/2, where `F` is finite
 
@@ -341,3 +354,55 @@ cases:
   DLMF 19.20.14 (R_J with a positive fourth argument, R_F, R_C), at base points
   of ordinary size, where it checks it against mpmath's real part, and the test
   scales by the exact power of two of the homogeneity.
+
+## scipy/xsf: `elliprj` uses its small-`y` expansion when `y / z` is not small
+
+- **Affects:** xsf `31177fd9` (`include/xsf/ellint_carlson/_rj.hh`,
+  `rj_asym_conf`, case `tiny_y`) and SciPy 1.16.3, `elliprj(x, y, z, p)` with
+  `p > 0`, sorted `x <= y <= z`.
+- **Cause:** the expansion of Carlson & Gustafson (1994), Proposition J3, is
+  selected when `y <= 1e-26` (an absolute threshold) and
+  `(a/z + a/p) |ln(p/a)| <= 1` with `a = (x + y)/2`. Its truncation error is
+  of order `y / z`, and nothing bounds `y / z` itself: with `p >> z` the
+  selection allows `y / z` up to about `1 / |ln(p / y)|`.
+- **Example** (mpmath 1.3.0 at 200 bits; SciPy and the `f64` path give the
+  same values):
+
+  | `(x, y, z, p)` | xsf | mpmath | relative error |
+  | --- | --- | --- | --- |
+  | `(0, 2^-88, 2^-70, 2^-28)` | 2.1097463894034245e20 | 2.1097424673320438e20 | 1.9e-6 |
+  | `(0, 2^-88, 2^-65, 2^-28)` | 4.577149050077143e19 | 4.5771488586721284e19 | 4.2e-8 |
+  | `(0, 2^-88, 2^-60, 2^-28)` | 9.589710776101472e18 | 9.5897107669232288e18 | 9.6e-10 |
+
+  The error falls with `y / z` (2^-18, 2^-23, 2^-28). With `z` of order 1,
+  or `p` small enough that the expansion is not selected, xsf is accurate to
+  about 1e-16 at the same `y`.
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port and has the same values.
+  The `f64` window of #26 moved some arguments into this case: the review of
+  0873683 found `elliprj(2^-322, 2^-110, 2^-92, 2^-50)` 1.9e-6 off after
+  scaling, while the unscaled value is right. The arbiter keeps that unscaled
+  value. `crates/specials/tests/carlson_ratchet.rs` pins the three points above
+  (regime `xsf_tiny_y`), against mpmath with the tolerance `y / z` and against
+  SciPy for parity. It also pins the window's image of the review's point,
+  `(2^-300, 2^-88, 2^-70, 2^-28)`, the same value 1.9e-6 off. The `Df64` path is
+  accurate there (2.2e-32).
+
+## scipy/xsf: `elliprj` loses accuracy just above its `p <= 1e-9` switch
+
+- **Affects:** xsf `31177fd9` (`_rj.hh`) and SciPy 1.16.3, `elliprj(x, y, z, p)`
+  with `p` just above 1e-9 and `x, y, z` of order 1.
+- **Cause:** for `p <= 1e-9` (an absolute threshold, `abs_close_zero`) xsf
+  uses Gustafson's identity (1982, Theorem 11), which is exact. Just above
+  it, the duplication runs with `p / x` near 1e-9 and loses digits.
+- **Example** (mpmath 1.3.0 at 200 bits; SciPy and the `f64` path give the
+  same values): `elliprj(1, 1, 1, 1.0000000000000003e-9)` is
+  30.16434034308821 for 30.164340343095963 (2.6e-13);
+  `elliprj(1, 2, 3, 2e-9)` is 12.217688234897604 for 12.217688234898564
+  (7.9e-14). At `p = 1e-9` itself both are accurate to 2e-16; from about
+  `p = 1e-4` on the error is below 2e-15.
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port. `carlson_ratchet.rs` checks
+  `p` from 5e-10 to 1e-8 on both sides of the switch (regime `threshold_p`)
+  with an `f64` tolerance of 1e-12, against SciPy for parity. The `Df64` path
+  is accurate there (6.4e-32).
