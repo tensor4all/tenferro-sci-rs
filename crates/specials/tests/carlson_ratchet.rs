@@ -23,7 +23,8 @@
 //! `p <= 1e-9` and `y <= 1e-26`); `xsf_tiny_y` (a known xsf error, see
 //! [`f64_tolerance`]); `principal_value` (`p < 0`, well conditioned up to
 //! 2^±520, and cancelling ones beyond 2^±300); `kept_xsf` (values the `f64`
-//! window keeps from xsf); `pv_ill_conditioned` (NaN or the value);
+//! window keeps from xsf, at its documented 1e-10); `pv_ill_conditioned` (NaN
+//! or the value);
 //! `f64_top_range` (R_C and R_F in the top binades, where xsf returns NaN or
 //! 0, and their accurate neighbors).
 //!
@@ -31,8 +32,8 @@
 //! threshold band lives) and runs in every configuration; `xprec::Df64` takes
 //! `Strategy::Adaptive` (the duplication algorithms, where the generic overflow
 //! lived) and needs the `xprec` feature (on by default). Only the `Df64` tests
-//! are gated, so `cargo test --no-default-features` still runs the five `f64`
-//! tests.
+//! are gated, so `cargo test --no-default-features` still runs the five tests
+//! that do not need it.
 //!
 //! Checks:
 //!
@@ -41,10 +42,10 @@
 //!   regime ([`f64_tolerance`], `df64_tolerance`). A row may allow NaN for one
 //!   strategy where the crate documents NaN; a finite value must then still be
 //!   within tolerance.
+//! * [`table_contents_are_pinned`]: the rows per regime and the reproducers of
+//!   the review findings are still in the table.
 //! * [`f64_matches_scipy`]: the `f64` path against SciPy 1.16.3 wherever it
 //!   does not scale the arguments, including SciPy's NaN and 0.
-//! * [`window_mirror_matches_source`]: the copy of the `f64` window rule that
-//!   the tolerances use still matches `src/xsf/carlson.rs`.
 //! * [`f64_homogeneity`], `df64_homogeneity` and the `beyond_spread_600`
 //!   pair: `R(λ a) = λ^d R(a)` (`d = -1/2` for R_C and R_F, `-3/2` for R_D and
 //!   R_J, `1/2` for R_G; DLMF 19.16.1-19.16.5) for `λ = 2^e` over the whole
@@ -125,18 +126,15 @@ fn rel<T: Real>(got: T, want: (f64, f64)) -> f64 {
     ((got - w) / w).abs().approx_f64()
 }
 
-/// `UNSCALED_BITS` and `AGREE` of `src/xsf/carlson.rs`, which this file mirrors
-/// in [`f64_window`] and the tolerances; [`window_mirror_matches_source`] fails
-/// when the source changes them.
-const WINDOW_BITS: i32 = 300;
-const AGREE: f64 = 1e-10;
-
 /// Whether the `f64` R_G or R_J scales `args` (`Scaling::Window` in
-/// `xsf::carlson`, as documented on [`specials::elliprj`]): a nonzero
+/// `xsf::carlson`), by the rule documented on [`specials::elliprj`]: a nonzero
 /// argument beyond 2^±300, none subnormal, and exponents at most 600 apart.
-/// The result is then xsf's value at one of two scales, kept from the
-/// unscaled one unless the independent evaluation shows it off by more than
-/// [`AGREE`]: its documented accuracy is 1e-10.
+///
+/// Used only to leave such rows out of [`f64_matches_scipy`] (SciPy does not
+/// scale). No tolerance depends on it. If the crate's private rule drifts from
+/// this copy, a row the crate no longer scales is skipped there but still
+/// checked against mpmath at the tight tolerance, and a row it newly scales
+/// fails the SciPy comparison loudly.
 fn f64_window(name: &str, args: &[f64]) -> bool {
     if !matches!(name, "elliprg" | "elliprj") || args.iter().any(|v| v.is_subnormal()) {
         return false;
@@ -147,9 +145,7 @@ fn f64_window(name: &str, args: &[f64]) -> bool {
         .map(|v| v.abs().log2().floor() as i32)
         .collect();
     match (exps.iter().max(), exps.iter().min()) {
-        (Some(&max), Some(&min)) => {
-            (max > WINDOW_BITS || min < -WINDOW_BITS) && max - min <= 2 * WINDOW_BITS
-        }
+        (Some(&max), Some(&min)) => (max > 300 || min < -300) && max - min <= 600,
         _ => false,
     }
 }
@@ -167,19 +163,24 @@ const EPS_DF64: f64 = 2.465_190_328_815_662e-32;
 /// * `f64` R_G at spreads of 2^596 and more: 4e-15. xsf's R_G there is 8 ulp
 ///   off (1.8e-15 measured), the same value as SciPy (checked by
 ///   [`f64_matches_scipy`]).
-/// * `f64` R_J in `threshold_p` (`p` from 5e-10 to 1e-8 with `x, y, z` up to
+/// * `f64` R_J in `threshold_p` with `p > 1e-9` (up to 1e-4, `x, y, z` up to
 ///   1): 1e-12. Just above xsf's switch `p <= 1e-9` (an absolute threshold)
-///   to Gustafson's identity, which is exact, xsf's duplication for `p << x`
-///   is up to 2.6e-13 off (`(1, 1, 1, 1.0000000000000002e-9)`; SciPy gives the
-///   same value).
+///   to Gustafson's identity, xsf's duplication for `p << x` is up to 2.6e-13
+///   off (`(1, 1, 1, 1.0000000000000003e-9)`; SciPy gives the same value).
+///   The rows with `p <= 1e-9` take the identity, which is exact, and keep the
+///   ordinary tolerance.
 /// * `f64` R_J in `xsf_tiny_y`: `y / z` (sorted `x <= y <= z`). xsf's
 ///   asymptotic expansion for `y <= 1e-26` (Carlson & Gustafson 1994,
 ///   Proposition J3) has a truncation error of order `y / z`, and its selection
 ///   bound lets `y / z` be about `1 / |ln(p / y)|`: 1.9e-6 for `y / z = 2^-18`
 ///   (`docs/upstream-issues.md`; SciPy gives the same value). These rows pin
 ///   that bound and the parity with SciPy, not an accuracy the code can reach.
-/// * `f64` R_G and R_J where the `f64` path scales ([`f64_window`]): 1e-10,
-///   the documented accuracy of a value kept from xsf's unscaled evaluation.
+/// * `f64` in `kept_xsf`: 1e-10, the documented accuracy of a value that the
+///   `f64` window keeps from xsf's unscaled evaluation (it agrees with the
+///   scaled one to within `AGREE = 1e-10`). Only the three rows that measure
+///   above the ordinary tolerance are in this regime (5.8e-11, 7.4e-11 and
+///   6.1e-13); every other row the window scales keeps the ordinary
+///   tolerance, so a degradation to the ceiling elsewhere fails.
 /// * `f64` R_C and R_F in `f64_top_range`: NaN or 0 is accepted where the row
 ///   allows NaN (xsf overflows in a sum of the arguments; [`F64_TOP_BITS`]);
 ///   SciPy gives the same NaN and 0, which [`f64_matches_scipy`] pins.
@@ -197,16 +198,16 @@ fn f64_tolerance(r: &Row) -> f64 {
     if name == "elliprg" && regime.starts_with("spread") {
         tf = 4e-15;
     }
-    if regime == "threshold_p" {
+    if regime == "threshold_p" && a[3] > 1e-9 {
         tf = 1e-12;
+    }
+    if regime == "kept_xsf" {
+        tf = 1e-10;
     }
     if regime == "xsf_tiny_y" {
         let mut v = [a[0], a[1], a[2]];
         v.sort_by(f64::total_cmp);
         tf = v[1] / v[2];
-    }
-    if f64_window(name, a) {
-        tf = tf.max(1e-10);
     }
     if name == "elliprj" && a[3] < 0.0 {
         tf = tf.max((4.0 * r.cond_carlson * EPS_F64).min(PV_MAX));
@@ -240,7 +241,6 @@ fn within(e: f64, tol: f64) -> bool {
 /// error per regime and function.
 fn check_table<T: Real>(label: &str, tolerance: fn(&Row) -> f64, nan_ok: fn(&Row) -> bool) {
     let rows = table();
-    assert!(rows.len() > 600, "{} rows", rows.len());
     let mut failures = Vec::new();
     // (regime, function) -> (worst error over the other results, NaN or
     // excused results, rows)
@@ -299,6 +299,96 @@ fn df64_reference_table() {
     check_table::<Df64>("Df64", df64_tolerance, |r| r.df64_nan_ok);
 }
 
+/// Rows per `(regime, function)` in `tests/data/carlson_ratchet.csv`. A
+/// regenerated table that drops rows (the generator rejects a row whose
+/// reference leaves the range) fails [`table_contents_are_pinned`] until this
+/// list is updated in the same commit.
+const ROW_COUNTS: &[(&str, &str, usize)] = &[
+    ("f64_top_range", "elliprc", 6),
+    ("f64_top_range", "elliprf", 3),
+    ("kept_xsf", "elliprg", 2),
+    ("kept_xsf", "elliprj", 1),
+    ("ordinary", "elliprc", 8),
+    ("ordinary", "elliprd", 5),
+    ("ordinary", "elliprf", 5),
+    ("ordinary", "elliprg", 5),
+    ("ordinary", "elliprj", 6),
+    ("principal_value", "elliprj", 47),
+    ("pv_ill_conditioned", "elliprj", 4),
+    ("ratio_near_one", "elliprc", 16),
+    ("ratio_near_one", "elliprd", 8),
+    ("ratio_near_one", "elliprf", 8),
+    ("ratio_near_one", "elliprg", 7),
+    ("ratio_near_one", "elliprj", 16),
+    ("spread_over_600", "elliprc", 30),
+    ("spread_over_600", "elliprd", 29),
+    ("spread_over_600", "elliprf", 30),
+    ("spread_over_600", "elliprg", 34),
+    ("spread_over_600", "elliprj", 83),
+    ("spread_to_600", "elliprc", 40),
+    ("spread_to_600", "elliprd", 40),
+    ("spread_to_600", "elliprf", 40),
+    ("spread_to_600", "elliprg", 40),
+    ("spread_to_600", "elliprj", 100),
+    ("threshold_p", "elliprj", 35),
+    ("threshold_y", "elliprj", 26),
+    ("xsf_one_huge", "elliprj", 28),
+    ("xsf_tiny_y", "elliprj", 4),
+];
+
+/// Rows that reproduce the findings of the three review rounds of #26 and
+/// of this suite: `(function, arguments as exponents of 2 or values)`. They
+/// must stay in the table.
+fn required_rows() -> Vec<(&'static str, Vec<f64>)> {
+    let p = |e: i32| ldexp(1.0, e);
+    vec![
+        // #25: elliprj(a, a, a, -a) at a = 2^520 was NaN.
+        ("elliprj", vec![p(520), p(520), p(520), -p(520)]),
+        // Review of 470803a: the retry arm (off by up to 13 orders).
+        ("elliprj", vec![p(-400), p(-360), p(500), p(-500)]),
+        ("elliprj", vec![p(-400), p(-360), p(500), p(-400)]),
+        ("elliprj", vec![p(-300), p(-260), p(600), p(-400)]),
+        ("elliprg", vec![1.78e-245, 2.71e-104, 2.85e-306]),
+        // Review of 0873683: the window across y <= 1e-26.
+        ("elliprj", vec![p(-322), p(-110), p(-92), p(-50)]),
+        ("elliprj", vec![p(-312), p(-100), p(-82), p(-40)]),
+        // Reviews of 70d4940 and 62f0191: ill-conditioned principal values.
+        ("elliprj", vec![p(-675), p(-475), p(-175), -p(-575)]),
+        ("elliprj", vec![p(-175), p(25), p(325), -p(-75)]),
+        // Findings of this suite (docs/upstream-issues.md).
+        ("elliprj", vec![0.0, p(-88), p(-70), p(-28)]),
+        (
+            "elliprj",
+            vec![1.0, 1.0, 1.0, f64::from_bits(1e-9_f64.to_bits() + 1)],
+        ),
+        ("elliprc", vec![p(1022), -p(1022)]),
+        ("elliprc", vec![p(1020), -p(1022)]),
+    ]
+}
+
+/// The table has the pinned number of rows in every regime and contains the
+/// reproducers of [`required_rows`], so a regeneration cannot silently drop
+/// the rows this suite exists for.
+#[test]
+fn table_contents_are_pinned() {
+    let rows = table();
+    let mut counts: std::collections::BTreeMap<(&str, &str), usize> = Default::default();
+    for r in &rows {
+        *counts
+            .entry((r.regime.as_str(), r.name.as_str()))
+            .or_default() += 1;
+    }
+    let want: std::collections::BTreeMap<(&str, &str), usize> =
+        ROW_COUNTS.iter().map(|&(g, n, c)| ((g, n), c)).collect();
+    assert_eq!(counts, want, "rows per (regime, function)");
+    for (name, args) in required_rows() {
+        assert!(
+            rows.iter().any(|r| r.name == name && r.args == args),
+            "required row {name}{args:?} is missing"
+        );
+    }
+}
+
 /// The `f64` path against SciPy 1.16.3 where it does not scale the arguments
 /// (there it is xsf's code, unchanged): 2e-15 for R_J and 1e-15 for the
 /// others, as in `tests/reference.rs`, and NaN exactly where SciPy gives NaN.
@@ -333,28 +423,6 @@ fn f64_matches_scipy() {
         failures.len(),
         failures.join("\n")
     );
-}
-
-/// [`f64_window`], [`WINDOW_BITS`] and [`AGREE`] mirror private items of
-/// `src/xsf/carlson.rs` (`scaling`, `UNSCALED_BITS`, `AGREE`), which an
-/// integration test cannot call. If one of them changes, the tolerances here
-/// would silently score a different set of rows at 1e-10, so this fails until
-/// the mirror is updated with it.
-#[test]
-fn window_mirror_matches_source() {
-    let src = include_str!("../src/xsf/carlson.rs");
-    for needle in [
-        format!("const UNSCALED_BITS: i32 = {WINDOW_BITS};"),
-        format!("const AGREE: f64 = {AGREE:e};"),
-        "|| (max <= UNSCALED_BITS && min >= -UNSCALED_BITS)".to_string(),
-        "|| max - min > 2 * UNSCALED_BITS".to_string(),
-        "if v.is_subnormal() {\n            return Scaling::None;".to_string(),
-    ] {
-        assert!(
-            src.contains(&needle),
-            "src/xsf/carlson.rs no longer contains {needle:?}: update f64_window"
-        );
-    }
 }
 
 // --- homogeneity ---------------------------------------------------------------
@@ -476,11 +544,14 @@ fn check_homogeneity<T: Real>(
     (worst, es.len(), nans, bad)
 }
 
-/// The `f64` tolerance of the homogeneity check at the scaled arguments `s`:
-/// twice that of `tests/reference.rs` (both values carry an error), and the
-/// documented 1e-10 where the `f64` path scales ([`f64_window`]).
-fn f64_homogeneity_tol(name: &str, s: &[f64]) -> f64 {
-    if f64_window(name, s) {
+/// The `f64` tolerance of the homogeneity check for the base point `a`, at
+/// every exponent: twice that of `tests/reference.rs` (both values carry an
+/// error). One base point gets the documented 1e-10 of a value the `f64`
+/// window keeps from xsf: `elliprg(1e-6, 1, 1e6)`, whose kept values beyond
+/// 2^±300 are up to 4.6e-11 off. Every other base point is held to the tight
+/// tolerance at every exponent, inside the window too.
+fn f64_homogeneity_tol(name: &str, a: &[f64]) -> f64 {
+    if name == "elliprg" && a == [1e-6, 1.0, 1e6] {
         1e-10
     } else if name == "elliprj" {
         4e-14
@@ -580,7 +651,7 @@ fn f64_homogeneity() {
                     Allow::Value
                 }
             },
-            |s| f64_homogeneity_tol(name, s),
+            |_| f64_homogeneity_tol(name, &a),
         );
         println!("{name}{a:?}: {w:.1e} over {n} exponents ({nans} NaN or 0 at the top)");
         failures.extend(bad.into_iter().map(|b| format!("{name}{a:?} at {b}")));
@@ -625,7 +696,7 @@ fn f64_homogeneity_beyond_spread_600() {
             Allow::NanOrValue
         };
         let (w, n, nans, bad) =
-            check_homogeneity(name, &a, base, |_| allow, |s| f64_homogeneity_tol(name, s));
+            check_homogeneity(name, &a, base, |_| allow, |_| f64_homogeneity_tol(name, &a));
         println!("{name}{a:?}: {w:.1e} over {n} exponents ({nans} NaN or 0)");
         failures.extend(bad.into_iter().map(|b| format!("{name}{a:?} at {b}")));
     }
