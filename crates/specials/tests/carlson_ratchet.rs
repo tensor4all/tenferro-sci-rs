@@ -512,8 +512,10 @@ fn pow2(e: i32) -> f64 {
 /// `elliprc(2^1022, -2^1022)` is NaN and `elliprf(2^1022, 2^1023, 3 2^1022)`
 /// is NaN, pinned with SciPy's values by the `f64_top_range` rows. There
 /// [`f64_homogeneity`] accepts NaN or 0 from the `f64` R_C, NaN from R_F and
-/// R_J, and only the value from R_D and R_G; never a wrong nonzero value. The
-/// `Df64` path is checked up to `f64::MAX`.
+/// R_J, and only the value from R_G; never a wrong nonzero value. R_D
+/// (degree -3/2) never reaches the top with a normal result, so no exponent of
+/// its base points is checked there. The `Df64` path is checked up to
+/// `f64::MAX`.
 const F64_TOP_BITS: f64 = 1022.0;
 
 /// Exponent spread, in bits, of the nonzero arguments.
@@ -697,8 +699,8 @@ fn f64_homogeneity() {
         assert!(base.is_finite(), "{name}{a:?} = {base:e}");
         let top = |s: &[f64]| s.iter().any(|v| v.abs().log2() >= F64_TOP_BITS);
         // What the top binades may return instead of the value: xsf's R_C
-        // gives NaN or 0 there, R_F and R_J NaN; R_D and R_G must stay
-        // accurate (see F64_TOP_BITS).
+        // gives NaN or 0 there, R_F and R_J NaN; R_G must stay accurate. R_D
+        // does not reach the top with a normal result (see F64_TOP_BITS).
         let at_top = match name {
             "elliprc" => Allow::NanZeroOrValue,
             "elliprf" | "elliprj" => Allow::NanOrValue,
@@ -738,7 +740,9 @@ fn df64_homogeneity() {
 /// Beyond the documented NaN edge: spreads of more than 2^600, which the
 /// `f64` R_J and R_G do not scale; they get xsf's value, NaN where its
 /// products leave the range (and, for R_G, 0 where they underflow:
-/// `docs/upstream-issues.md`, "`elliprj` and `elliprg` are NaN or 0 ...").
+/// `docs/upstream-issues.md`, "`elliprj` and `elliprg` are NaN or 0 ...";
+/// here `elliprg(2^-960, 2^-740, 2^-340)`, the base `(2^-320, 2^-100, 2^300)`
+/// at 2^-640, is 0 for about 3.3e-52).
 /// At every exponent the result must be one of those or the homogeneous
 /// value, never a wrong nonzero finite one (the retry arm of the review of
 /// 470803a returned values off by 13 orders of magnitude here).
