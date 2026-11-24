@@ -244,38 +244,55 @@ fn f64_keeps_xsf_subnormal_as_zero() {
     assert!(specials::elliprj(p(-1060), p(-1060), p(-1023), p(-1023)).is_nan());
 }
 
-/// The two wide-ratio arms of the `f64` scaling (ratios beyond 2^600, where
-/// the arguments cannot all be brought within 2^±300): the largest scaled down
-/// from 2^381 as far as 2^-900 stays above 2^-1000, and the largest scaled up
-/// from 2^-350.4 to 2^-300. NaN on `main`. `f64` only: these arms are in the
-/// xsf wrappers, and the `Df64` R_J returns NaN beyond a ratio of 2^600 by
-/// design. References: mpmath 1.3.0, `scripts/gen_carlson_scaling.py` (for
-/// `p < 0`, DLMF 19.20.14 checked against Carlson 1995 Eq. 2.26).
+/// Spreads beyond 2^600 at scales where xsf's products leave the range: the
+/// `f64` path does not scale these (no power of four brings such a spread
+/// within range), so it returns xsf's value, NaN here as on `main` and in
+/// SciPy. Each point must be NaN or accurate, never a wrong finite value: a
+/// retry that moved only the largest argument into range gave 7.2e54 for
+/// 1.4e41, 6.4e39 for 4.1e39, 5.1e9 for 1.0e-4 and 8.2231e-53 for 8.2310e-53
+/// on the last four (review of 470803a). `f64` only: the `Df64` R_J returns
+/// NaN beyond a ratio of 2^600 by design. References: mpmath 1.3.0,
+/// `scripts/gen_carlson_scaling.py` (for `p < 0`, DLMF 19.20.14 checked
+/// against Carlson 1995 Eq. 2.26).
 #[test]
-fn f64_wide_ratio_arms() {
+fn f64_wide_spread_is_nan_or_accurate() {
     let h = pow2(380);
     let t = pow2(-352);
-    let rj: [([f64; 4], f64); 3] = [
+    let rj: [([f64; 4], f64); 6] = [
         ([pow2(-900), h, 2.0 * h, 3.0 * h], 2.010295496314046e-172),
         ([pow2(-900), h, 2.0 * h, -3.0 * h], -2.2977297286893855e-172),
         ([pow2(-1000), t, 2.0 * t, 3.0 * t], 6.826453538994934e+158),
+        (
+            [pow2(-400), pow2(-360), pow2(500), pow2(-500)],
+            1.4434984319979335e+41,
+        ),
+        (
+            [pow2(-400), pow2(-360), pow2(500), pow2(-400)],
+            4.0833845088323315e+39,
+        ),
+        (
+            [pow2(-300), pow2(-260), pow2(600), pow2(-400)],
+            0.00010113860680069928,
+        ),
     ];
     for (a, want) in rj {
         let got = specials::elliprj(a[0], a[1], a[2], a[3]);
-        let err = ((got - want) / want).abs();
         assert!(
-            err <= f64_tol("elliprj"),
-            "elliprj{a:?} = {got:e}, error {err:e}"
+            got.is_nan() || ((got - want) / want).abs() <= f64_tol("elliprj"),
+            "elliprj{a:?} = {got:e}, want {want:e} or NaN"
         );
     }
-    let a = [pow2(-900), pow2(560), pow2(561)];
-    let want = 1.8553448517234111e+84;
-    let got = specials::elliprg(a[0], a[1], a[2]);
-    let err = ((got - want) / want).abs();
-    assert!(
-        err <= f64_tol("elliprg"),
-        "elliprg{a:?} = {got:e}, error {err:e}"
-    );
+    let rg: [([f64; 3], f64); 2] = [
+        ([pow2(-900), pow2(560), pow2(561)], 1.8553448517234111e+84),
+        ([1.78e-245, 2.71e-104, 2.85e-306], 8.231038816577164e-53),
+    ];
+    for (a, want) in rg {
+        let got = specials::elliprg(a[0], a[1], a[2]);
+        assert!(
+            got.is_nan() || ((got - want) / want).abs() <= f64_tol("elliprg"),
+            "elliprg{a:?} = {got:e}, want {want:e} or NaN"
+        );
+    }
 }
 
 /// Where xsf's unscaled `f64` value is right although an argument lies far

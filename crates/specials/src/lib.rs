@@ -759,9 +759,9 @@ pub fn elliprf<T: Real>(x: T, y: T, z: T) -> T {
 /// (DLMF 19.16.3), symmetric in its arguments.
 ///
 /// Defined for `x, y, z >= 0`; `+∞` if an argument is infinite, NaN for a
-/// negative argument. The `f64` path does not handle a largest argument above
-/// about 2^512 with the smallest nonzero one more than about 2^1512 below it:
-/// there it returns NaN, as SciPy does.
+/// negative argument. The `f64` path scales its arguments as [`elliprj`]
+/// does; arguments more than 2^600 apart are not scaled, and xsf returns NaN
+/// there, as SciPy does, from a largest argument of about 2^512 on.
 ///
 /// # Examples
 ///
@@ -797,16 +797,14 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// that it is accurate to 1e-30 (checked up to a ratio of 1e180).
 ///
 /// The `f64` path scales its arguments by a power of four when one lies
-/// beyond 2^±300 and none is subnormal, so that the products xsf forms stay
-/// in range. Arguments at most 2^600 apart are moved just into 2^±300, and
-/// xsf's unscaled value is kept where it agrees with the scaled one to 1e-10;
-/// arguments farther apart are scaled only when xsf's own value is NaN,
-/// infinite or 0.
-/// It does not handle a largest argument above about 2^340 with the smallest
-/// nonzero one more than about 2^1340 below it
-/// (`elliprj(2^-1000, 2^400, 2^400, 2^400)`), nor a subnormal argument (which
-/// xsf treats as zero) next to arguments below about 2^-340 or above about
-/// 2^340: there it returns NaN, as SciPy does.
+/// beyond 2^±300, none is subnormal and they are at most 2^600 apart: they
+/// are moved just into 2^±300, so that the products xsf forms stay in range,
+/// and xsf's unscaled value is kept where it agrees with the scaled one to
+/// 1e-10. Arguments farther apart, or with a subnormal one (which xsf treats
+/// as zero), are not scaled: no power of four brings them within range, and
+/// xsf returns NaN, as SciPy does, where its products leave the range there
+/// (from a largest argument of about 2^340, or below about 2^-340, on; for
+/// example `elliprj(2^-1000, 2^400, 2^400, 2^400)`).
 ///
 /// For `p < 0`, both paths evaluate the principal value by a transformation
 /// (DLMF 19.20.14 for `Df64`, Carlson 1995 Eq. 2.26 in xsf) that cancels

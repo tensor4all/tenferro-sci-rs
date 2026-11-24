@@ -113,9 +113,9 @@ def main() -> None:
     # Carlson (1995) Eq. 2.26 is (in `rj`).
     print("elliprj", "(2^-201, 1, 2^399, -2^399)",
           dd(stable(lambda: rj(2.0**-201, 1.0, t, -t, check=False))))
-    # The wide-ratio arms of the f64 `scale_exponent` (ratios beyond 2^600):
-    # scaled down from 2^381 with 2^-900 kept above 2^-1000, and scaled up to
-    # 2^-300 from 2^-350.4.
+    # Spreads beyond 2^600, which the f64 path leaves unscaled (xsf gives NaN
+    # or these values): scaled down from 2^381, scaled up from 2^-350.4, and
+    # the four points of the review of 470803a.
     h = 2.0**380
     print("elliprj", "(2^-900, 2^380, 2^381, 3*2^380)",
           dd(stable(lambda: rj(2.0**-900, h, 2 * h, 3 * h))))
@@ -126,6 +126,10 @@ def main() -> None:
           dd(stable(lambda: rj(2.0**-1000, t, 2 * t, 3 * t))))
     print("elliprg", "(2^-900, 2^560, 2^561)",
           dd(stable(lambda: mp.elliprg(2.0**-900, 2.0**560, 2.0**561))))
+    for e in [(-400, -360, 500, -500), (-400, -360, 500, -400), (-300, -260, 600, -400)]:
+        print("elliprj", e, dd(stable(lambda: mp.elliprj(*[2.0**v for v in e]))))
+    print("elliprg", "(1.78e-245, 2.71e-104, 2.85e-306)",
+          dd(stable(lambda: mp.elliprg(1.78e-245, 2.71e-104, 2.85e-306))))
     # Base points of values xsf gets wrong but finite at 2^-392 and 2^-568 (the
     # test scales them exactly).
     print("elliprj", "(3e-100, 1, 2e80, -1e-70)",

@@ -16,12 +16,12 @@
 //! asymptotic case `tinyx` (never selected upstream) and the compensated
 //! complex arithmetic are not ported; `std::sort` on at most three entries is
 //! an insertion sort. The wrappers [`elliprg`] and [`elliprj`] scale their
-//! arguments by an exact power of four when one lies beyond 2^±300 and none
-//! is subnormal (see [`Scaling`]): xsf forms products of up to three
-//! arguments before any scaling and returns NaN, 0 or a wrong value from
-//! about 2^±341 (R_J) and 2^±512 (R_G) on, although the integrals are finite
-//! there (tensor4all/tenferro-sci-rs#25). Arguments within 2^±300 take xsf's
-//! path unchanged.
+//! arguments by an exact power of four when one lies beyond 2^±300, none is
+//! subnormal and they are at most 2^600 apart (see [`Scaling`]): xsf forms
+//! products of up to three arguments before any scaling and returns NaN, 0
+//! or a wrong value from about 2^±341 (R_J) and 2^±512 (R_G) on, although
+//! the integrals are finite there (tensor4all/tenferro-sci-rs#25). All other
+//! arguments take xsf's path unchanged.
 
 use core::f64::consts::PI;
 
@@ -996,9 +996,13 @@ const UNSCALED_BITS: i32 = 300;
 /// and scaling a normal argument by a power of four is exact.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Scaling {
-    /// Every nonzero finite argument lies within 2^±[`UNSCALED_BITS`], or one
-    /// is subnormal (xsf treats a subnormal argument as zero, and scaling it
-    /// up would undo that): xsf's path, unchanged.
+    /// Every nonzero finite argument lies within 2^±[`UNSCALED_BITS`], one is
+    /// subnormal (xsf treats a subnormal argument as zero, and scaling it up
+    /// would undo that), or the largest and the smallest nonzero argument are
+    /// more than 2^(2 [`UNSCALED_BITS`]) apart: xsf's path, unchanged. No
+    /// power of four brings such a spread within range, and evaluating xsf
+    /// on it with only the largest moved into range gave values off by up to
+    /// 13 orders of magnitude where xsf returns NaN (review of 470803a).
     None,
     /// The largest and the smallest nonzero argument are at most
     /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the smallest power of
@@ -1010,12 +1014,6 @@ enum Scaling {
     /// scaled value is used when it does not (the unscaled one is then
     /// damaged by underflow: off by more than 1e-10, up to a wrong sign).
     Window(i32),
-    /// Farther apart: the largest is brought toward 2^±[`UNSCALED_BITS`]
-    /// (when it is above 2^[`UNSCALED_BITS`], only as far as the smallest
-    /// stays above 2^-1000). Products of the small arguments may then
-    /// underflow where they did not, so this is only a retry, used when xsf's
-    /// unscaled value is not [`usable`].
-    Retry(i32),
 }
 
 fn scaling(args: &[f64]) -> Scaling {
@@ -1030,35 +1028,20 @@ fn scaling(args: &[f64]) -> Scaling {
             min = min.min(e);
         }
     }
-    let j = if max == i32::MIN || (max <= UNSCALED_BITS && min >= -UNSCALED_BITS) {
-        0
-    } else if max - min <= 2 * UNSCALED_BITS {
-        return Scaling::Window(if max > UNSCALED_BITS {
-            (max - UNSCALED_BITS + 1).div_euclid(2)
-        } else {
-            (min + UNSCALED_BITS).div_euclid(2)
-        });
-    } else if max > UNSCALED_BITS {
-        (max - UNSCALED_BITS + 1)
-            .div_euclid(2)
-            .min((min + 1000).div_euclid(2))
-            .max(0)
-    } else if max < -UNSCALED_BITS {
-        (max + UNSCALED_BITS).div_euclid(2)
-    } else {
-        0
-    };
-    if j == 0 {
+    if max == i32::MIN
+        || (max <= UNSCALED_BITS && min >= -UNSCALED_BITS)
+        || max - min > 2 * UNSCALED_BITS
+    {
         Scaling::None
+    } else if max > UNSCALED_BITS {
+        Scaling::Window((max - UNSCALED_BITS + 1).div_euclid(2))
     } else {
-        Scaling::Retry(j)
+        Scaling::Window((min + UNSCALED_BITS).div_euclid(2))
     }
 }
 
-/// True for a value of R_G or R_J that is kept without a retry: finite and
-/// nonzero. A product leaving the range gives NaN, an infinity or 0. A
-/// retried value is likewise kept only if it is usable, so that a retry
-/// never replaces xsf's NaN, infinity or 0 by a different failure.
+/// True for a value of R_G or R_J that can be kept: finite and nonzero. A
+/// product leaving the range gives NaN, an infinity or 0.
 fn usable(r: f64) -> bool {
     r.is_finite() && r != 0.0
 }
@@ -1081,18 +1064,6 @@ fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> (f64, i32) {
             if usable(r) && (!usable(rs) || (r - rs).abs() <= AGREE * rs.abs()) {
                 (r, 0)
             } else if usable(rs) {
-                (rs, j)
-            } else {
-                (r, 0)
-            }
-        }
-        Scaling::Retry(j) => {
-            let r = f(0);
-            if usable(r) {
-                return (r, 0);
-            }
-            let rs = f(j);
-            if usable(rs) {
                 (rs, j)
             } else {
                 (r, 0)
