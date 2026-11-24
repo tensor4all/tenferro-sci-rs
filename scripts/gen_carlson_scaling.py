@@ -174,6 +174,11 @@ def main() -> None:
             with mp.workprec(mp.mp.prec + 400):
                 return +rj(*a, check=False)
         print("elliprj", a, dd(stable(wide_a)))
+    # Review of 0873683: the window moves y across xsf's absolute threshold
+    # y <= 1e-26, where xsf's expansion is 1.9e-6 off; the unscaled value is
+    # right. Evaluated at the arguments times 4^150, scaled back exactly.
+    for e in [(-322, -110, -92, -50), (-312, -100, -82, -40)]:
+        print("elliprj", e, dd(stable(lambda: shifted(mp.elliprj, e, 150, -3))))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))

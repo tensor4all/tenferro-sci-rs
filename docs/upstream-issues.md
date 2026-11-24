@@ -281,13 +281,17 @@ cases:
   subnormal and they are at most 2^600 apart (a deviation from the port, stated
   in its header): they are moved by the power of four that brings the outlying
   argument just inside 2^±300, which leaves all of them within 2^±301, so that
-  every product of three stays in range, and xsf's unscaled value is kept where
-  it agrees with the scaled one to 1e-10 (xsf picks some asymptotic expansions
-  by absolute thresholds, so its value moves with the scale by about 1e-11).
-  Arguments farther apart are not scaled: no power of four brings them within
-  range, and evaluating xsf with only the largest moved into range gave values
-  off by up to 13 orders of magnitude where xsf returns NaN. At such spreads
-  xsf's own value can also be wrong but finite, as on `main`:
+  every product of three stays in range, and xsf is evaluated both unscaled and
+  scaled: its value depends on the scale (underflow, and absolute thresholds of
+  its asymptotic expansions such as `y <= 1e-26`, across which it moves by up to
+  2e-6), so the unscaled value, which is what the port returned before, is kept
+  unless it is NaN, infinite or 0, or the precision-adaptive algorithm evaluated
+  in `f64` shows it to be off by more than 1e-10 and the scaled value is closer:
+  a scaled evaluation never replaces a value that independent evaluation agrees
+  with. Arguments farther apart are not scaled: no power of four brings them
+  within range, and evaluating xsf with only the largest moved into range gave
+  values off by up to 13 orders of magnitude where xsf returns NaN. At such
+  spreads xsf's own value can also be wrong but finite, as on `main`:
   `elliprg(6.271122910098695e-280, 8.009645382365165e-60,
   2.6711411019225204e-264)` is 1.3071070935084508e-30 (SciPy 1.18.1 and the
   `f64` path) for 1.4150658449666896e-30 (mpmath at 250 bits, and the `Df64`

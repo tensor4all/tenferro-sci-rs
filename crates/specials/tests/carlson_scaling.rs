@@ -369,6 +369,22 @@ fn f64_keeps_xsf_value_where_it_is_finite() {
         let err = ((got - want) / want).abs();
         assert!(err <= 1e-10, "elliprj{a:?} = {got:e}, error {err:e}");
     }
+    // Review of 0873683: the window moves `y` across xsf's absolute threshold
+    // `y <= 1e-26`, where its expansion is 1.9e-6 off, so the unscaled and the
+    // scaled value disagree and the unscaled one (`main`'s) is the right one:
+    // it must not be replaced. References at the arguments times 4^150,
+    // scaled back exactly.
+    for (e, want) in [
+        ([-322, -110, -92, -50], 1.8122549800346954e+30),
+        ([-312, -100, -82, -40], 5.530563293562913e+25),
+    ] {
+        let got = specials::elliprj(pow2(e[0]), pow2(e[1]), pow2(e[2]), pow2(e[3]));
+        let err = ((got - want) / want).abs();
+        assert!(
+            err <= f64_tol("elliprj"),
+            "elliprj(2^{e:?}) = {got:e}, error {err:e}"
+        );
+    }
 }
 
 /// Values xsf gets wrong but finite beyond 2^±300 (on `main`: -2.1e137 for a

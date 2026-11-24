@@ -1048,26 +1048,54 @@ fn usable(r: f64) -> bool {
 }
 
 /// Relative agreement between xsf's unscaled and scaled value within which
-/// [`Scaling::Window`] keeps the unscaled one: ten times the largest change
-/// of an accurate xsf value with the scale that was measured (1.05e-11; at
-/// most 7.7e-13 on 300,000 random argument sets). Unscaled errors from
-/// gradual underflow range from there up to order 1 and are corrected.
+/// [`Scaling::Window`] keeps the unscaled one without further evaluation.
+/// xsf's value depends on the scale both through underflow (the unscaled
+/// value is then wrong) and through absolute thresholds of its asymptotic
+/// expansions (`p <= 1e-9`, `y <= 1e-26`; either value can then be the wrong
+/// one, by up to 2e-6), so a disagreement is settled by [`arbiter`].
 const AGREE: f64 = 1e-10;
 
+/// The value [`Scaling::Window`] returns when xsf's unscaled value `r` and
+/// scaled value `rs` disagree beyond [`AGREE`] (or one is not [`usable`]).
+///
+/// Invariant: a usable `r` (xsf's value at the caller's arguments, which is
+/// what the port returned before scaling existed) is returned unchanged
+/// unless an independent evaluation, `reference` (the precision-adaptive
+/// algorithm of [`crate::generic::carlson`] evaluated in `f64`, which scales
+/// its own arguments and has no absolute thresholds), shows it to be off by
+/// more than [`AGREE`] and `rs` is closer to `reference`. Only an unusable
+/// `r` (NaN, infinite or 0) is replaced without that evidence, by a usable
+/// `rs`. A scaled evaluation therefore never replaces a value the reference
+/// agrees with, and when the reference is unusable `r` is kept.
+fn arbiter(r: f64, rs: f64, reference: impl FnOnce() -> f64) -> f64 {
+    if !usable(r) {
+        return if usable(rs) { rs } else { r };
+    }
+    if !usable(rs) {
+        return r;
+    }
+    let reference = reference();
+    let r_off = (r - reference).abs();
+    if usable(reference) && r_off > AGREE * reference.abs() && (rs - reference).abs() < r_off {
+        rs
+    } else {
+        r
+    }
+}
+
 /// Evaluates `f` (R_G or R_J at arguments scaled by `4^-j`, rescaled) as
-/// [`Scaling`] says.
-fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> f64 {
+/// [`Scaling`] says; `reference` (see [`arbiter`]) only when the unscaled and
+/// the scaled value disagree.
+fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64, reference: impl FnOnce() -> f64) -> f64 {
     match scaling {
         Scaling::None => f(0),
         Scaling::Window(j) => {
             let r = f(0);
             let rs = f(j);
-            if usable(r) && (!usable(rs) || (r - rs).abs() <= AGREE * rs.abs()) {
+            if usable(r) && usable(rs) && (r - rs).abs() <= AGREE * rs.abs() {
                 r
-            } else if usable(rs) {
-                rs
             } else {
-                r
+                arbiter(r, rs, reference)
             }
         }
     }
@@ -1098,12 +1126,16 @@ fn pv_condition(x: f64, y: f64, z: f64, p: f64) -> f64 {
 }
 
 pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
-    scaled(scaling(&[x, y, z]), |j| {
-        let s = |v: f64| ldexp(v, -2 * j);
-        let mut r = 0.0;
-        rg(s(x), s(y), s(z), RERR, &mut r);
-        ldexp(r, j)
-    })
+    scaled(
+        scaling(&[x, y, z]),
+        |j| {
+            let s = |v: f64| ldexp(v, -2 * j);
+            let mut r = 0.0;
+            rg(s(x), s(y), s(z), RERR, &mut r);
+            ldexp(r, j)
+        },
+        || crate::generic::carlson::elliprg(x, y, z),
+    )
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
@@ -1125,10 +1157,14 @@ pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
             return f64::NAN;
         }
     }
-    scaled(scaling, |j| {
-        let s = |v: f64| ldexp(v, -2 * j);
-        let mut r = 0.0;
-        rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
-        ldexp(r, -3 * j)
-    })
+    scaled(
+        scaling,
+        |j| {
+            let s = |v: f64| ldexp(v, -2 * j);
+            let mut r = 0.0;
+            rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
+            ldexp(r, -3 * j)
+        },
+        || crate::generic::carlson::elliprj(x, y, z, p),
+    )
 }
