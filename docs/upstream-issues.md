@@ -278,16 +278,19 @@ cases:
 - **Upstream:** not reported.
 - **Here:** the `f64` wrappers `xsf::carlson::elliprj` and `elliprg` scale the
   arguments by an exact power of four when one lies beyond 2^±300 and none is
-  subnormal (a deviation from the port, stated in its header): arguments at
-  most 2^600 apart are centered at 1, so that every product of three stays in
-  range; arguments farther apart are scaled only when xsf's unscaled value is
-  NaN, infinite or 0, because scaling the largest into range can then make
-  products of the smallest underflow. Arguments within 2^±300 take xsf's path
-  unchanged, and so does xsf's treatment of a subnormal argument as zero.
-  Beyond 2^±300 xsf can also return a wrong finite value, e.g.
+  subnormal (a deviation from the port, stated in its header): arguments at most
+  2^600 apart are moved by the smallest power of four that brings them within
+  2^±300, so that every product of three stays in range, and xsf's unscaled
+  value is kept where it agrees with the scaled one to 1e-10 (xsf picks some
+  asymptotic expansions by absolute thresholds, so its value moves with the
+  scale by about 1e-11); arguments farther apart are scaled only when
+  xsf's unscaled value is NaN, infinite or 0, because scaling the largest into
+  range can then make products of the smallest underflow. Arguments within
+  2^±300 take xsf's path unchanged, and so does xsf's treatment of a subnormal
+  argument as zero. Beyond 2^±300 xsf can also return a wrong finite value, e.g.
   `elliprj(3e-100, 1, 2e80, -1e-70)` times 2^-392 is -2.1e137 instead of
-  3.72e157; the centered scaling corrects it. `crates/specials/tests/carlson_scaling.rs` checks both strategies
-  at 2^±520 and 2^±600 (tensor4all/tenferro-sci-rs#25).
+  3.72e157; the scaling corrects it. `crates/specials/tests/carlson_scaling.rs`
+  checks both strategies at 2^±520 and 2^±600 (tensor4all/tenferro-sci-rs#25).
 
 ## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments
 

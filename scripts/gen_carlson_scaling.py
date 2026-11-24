@@ -131,6 +131,13 @@ def main() -> None:
     print("elliprj", "(3e-100, 1, 2e80, -1e-70)",
           dd(stable(lambda: rj(3e-100, 1.0, 2e80, -1e-70, check=False))))
     print("elliprg", "(1e-20, 1, 1e20)", dd(stable(lambda: mp.elliprg(1e-20, 1.0, 1e20))))
+    # Review round 6: xsf's unscaled value is right, and the scaled one moves by
+    # 1e-11 (xsf's absolute asymptotic thresholds). Evaluated at the arguments
+    # times 4^200 and scaled back exactly: R_J(4^k a) = 2^(-3k) R_J(a).
+    a6 = (2.53438683249964e-208, 2.917058701014637e-114, 3.916777135234618e-89,
+          -4.5006477943934846e-101)
+    print("elliprj", a6, dd(stable(lambda: rj(*[mp.mpf(v) * mp.mpf(4)**200 for v in a6],
+                                              check=False) * mp.mpf(2)**600)))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))

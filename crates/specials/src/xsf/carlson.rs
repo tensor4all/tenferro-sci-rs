@@ -1000,10 +1000,15 @@ enum Scaling {
     /// up would undo that): xsf's path, unchanged.
     None,
     /// The largest and the smallest nonzero argument are at most
-    /// 2^(2 [`UNSCALED_BITS`]) apart: their geometric mean is centered at 1,
-    /// so every argument lies within 2^±([`UNSCALED_BITS`] + 2) and every
-    /// product of three stays in range. Always applied.
-    Centered(i32),
+    /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the smallest power of
+    /// four that brings every argument within 2^±([`UNSCALED_BITS`] + 1), so
+    /// every product of three stays in range. xsf picks some asymptotic
+    /// expansions by absolute thresholds (`p <= 1e-9`, `y <= 1e-26`), so its
+    /// value can depend on the scale by about 1e-11; xsf's unscaled value is
+    /// therefore kept when it agrees with the scaled one to [`AGREE`], and the
+    /// scaled value is used when it does not (the unscaled one is then
+    /// damaged by underflow: off by more than 1e-10, up to a wrong sign).
+    Window(i32),
     /// Farther apart: the largest is brought toward 2^±[`UNSCALED_BITS`]
     /// (when it is above 2^[`UNSCALED_BITS`], only as far as the smallest
     /// stays above 2^-1000). Products of the small arguments may then
@@ -1027,7 +1032,11 @@ fn scaling(args: &[f64]) -> Scaling {
     let j = if max == i32::MIN || (max <= UNSCALED_BITS && min >= -UNSCALED_BITS) {
         0
     } else if max - min <= 2 * UNSCALED_BITS {
-        return Scaling::Centered((max + min).div_euclid(4));
+        return Scaling::Window(if max > UNSCALED_BITS {
+            (max - UNSCALED_BITS + 1).div_euclid(2)
+        } else {
+            (min + UNSCALED_BITS).div_euclid(2)
+        });
     } else if max > UNSCALED_BITS {
         (max - UNSCALED_BITS + 1)
             .div_euclid(2)
@@ -1053,12 +1062,29 @@ fn usable(r: f64) -> bool {
     r.is_finite() && r != 0.0
 }
 
+/// Relative agreement between xsf's unscaled and scaled value within which
+/// [`Scaling::Window`] keeps the unscaled one: ten times the largest change
+/// of an accurate xsf value with the scale that was measured (1.05e-11; at
+/// most 7.7e-13 on 300,000 random argument sets). Unscaled errors from
+/// gradual underflow range from there up to order 1 and are corrected.
+const AGREE: f64 = 1e-10;
+
 /// Evaluates `f` (R_G or R_J at arguments scaled by `4^-j`, rescaled) as
 /// [`Scaling`] says.
 fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> f64 {
     match scaling {
         Scaling::None => f(0),
-        Scaling::Centered(j) => f(j),
+        Scaling::Window(j) => {
+            let r = f(0);
+            let rs = f(j);
+            if usable(r) && (!usable(rs) || (r - rs).abs() <= AGREE * rs.abs()) {
+                r
+            } else if usable(rs) {
+                rs
+            } else {
+                r
+            }
+        }
         Scaling::Retry(j) => {
             let r = f(0);
             if usable(r) {

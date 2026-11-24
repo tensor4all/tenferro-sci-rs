@@ -798,8 +798,10 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 ///
 /// The `f64` path scales its arguments by a power of four when one lies
 /// beyond 2^±300 and none is subnormal, so that the products xsf forms stay
-/// in range: arguments at most 2^600 apart are centered at 1; arguments
-/// farther apart are scaled only when xsf's own value is NaN, infinite or 0.
+/// in range. Arguments at most 2^600 apart are moved just into 2^±300, and
+/// xsf's unscaled value is kept where it agrees with the scaled one to 1e-10;
+/// arguments farther apart are scaled only when xsf's own value is NaN,
+/// infinite or 0.
 /// It does not handle a largest argument above about 2^340 with the smallest
 /// nonzero one more than about 2^1340 below it
 /// (`elliprj(2^-1000, 2^400, 2^400, 2^400)`), nor a subnormal argument (which

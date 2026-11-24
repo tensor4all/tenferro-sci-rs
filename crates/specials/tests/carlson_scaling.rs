@@ -245,7 +245,7 @@ fn f64_keeps_xsf_subnormal_as_zero() {
 }
 
 /// The two wide-ratio arms of the `f64` scaling (ratios beyond 2^600, where
-/// the arguments cannot be centered within 2^±300): the largest scaled down
+/// the arguments cannot all be brought within 2^±300): the largest scaled down
 /// from 2^381 as far as 2^-900 stays above 2^-1000, and the largest scaled up
 /// from 2^-350.4 to 2^-300. NaN on `main`. `f64` only: these arms are in the
 /// xsf wrappers, and the `Df64` R_J returns NaN beyond a ratio of 2^600 by
@@ -279,7 +279,7 @@ fn f64_wide_ratio_arms() {
 }
 
 /// Where xsf's unscaled `f64` value is right although an argument lies far
-/// beyond 2^300, the wrappers return it unchanged: scaling 2^578 down would
+/// beyond 2^300, the wrappers return it unchanged. Here: scaling 2^578 down would
 /// push 2^-362 so low that the products of the small arguments underflow
 /// (NaN at 4b828a6, found in review). Reference: mpmath 1.3.0,
 /// `scripts/gen_carlson_scaling.py` (DLMF 19.20.14 against Carlson 1995 Eq. 2.26).
@@ -293,15 +293,32 @@ fn f64_keeps_xsf_value_where_it_is_finite() {
         err <= f64_tol("elliprj"),
         "elliprj{a:?} = {got:e}, error {err:e}"
     );
+    // Review round 6: arguments 2^396 apart, moved up by 2^389 into 2^±300,
+    // where xsf no longer takes its small-`p` expansion and is off by 1e-11;
+    // the unscaled value agrees with it to 1e-10 and is kept. Reference at the
+    // arguments times 4^200, scaled back exactly.
+    let a = [
+        2.53438683249964e-208,
+        2.917058701014637e-114,
+        3.916777135234618e-89,
+        -4.5006477943934846e-101,
+    ];
+    let want = -1.6910016572016675e+146;
+    let got = specials::elliprj(a[0], a[1], a[2], a[3]);
+    let err = ((got - want) / want).abs();
+    assert!(
+        err <= f64_tol("elliprj"),
+        "elliprj{a:?} = {got:e}, error {err:e}"
+    );
 }
 
 /// Values xsf gets wrong but finite beyond 2^±300 (on `main`: -2.1e137 for a
 /// true 3.72e157, and 1.632e-76 for 1.609e-76): the arguments are at most
-/// 2^600 apart, so the `f64` wrappers center them at 1. Each is compared,
-/// rescaled exactly, with mpmath's value at the base point
+/// 2^600 apart, so the `f64` wrappers move them into 2^±300. Each is
+/// compared, rescaled exactly, with mpmath's value at the base point
 /// (`scripts/gen_carlson_scaling.py`).
 #[test]
-fn f64_centered_scaling_corrects_wrong_finite_values() {
+fn f64_scaling_corrects_wrong_finite_values() {
     let (e, a) = (-392, [3e-100, 1.0, 2e80, -1e-70]);
     let want = 3.6742346141747673e-20;
     let s: Vec<f64> = a.iter().map(|v| v * pow2(e)).collect();
