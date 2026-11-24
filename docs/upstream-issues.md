@@ -399,10 +399,12 @@ cases:
   same values): `elliprj(1, 1, 1, 1.0000000000000003e-9)` is
   30.16434034308821 for 30.164340343095963 (2.6e-13);
   `elliprj(1, 2, 3, 2e-9)` is 12.217688234897604 for 12.217688234898564
-  (7.9e-14). At `p = 1e-9` itself both are accurate to 2e-16; from about
-  `p = 1e-4` on the error is below 2e-15.
+  (7.9e-14). At `p = 1e-9` itself both are accurate to 2e-16. The loss
+  persists to `p = 1e-6` (2.3e-14 at `(1, 2, 3, 1e-6)`) and is below 2e-15 at
+  `p = 1e-4` (the `threshold_p` rows of `carlson_ratchet.csv`).
 - **Upstream:** not reported.
 - **Here:** the `f64` path is the faithful port. `carlson_ratchet.rs` checks
-  `p` from 5e-10 to 1e-8 on both sides of the switch (regime `threshold_p`)
-  with an `f64` tolerance of 1e-12, against SciPy for parity. The `Df64` path
-  is accurate there (6.4e-32).
+  `p` from 5e-10 to 1e-4 on both sides of the switch (regime `threshold_p`),
+  with an `f64` tolerance of 1e-12 above the switch and the ordinary 2e-14 at
+  and below it, and against SciPy for parity. The `Df64` path is accurate
+  there (6.4e-32).
