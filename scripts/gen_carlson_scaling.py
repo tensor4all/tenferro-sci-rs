@@ -151,6 +151,16 @@ def main() -> None:
     for e in [(-675, -475, -175, -575), (-675, -625, -475, -650), (-625, -575, -425, -600),
               (-175, 25, 325, -75), (-275, -75, 225, -175)]:
         print("elliprj", e, dd(stable(lambda: wide(e))))
+    # Review of b6d45b0: values the f64 window keeps from xsf's unscaled
+    # evaluation (it agrees with the scaled one to 1e-10), whose error is xsf's
+    # own, up to about 1e-10. Evaluated at the arguments times 4^k and scaled
+    # back exactly (R_G: degree 1/2, R_J: degree -3/2).
+    def shifted(f, e, k, deg2):
+        return f(*[mp.mpf(2)**(v + 2 * k) for v in e]) * mp.mpf(2)**(-deg2 * k)
+    print("elliprg", (-763, -368, -695),
+          dd(stable(lambda: shifted(mp.elliprg, (-763, -368, -695), 232, 1))))
+    print("elliprj", (-431, -326, -330, -365),
+          dd(stable(lambda: shifted(mp.elliprj, (-431, -326, -330, -365), 180, -3))))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))

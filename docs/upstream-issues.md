@@ -311,7 +311,7 @@ cases:
   the `f64` path when one lies beyond 2^±300 and they are at most 2^600 apart,
   the `Df64` path also when their center lies beyond 2^±100), it computes the
   condition number of the DLMF 19.20.14 combination and returns NaN when it
-  can cost more than a relative 1e-10 (above about 9e5 for `f64`, 2e21 for
+  can cost more than a relative 1e-10 (above about 4.5e5 for `f64`, 4.1e21 for
   `Df64`), instead of a value without correct digits. Elsewhere, as in the
   example, both paths return the value as computed, as before. A remedy for
   all scales (a transformation that does not cancel there) is separate work.

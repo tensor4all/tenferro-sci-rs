@@ -800,7 +800,8 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// beyond 2^±300, none is subnormal and they are at most 2^600 apart: they
 /// are moved just into 2^±301, so that the products xsf forms stay in range,
 /// and xsf's unscaled value is kept where it agrees with the scaled one to
-/// 1e-10. Arguments farther apart, or with a subnormal one (which xsf treats
+/// 1e-10 (its accuracy there is xsf's own, which can be about 1e-10 rather
+/// than the 1e-14 of ordinary arguments). Arguments farther apart, or with a subnormal one (which xsf treats
 /// as zero), are not scaled: no power of four brings them within range, and
 /// xsf returns NaN, as SciPy does, where its products leave the range there
 /// (from a largest argument of about 2^340, or below about 2^-340, on; for

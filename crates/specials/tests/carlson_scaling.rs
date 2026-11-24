@@ -20,6 +20,9 @@
 //! 2.6e-32, elliprj 3.5e-16 / 5.6e-32. Before the fix, every R_J case and
 //! R_G at 2^520, 2^600 (NaN) and 2^-600 (0) failed for `f64`, and R_J for
 //! `p < 0` failed for `Df64` (NaN, or a relative error up to 1e-11 at 2^-520).
+//! Those worst errors hold for these base points; beyond 2^±300 the `f64`
+//! path can keep xsf's unscaled value, whose error can reach about 1e-10
+//! (`f64_kept_xsf_value_is_within_1e_10`).
 
 // These tests exercise `xprec::Df64`.
 #![cfg(feature = "xprec")]
@@ -390,4 +393,22 @@ fn ill_conditioned_principal_value_is_nan_not_wrong() {
             "Df64 elliprj{a:?} = {g:e}, want {want:e} or NaN"
         );
     }
+}
+
+/// Beyond 2^±300 the `f64` wrappers keep xsf's unscaled value where it agrees
+/// with the scaled one to 1e-10, so there the accuracy is xsf's own at those
+/// arguments, which can be about 1e-10 rather than [`f64_tol`]: these two
+/// values (the same as on `main`) are 5.8e-11 and 7.4e-11 off (review of
+/// b6d45b0). This pins that ceiling. References: mpmath 1.3.0 at the
+/// arguments times 4^k, scaled back exactly (`scripts/gen_carlson_scaling.py`).
+#[test]
+fn f64_kept_xsf_value_is_within_1e_10() {
+    let got = specials::elliprg(pow2(-763), pow2(-368), pow2(-695));
+    let want = 2.039157646249539e-56;
+    let err = ((got - want) / want).abs();
+    assert!(err <= 1e-10, "elliprg: {got:e}, error {err:e}");
+    let got = specials::elliprj(pow2(-431), pow2(-326), pow2(-330), pow2(-365));
+    let want = 2.2338413140293353e+154;
+    let err = ((got - want) / want).abs();
+    assert!(err <= 1e-10, "elliprj: {got:e}, error {err:e}");
 }
