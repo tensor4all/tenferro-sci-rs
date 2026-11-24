@@ -9,10 +9,13 @@
 //! negative integers) follows SciPy's conventions so that both strategies
 //! return the same non-finite values.
 
+pub(crate) mod agm;
 pub(crate) mod beta;
 pub(crate) mod binom;
+pub(crate) mod carlson;
 pub(crate) mod digamma;
 pub(crate) mod digammainv;
+pub(crate) mod ellip;
 pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
 pub(crate) mod lgam1p;
@@ -113,6 +116,27 @@ pub(crate) fn ln<T: Real>(x: T) -> T {
         (x * scale).ln() + k::<T>(600.0) * T::LN_2()
     } else {
         x.ln()
+    }
+}
+
+/// `x 2^e`, for any `e` (in steps that are exact powers of two).
+pub(crate) fn ldexp<T: Real>(mut x: T, mut e: i32) -> T {
+    while e != 0 {
+        let step = e.clamp(-1000, 1000);
+        x = mul(x, k::<T>(2.0_f64.powi(step)));
+        e -= step;
+    }
+    x
+}
+
+/// `√x`, also accurate below 2^-900, where the error term of the
+/// double-double square root underflows: scale by an exact power of four.
+pub(crate) fn sqrt<T: Real>(x: T) -> T {
+    let h = x.approx_f64();
+    if h > 0.0 && h < 2.0_f64.powi(-900) {
+        ldexp(ldexp(x, 1000).sqrt(), -500)
+    } else {
+        x.sqrt()
     }
 }
 

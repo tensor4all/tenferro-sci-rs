@@ -7,6 +7,9 @@
 //! Stirling numbers are exact Python integers (recurrence, closed forms, and
 //! Graham–Knuth–Patashnik (6.43)).
 
+// These tests exercise `xprec::Df64`.
+#![cfg(feature = "xprec")]
+
 use specials::Real;
 use std::sync::mpsc;
 use std::time::Duration;

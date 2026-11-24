@@ -38,6 +38,19 @@
 //! | `digammainv(y)` (xsf `digammainv`) | [`digammainv`] | 1e-30 for `y >= -1e290` (see [`digammainv`]) |
 //! | `_gen_harmonic(n, a)` (xsf `gen_harmonic`) | [`gen_harmonic`] | 1e-30 for `a >= -3`; for `a < -3` it grows like `ε abs(a) ln n` (3.4e-30 measured at `a = -68`, `n = 70`) |
 //! | `stirling2(n, k)` | [`stirling2`] | 1e-30 (exact below 2^106) |
+//! | `ellipk(m)` | [`ellipk`] | 5e-30 |
+//! | `ellipkm1(p)` | [`ellipkm1`] | 1e-30 |
+//! | `ellipe(m)` | [`ellipe`] | 1e-30 |
+//! | `ellipkinc(phi, m)` | [`ellipkinc`] | 1e-30 (the argument `phi` enters the result with the condition number of `F`, up to `1/√(1 - m)` near `phi = π/2`; for `m = 1` and `phi = 1.5707963267948966` `f64` gives `+∞` as xsf, `Df64` the finite exact value) |
+//! | `ellipeinc(phi, m)` | [`ellipeinc`] | 1e-30 |
+//! | `ellipj(u, m)` (`sn`, `cn`, `dn`) | [`ellipj`] | 1e-29, plus an absolute error of 24 ε `max(1, abs(u) √max(1, 1 - m))` `max(1, abs(value))`, ε = 2^-105: the phase of `u` carries a relative error ε |
+//! | `ellipj(u, m)` (`ph`) | [`ellipj`] | 5e-30 |
+//! | `elliprc(x, y)` | [`elliprc`] | 1e-30 |
+//! | `elliprd(x, y, z)` | [`elliprd`] | 1e-30 |
+//! | `elliprf(x, y, z)` | [`elliprf`] | 1e-30 |
+//! | `elliprg(x, y, z)` | [`elliprg`] | 1e-30 |
+//! | `elliprj(x, y, z, p)` | [`elliprj`] | 1e-30 |
+//! | `agm(a, b)` | [`agm`] | 1e-30 |
 //!
 //! A double-double result below about 1e-292 has a subnormal low word, so its
 //! relative accuracy falls towards that of `f64` at the bottom of the range;
@@ -80,7 +93,7 @@
 //! # Validation
 //!
 //! * **`f64`** is checked with xsf's own test suite: the reference tables of
-//!   [xsref](https://github.com/scipy/xsref) (about 43,000 points for these
+//!   [xsref](https://github.com/scipy/xsref) (about 59,000 points for these
 //!   functions) with xsf's error metric and per-point tolerances, plus xsf's
 //!   hand-written regression cases. Rust does not contract `a*b + c` into FMA,
 //!   so the tolerances of xsf built by gcc on x86-64 apply on every platform.
@@ -512,6 +525,316 @@ pub fn stirling2<T: Real>(n: T, k: T) -> T {
     match T::STRATEGY {
         Strategy::F64Kernels => k64(xsf::stirling2::stirling2(n.approx_f64(), k.approx_f64())),
         Strategy::Adaptive => generic::stirling2::stirling2(n, k),
+    }
+}
+
+/// K(m), the complete elliptic integral of the first kind with parameter
+/// `m = k²` (DLMF 19.2.8): `∫₀^{π/2} dθ / √(1 − m sin²θ)`.
+///
+/// `ellipk(0) = π/2`. `ellipk(1) = +∞`; NaN for `m > 1`; `ellipk(-∞) = 0`.
+/// For `m` close to 1 use [`ellipkm1`], which takes `1 − m` and keeps its
+/// relative accuracy; `1 - m` is rounded here.
+///
+/// # Examples
+///
+/// ```
+/// use specials::ellipk;
+///
+/// // K(0) = π/2; K(1/2) = Γ(1/4)² / (4 √π)
+/// let pi = core::f64::consts::PI;
+/// assert!((ellipk(0.0_f64) - pi / 2.0).abs() < 1e-15);
+/// assert!((ellipk(0.5_f64) - 1.8540746773013719).abs() < 1e-15);
+/// assert_eq!(ellipk(1.0_f64), f64::INFINITY);
+/// ```
+pub fn ellipk<T: Real>(m: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::ellip::ellipk(m.approx_f64())),
+        Strategy::Adaptive => generic::ellip::ellipk(m),
+    }
+}
+
+/// K(1 − p), the complete elliptic integral of the first kind as a function
+/// of the complementary parameter `p = 1 − m` (`scipy.special.ellipkm1`).
+///
+/// Accurate for `p` near 0, where `ellipk(1 - p)` has lost the digits of `p`.
+/// `ellipkm1(0) = +∞`, `ellipkm1(+∞) = 0`; NaN for `p < 0`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::ellipkm1;
+///
+/// // K(m) ≈ ln(4/√p) for small p = 1 - m
+/// let p = 1e-20_f64;
+/// assert!((ellipkm1(p) - (4.0 / p.sqrt()).ln()).abs() < 1e-15);
+/// assert_eq!(ellipkm1(0.0_f64), f64::INFINITY);
+/// ```
+pub fn ellipkm1<T: Real>(p: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::ellip::ellipkm1(p.approx_f64())),
+        Strategy::Adaptive => generic::ellip::ellipkm1(p),
+    }
+}
+
+/// E(m), the complete elliptic integral of the second kind with parameter
+/// `m = k²` (DLMF 19.2.8): `∫₀^{π/2} √(1 − m sin²θ) dθ`.
+///
+/// `ellipe(0) = π/2`, `ellipe(1) = 1`; NaN for `m > 1`; `ellipe(-∞) = +∞`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::ellipe;
+///
+/// let pi = core::f64::consts::PI;
+/// assert!((ellipe(0.0_f64) - pi / 2.0).abs() < 1e-15);
+/// assert_eq!(ellipe(1.0_f64), 1.0);
+/// assert!((ellipe(0.5_f64) - 1.3506438810476755).abs() < 1e-15);
+/// ```
+pub fn ellipe<T: Real>(m: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::ellip::ellipe(m.approx_f64())),
+        Strategy::Adaptive => generic::ellip::ellipe(m),
+    }
+}
+
+/// F(φ | m), the incomplete elliptic integral of the first kind (DLMF 19.2.4):
+/// `∫₀^φ dθ / √(1 − m sin²θ)`, for any real `φ`.
+///
+/// F is odd in `φ` and `F(φ + nπ | m) = F(φ | m) + 2n K(m)`. `ellipkinc(φ, 0) = φ`;
+/// NaN for `m > 1`; `ellipkinc(±∞, m) = ±∞` and `ellipkinc(φ, -∞) = 0`. For
+/// `m = 1` the integral is `asinh(tan φ)`, and `+∞` for `|φ| >= π/2`. Each type
+/// compares with its own value of π/2: the `f64` value 1.5707963267948966 is
+/// 6.1e-17 below π/2, so `ellipkinc(1.5707963267948966_f64, 1.0)` is `+∞` as in
+/// xsf, while the same number as a double-double gives the exact
+/// `atanh(sin φ)` = 38.025003373828866.
+///
+/// # Examples
+///
+/// ```
+/// use specials::{ellipk, ellipkinc};
+///
+/// // F(π/2 | m) = K(m)
+/// let m = 0.3_f64;
+/// let half_pi = core::f64::consts::FRAC_PI_2;
+/// assert!((ellipkinc(half_pi, m) - ellipk(m)).abs() < 1e-15);
+/// assert_eq!(ellipkinc(0.7_f64, 0.0), 0.7);
+/// ```
+pub fn ellipkinc<T: Real>(phi: T, m: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::ellip::ellipkinc(phi.approx_f64(), m.approx_f64())),
+        Strategy::Adaptive => generic::ellip::ellipkinc(phi, m),
+    }
+}
+
+/// E(φ | m), the incomplete elliptic integral of the second kind (DLMF 19.2.5):
+/// `∫₀^φ √(1 − m sin²θ) dθ`, for any real `φ`.
+///
+/// E is odd in `φ` and `E(φ + nπ | m) = E(φ | m) + 2n E(m)`. `ellipeinc(φ, 0) = φ`;
+/// NaN for `m > 1`; `ellipeinc(±∞, m) = ±∞` and `ellipeinc(φ, -∞) = +∞`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::{ellipe, ellipeinc};
+///
+/// // E(π/2 | m) = E(m)
+/// let m = 0.3_f64;
+/// let half_pi = core::f64::consts::FRAC_PI_2;
+/// assert!((ellipeinc(half_pi, m) - ellipe(m)).abs() < 1e-15);
+/// assert_eq!(ellipeinc(0.7_f64, 0.0), 0.7);
+/// ```
+pub fn ellipeinc<T: Real>(phi: T, m: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::ellip::ellipeinc(phi.approx_f64(), m.approx_f64())),
+        Strategy::Adaptive => generic::ellip::ellipeinc(phi, m),
+    }
+}
+
+/// `(sn, cn, dn, ph)`: the Jacobian elliptic functions `sn(u | m)`, `cn(u | m)`,
+/// `dn(u | m)` (DLMF 22.2) and the amplitude `ph = am(u | m)`, with
+/// `sn = sin ph`, for real `u` and parameter `m <= 1`.
+///
+/// The amplitude is the continuous branch, `am(u + 2K(m)) = am(u) + π`
+/// (xsf's `ph`). NaN in all four outputs for `m > 1` or NaN arguments.
+///
+/// # Examples
+///
+/// ```
+/// use specials::ellipj;
+///
+/// // m = 0: sn = sin, cn = cos, dn = 1, am(u) = u
+/// let (sn, cn, dn, ph) = ellipj(0.5_f64, 0.0);
+/// assert!((sn - 0.5_f64.sin()).abs() < 1e-15);
+/// assert!((cn - 0.5_f64.cos()).abs() < 1e-15);
+/// assert_eq!((dn, ph), (1.0, 0.5));
+/// ```
+pub fn ellipj<T: Real>(u: T, m: T) -> (T, T, T, T) {
+    match T::STRATEGY {
+        Strategy::F64Kernels => {
+            let (sn, cn, dn, ph) = xsf::ellip::ellipj(u.approx_f64(), m.approx_f64());
+            (k64(sn), k64(cn), k64(dn), k64(ph))
+        }
+        Strategy::Adaptive => generic::ellip::ellipj(u, m),
+    }
+}
+
+/// R_C(x, y), Carlson's degenerate elliptic integral (DLMF 19.2.17):
+/// `R_C(x, y) = R_F(x, y, y)`.
+///
+/// Defined for `x >= 0` and `y != 0`. For `y < 0` it is the Cauchy principal
+/// value (DLMF 19.20.14). `y = 0` and `x < 0` give NaN; an infinite argument
+/// gives 0.
+///
+/// # Examples
+///
+/// ```
+/// use specials::elliprc;
+///
+/// assert_eq!(elliprc(1.0_f64, 1.0), 1.0);
+/// // R_C(0, 1/4) = π
+/// assert!((elliprc(0.0_f64, 0.25) - core::f64::consts::PI).abs() < 1e-15);
+/// ```
+pub fn elliprc<T: Real>(x: T, y: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::carlson::elliprc(x.approx_f64(), y.approx_f64())),
+        Strategy::Adaptive => generic::carlson::elliprc(x, y),
+    }
+}
+
+/// R_D(x, y, z), Carlson's symmetric elliptic integral of the second kind
+/// (DLMF 19.16.5), symmetric in `x` and `y`.
+///
+/// Defined for `x, y, z >= 0` with `z > 0` and at most one of `x`, `y` zero.
+/// `+∞` if `z = 0` or if `x = y = 0`; 0 if an argument is infinite; NaN for a
+/// negative argument. The `Df64` result is accurate to 1e-30 while it is above
+/// about 1e-292 (a smaller double-double has a subnormal low word).
+///
+/// # Examples
+///
+/// ```
+/// use specials::elliprd;
+///
+/// assert_eq!(elliprd(1.0_f64, 1.0, 1.0), 1.0);
+/// assert!((elliprd(2.0_f64, 3.0, 4.0) - 0.16510527294261).abs() < 1e-13);
+/// ```
+pub fn elliprd<T: Real>(x: T, y: T, z: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::carlson::elliprd(
+            x.approx_f64(),
+            y.approx_f64(),
+            z.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::carlson::elliprd(x, y, z),
+    }
+}
+
+/// R_F(x, y, z), Carlson's symmetric elliptic integral of the first kind
+/// (DLMF 19.16.1), symmetric in its arguments.
+///
+/// Defined for `x, y, z >= 0` with at most one of them zero. `+∞` if two are
+/// zero; 0 if an argument is infinite; NaN for a negative argument.
+///
+/// # Examples
+///
+/// ```
+/// use specials::elliprf;
+///
+/// assert_eq!(elliprf(1.0_f64, 1.0, 1.0), 1.0);
+/// // R_F(0, 1, 2) = K(1/2) / √2
+/// assert!((elliprf(0.0_f64, 1.0, 2.0) - 1.3110287771460599).abs() < 1e-15);
+/// ```
+pub fn elliprf<T: Real>(x: T, y: T, z: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::carlson::elliprf(
+            x.approx_f64(),
+            y.approx_f64(),
+            z.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::carlson::elliprf(x, y, z),
+    }
+}
+
+/// R_G(x, y, z), Carlson's symmetric elliptic integral of the second kind
+/// (DLMF 19.16.3), symmetric in its arguments.
+///
+/// Defined for `x, y, z >= 0`; `+∞` if an argument is infinite, NaN for a
+/// negative argument.
+///
+/// # Examples
+///
+/// ```
+/// use specials::elliprg;
+///
+/// assert_eq!(elliprg(1.0_f64, 1.0, 1.0), 1.0);
+/// // R_G(0, 0, 1) = 1/2
+/// assert_eq!(elliprg(0.0_f64, 0.0, 1.0), 0.5);
+/// ```
+pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::carlson::elliprg(
+            x.approx_f64(),
+            y.approx_f64(),
+            z.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::carlson::elliprg(x, y, z),
+    }
+}
+
+/// R_J(x, y, z, p), Carlson's symmetric elliptic integral of the third kind
+/// (DLMF 19.16.2), symmetric in `x`, `y`, `z`.
+///
+/// Defined for `x, y, z >= 0` with at most one of them zero and `p > 0`; for
+/// `p < 0` it is the Cauchy principal value (DLMF 19.20.14). `+∞` at the pole
+/// (two of `x`, `y`, `z` zero, `p != 0`); 0 if an argument is infinite; NaN
+/// for a negative `x`, `y` or `z` and for `p = 0`.
+///
+/// The `Df64` path returns NaN when the largest and the smallest nonzero finite
+/// argument (in absolute value) differ by more than a factor of 2^600
+/// (about 4e180), where its duplication leaves the range of the type; below
+/// that it is accurate to 1e-30 (checked up to a ratio of 1e180).
+///
+/// # Examples
+///
+/// ```
+/// use specials::elliprj;
+///
+/// assert_eq!(elliprj(1.0_f64, 1.0, 1.0, 1.0), 1.0);
+/// assert!((elliprj(2.0_f64, 3.0, 4.0, 5.0) - 0.14297579667157).abs() < 1e-13);
+/// ```
+pub fn elliprj<T: Real>(x: T, y: T, z: T, p: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::carlson::elliprj(
+            x.approx_f64(),
+            y.approx_f64(),
+            z.approx_f64(),
+            p.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::carlson::elliprj(x, y, z, p),
+    }
+}
+
+/// agm(a, b), the arithmetic-geometric mean (DLMF 19.8.1).
+///
+/// `agm(a, b) = agm(b, a)`, `agm(-a, -b) = -agm(a, b)`, `agm(a, a) = a`.
+/// NaN if `a` and `b` have opposite signs, if either is NaN, or if one is
+/// infinite and the other zero. `agm(a, 0) = 0` for finite `a`;
+/// `agm(a, ±∞) = ±∞` for `a` of the same sign.
+///
+/// # Examples
+///
+/// ```
+/// use specials::agm;
+///
+/// // Gauss's constant: 1 / agm(1, √2) = 0.8346268…
+/// let g = 1.0 / agm(1.0_f64, 2.0_f64.sqrt());
+/// assert!((g - 0.8346268416740731).abs() < 1e-15);
+/// assert_eq!(agm(3.0_f64, 3.0), 3.0);
+/// ```
+pub fn agm<T: Real>(a: T, b: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::agm::agm(a.approx_f64(), b.approx_f64())),
+        Strategy::Adaptive => generic::agm::agm(a, b),
     }
 }
 

@@ -56,7 +56,9 @@ def dd(v) -> tuple[float, float]:
     if math.isinf(hi):
         return (hi, 0.0)
     lo = float(v - mp.mpf(hi))
-    return (hi, lo)
+    # float(v) can differ from the nearest double at a tie; renormalize.
+    hi2 = hi + lo
+    return (hi2, (hi - hi2) + lo)
 
 
 def stable(f, *args):
@@ -388,6 +390,274 @@ GENH_NA += [(float(RNG.randint(2, 60)), rnd(-3, 12)) for _ in range(NRAND2 // 2)
 STIRLING2_NK += [(float(n_), float(RNG.randint(2, n_ - 1))) for n_ in [RNG.randint(12, 120) for _ in range(NRAND2)]]
 
 
+# --------------------------------------------------------------------------
+# Elliptic integrals and functions (tenferro-sci-rs#11): ellipk, ellipkm1,
+# ellipe, ellipkinc, ellipeinc, ellipj (one table per output), the Carlson
+# integrals and agm. The random draws come after all of the above, so
+# regenerating does not change them.
+# --------------------------------------------------------------------------
+
+
+def _extra_bits(*xs):
+    return _extra(*xs)
+
+
+def _phi_bits(phi):
+    """Bits to reduce phi modulo pi exactly enough."""
+    phi = mp.mpf(phi)
+    return max(0, phi.exp + phi.bc) + 20 if phi != 0 else 0
+
+
+def mp_ellipk(m):
+    if m > 1:
+        return None
+    return None if m == 1 else mp.ellipk(m)
+
+
+def mp_ellipkm1(p):
+    if p <= 0:
+        return None
+    with mp.workprec(mp.mp.prec + _extra(1, p)):
+        return +mp.ellipk(1 - mp.mpf(p))
+
+
+def mp_ellipe(m):
+    if m > 1:
+        return None
+    return mp.mpf(1) if m == 1 else mp.ellipe(m)
+
+
+def mp_ellipkinc(phi, m):
+    if m > 1:
+        return None
+    with mp.workprec(mp.mp.prec + _phi_bits(phi)):
+        phi, m = mp.mpf(phi), mp.mpf(m)
+        if m == 1 and abs(phi) >= mp.pi / 2:
+            return None
+        return +mp.ellipf(phi, m)
+
+
+def mp_ellipeinc(phi, m):
+    if m > 1:
+        return None
+    with mp.workprec(mp.mp.prec + _phi_bits(phi)):
+        return +mp.ellipe(mp.mpf(phi), mp.mpf(m))
+
+
+def _re(v):
+    return mp.re(v)
+
+
+def _jacobi(u, m):
+    """(sn, cn, dn, am) of u for m <= 1, real."""
+    u, m = mp.mpf(u), mp.mpf(m)
+    if u == 0:
+        return mp.mpf(0), mp.mpf(1), mp.mpf(1), mp.mpf(0)
+    if m == 1:
+        sn, cn = mp.tanh(u), 1 / mp.cosh(u)
+        return sn, cn, cn, 2 * mp.atan(mp.exp(u)) - mp.pi / 2
+    if m == 0:
+        return mp.sin(u), mp.cos(u), mp.mpf(1), u
+    K = mp.ellipk(m)
+    n = int(mp.nint(u / (2 * K)))
+    up = u - 2 * n * K
+    sn = _re(mp.ellipfun("sn", up, m=m))
+    cn = _re(mp.ellipfun("cn", up, m=m))
+    dn = _re(mp.ellipfun("dn", up, m=m))
+    sgn = -1 if n % 2 else 1  # sn and cn change sign under u -> u - 2nK for odd n
+    return sgn * sn, sgn * cn, dn, n * mp.pi + mp.atan2(sn, cn)
+
+
+def _mp_ellipj(k):
+    def f(u, m):
+        if m > 1:
+            return None
+        with mp.workprec(mp.mp.prec + _phi_bits(u)):
+            return +_jacobi(u, m)[k]
+
+    f.__name__ = f"mp_ellipj_{k}"
+    return f
+
+
+def mp_elliprc(x, y):
+    if x < 0 or y == 0:
+        return None
+    return _re(mp.elliprc(x, y))
+
+
+def mp_elliprf(x, y, z):
+    if min(x, y, z) < 0 or sorted([x, y, z])[1] == 0:
+        return None
+    return mp.elliprf(x, y, z)
+
+
+def mp_elliprd(x, y, z):
+    if min(x, y, z) < 0 or z == 0 or (x == 0 and y == 0):
+        return None
+    return mp.elliprd(x, y, z)
+
+
+def mp_elliprj(x, y, z, p):
+    s = sorted([x, y, z])
+    if s[0] < 0 or s[1] == 0 or p == 0:
+        return None
+    # For p < 0, mpmath returns the Cauchy principal value as the real part.
+    return _re(mp.elliprj(x, y, z, p))
+
+
+def mp_elliprg(x, y, z):
+    if min(x, y, z) < 0:
+        return None
+    return mp.elliprg(x, y, z)
+
+
+def mp_agm(a, b):
+    if a * b <= 0:
+        return None
+    return mp.agm(a, b) if a > 0 else -mp.agm(-a, -b)
+
+
+def _sc_ellipj(k):
+    return lambda u, m: sc.ellipj(u, m)[k]
+
+
+TENTH = ("dd", mp.mpf(1) / 10)
+SQRT2 = ("dd", mp.sqrt(2))
+HALF_PI = ("dd", mp.pi / 2)
+
+ELLIPK_M = [
+    -1e300, -1e150, -1e10, -1000.5, -100.5, -10.0, -2.5, -1.0, -0.5, -1e-5, -1e-20, 1e-20,
+    1e-5, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 1 - 1e-8, 1 - 1e-12, 1 - 2.0**-53, 1 - 2.0**-30,
+    THIRD, MTHIRD, ("dd", mp.pi / 4), ("dd", -mp.pi * 10), ("dd", 1 - mp.mpf("1e-25")),
+    ("dd", 1 - mp.mpf("1e-30")), ("dd", mp.mpf("1e-30")), ("dd", -mp.mpf("1e-30")),
+    ("dd", 1 - mp.mpf(2) ** -100),
+]
+ELLIPKM1_P = [
+    1e-300, 1e-200, 1e-100, 1e-30, 1e-16, 1e-8, 1e-3, 0.01, 0.1, 0.5, 0.9, 0.999, 1.0, 1.001, 1.5,
+    2.0, 10.0, 100.5, 1e8, 1e100, 1e300, THIRD, ("dd", mp.pi / 4), ("dd", mp.mpf("1e-25")),
+    ("dd", mp.mpf("1e-35")), ("dd", 1 + mp.mpf("1e-25")), ("dd", 1 - mp.mpf("1e-25")),
+    ("dd", mp.mpf("1e-300")),
+]
+ELLIPE_M = list(ELLIPK_M) + [1.0, -1e308, 0.0, 1e-300]
+
+PHI_VALS = [
+    1e-300, 1e-100, 1e-10, 1e-3, 0.1, 0.5, 1.0, 1.5, 1.5707963267948966, 1.5707963267948968,
+    2.0, 3.0, 3.141592653589793, 4.5, 6.0, 7.5, 10.0, 100.0, 1234.5, 1e5, 1e10, 1e16, 1e20, -0.7,
+    -2.5, -9.0, -100.0,
+]
+PHI_M = [-1e5, -100.5, -3.0, -1.0, -0.25, -1e-3, 1e-3, 0.25, 0.5, 0.75, 0.9, 1 - 1e-10, 1.0]
+# F(phi | m) changes by 1/sqrt(1 - m) per unit phi near phi = pi/2, so a point
+# within 1e-15 of pi/2 with m within 1e-8 of 1 only tests the argument's last digit.
+ELLIPINC_PM = [
+    (ph, mm)
+    for ph, ms in [(ph, PHI_M[::2]) for ph in PHI_VALS] + [(ph, PHI_M[1::2]) for ph in PHI_VALS[::3]]
+    for mm in ms
+    if not (abs(ph - math.pi / 2) < 1e-15 and mm > 1 - 1e-8)
+]
+JU = [1e-5, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 100.0, 1e3, 1e5, -3.7, -50.0]
+JM = [-1e4, -100.0, -1.0, -0.3, -1e-4, -1e-12, 1e-12, 1e-3, 0.3, 0.5, 0.9, 0.99999, 1 - 1e-11, 1.0]
+ELLIPJ_UM = [(uu, mm) for uu in JU for mm in JM[::2]] + [(uu, mm) for uu in JU[::2] for mm in JM[1::2]]
+
+RC_XY = [
+    (0.0, 0.25), (1.0, 1.0), (2.25, 2.0), (0.25, 2.0), (1.0, 1e-10), (1e-10, 1.0), (1e10, 1.0),
+    (1.0, 1e10), (3.0, 1e-300), (1e-300, 3.0), (0.25, -2.0), (2.0, -0.5), (1.0, -1e-3), (0.0, 1.0),
+    (5.0, -1e5), (1.0, 1 - 1e-12), (4.0, 1.0), (1.0, 4.0), (THIRD, 2.0), (PI, MTHIRD), (TENE, PI),
+    (1e300, 1e-300), (1e-300, 1e300),
+]
+RFXYZ = [
+    (1.0, 1.0, 1.0), (0.0, 1.0, 2.0), (2.0, 3.0, 4.0), (0.0, 0.0, 1.0), (1e-300, 1e-300, 1.0), (0.0, 1e-300, 1e-30),
+    (5e-324, 1e-300, 1e-300), (1e10, 1.0, 1e-10), (1.0, 2.0, 3.0), (1e-5, 2.0, 1e5), (1.0, 1.0, 2.0), (1.0, 2.0, 2.0),
+    (0.5, 0.5, 0.5), (1.0, 1 + 1e-12, 1 + 2e-12), (1e100, 1e100, 1.0), (1e300, 1e-300, 1.0), (0.0, 0.0796, 4.0),
+    (0.0, 16.0, 16.0), (THIRD, 2.0, PI), (TENE, MTHIRD, 1.0), (0.1, 1e-10, 1e10), (1.0, 1e-20, 1e-20),
+]
+RDXYZ = [
+    (1.0, 1.0, 1.0), (0.0, 2.0, 1.0), (2.0, 3.0, 4.0), (1.0, 1.0, 1e-10), (1.0, 1.0, 1e10), (1e-10, 1.0, 1.0),
+    (1e-300, 1.0, 1.0), (0.0, 1.0, 1.0), (0.0, 1e-300, 1.0), (1.0, 2.0, 2.0), (1.0, 2.0, 1e-300), (1e10, 1e-10, 1.0),
+    (1e100, 1e100, 1e-100), (3.0, 1.0, 2.0), (0.5, 0.5, 0.5), (1.0, 1 + 1e-12, 1 + 2e-12), (THIRD, 2.0, PI),
+    (TENE, 1.0, MTHIRD),
+]
+RJXYZP = [
+    (1.0, 1.0, 1.0, 1.0), (0.0, 1.0, 2.0, 3.0), (2.0, 3.0, 4.0, 5.0), (2.0, 3.0, 4.0, -0.5), (2.0, 3.0, 4.0, -5.0),
+    (2.0, 3.0, 4.0, 1e-5), (2.0, 3.0, 4.0, 1e-12), (2.0, 3.0, 4.0, 1e8), (2.0, 3.0, 4.0, 1e-30), (0.0, 1.0, 2.0, 1e-3),
+    (1e-10, 1.0, 2.0, 0.5), (1e-30, 1e-30, 2.0, 1e-3), (1.0, 2.0, 1e10, 1.0), (1.0, 2.0, 1e10, 1e12), (1e-10, 1e-10, 1.0, 1e-5),
+    (6.483625725195452e-08, 1.1649136528196886e-27, 3.6767340167168e13, 0.493704617023468),
+    (14.375105857849121, 9.993988969725365e-11, 1.72844262269944e-26, 5.898871222598245e-06),
+    (1.0, 1.0, 2.0, 1.0), (0.5, 0.5, 0.5, 0.5), (1.0, 2.0, 3.0, -1e-3), (1.0, 2.0, 3.0, -1e3),
+    (1.0, 1 + 1e-12, 1 + 2e-12, 1.5), (1e90, 1.0, 1e-90, 1.0), (THIRD, 2.0, PI, 1.5), (TENE, 1.0, 3.0, MTHIRD),
+]
+RGXYZ = [
+    (1.0, 1.0, 1.0), (0.0, 0.0, 1.0), (0.0, 16.0, 16.0), (2.0, 3.0, 4.0), (0.0, 0.0796, 4.0), (0.0, 1.0, 1e10),
+    (0.0, 1e-10, 1.0), (0.0, 1e-300, 1.0), (1e-300, 1.0, 2.0), (1e10, 1e-10, 1.0), (1e100, 1.0, 1e-100), (0.0, 1.0, 1.0),
+    (1.0, 2.0, 2.0), (0.5, 0.5, 0.5), (1.0, 1 + 1e-12, 1 + 2e-12), (THIRD, 2.0, PI), (TENE, 1.0, MTHIRD), (0.0, 2.0, 5.0),
+    (0.0, 0.0, 1e-300),
+]
+AGM_AB = [
+    (1.0, 1.0), (1.0, 2.0), (2.0, 1.0), (1.0, 3.0), (1.0, 5.0), (3.0, 5.0), (24.0, 6.0), (13.0, 123456789.5), (1e30, 1.0),
+    (1e-22, 1.0), (1e150, 1e180), (1e180, 1e-150), (1e-150, 1e-170), (2.2250738585072014e-308, 1.7976931348623157e308),
+    (0.75 * 1.7976931348623157e308, 1.7976931348623157e308), (2.2250738585072014e-308, 3 * 2.2250738585072014e-308),
+    (-1.0, -2.0), (-24.0, -6.0), (1.0, 1 + 1e-15), (1.0, 1e-300), (1e300, 1e-300), (5e-324, 1.0), (1.0, math.sqrt(2)),
+    (THIRD, 2.0), (PI, TENE), (MSEVENTH, ("dd", -mp.mpf(1) / 7)),
+]
+
+NRAND3 = 60
+# Both sides of the points where the double-double algorithms change branch:
+# m = 0 and m = 1 (K, E), phi = pi/2 + n pi (incomplete integrals; low word
+# of the argument decides), u = K(m) (quarter period of the Jacobi functions),
+# the sign of m, p = 0 for R_J.
+ELLIPK_M += [("dd", s * mp.mpf(2) ** -k) for k in (60, 105) for s in (1, -1)]
+ELLIPK_M += [rnd(-50, 1) for _ in range(NRAND3)] + [("dd", -rnd(1e-10, 1e10, log=True)[1]) for _ in range(NRAND3 // 3)]
+ELLIPKM1_P += [rnd(1e-30, 1e30, log=True) for _ in range(NRAND3)]
+ELLIPE_M += [rnd(-50, 1) for _ in range(NRAND3)] + [("dd", -rnd(1e-10, 1e10, log=True)[1]) for _ in range(NRAND3 // 3)]
+ELLIPE_M += [("dd", 1 - mp.mpf(10) ** -k) for k in (5, 9, 14, 20, 28)]
+ELLIPINC_PM += [(("dd", mp.pi / 2 + s * mp.mpf(10) ** -k), m_) for k in (10, 20, 30) for s in (1, -1) for m_ in (0.5, -3.0, 0.999)]
+ELLIPINC_PM += [(("dd", n * mp.pi + s * mp.mpf(10) ** -20), m_) for n in (1, 2, 5) for s in (1, -1) for m_ in (0.3, -1.0)]
+ELLIPINC_PM += [(HALF_PI, m_) for m_ in (0.0, 0.5, -2.0, 0.9)]
+ELLIPINC_PM += [(0.5, ("dd", 1 - mp.mpf("1e-28"))), (1.0, ("dd", 1 - mp.mpf("1e-30")))]
+ELLIPINC_PM += [(("dd", mp.mpf("1e-25")), m_) for m_ in (0.5, -1e5)] + [(("dd", mp.mpf("1e31")), 0.4), (("dd", mp.mpf("1e33")), -0.4)]
+ELLIPINC_PM += [(rnd(-12, 12), rnd(-20, 1)) for _ in range(NRAND3 * 2)]
+ELLIPINC_PM += [(rnd(1e-3, 1.6), rnd(0.9, 1)) for _ in range(NRAND3 // 2)] + [(rnd(1e2, 1e12, log=True), rnd(-2, 1)) for _ in range(NRAND3 // 3)]
+_KM = lambda m_: mp.ellipk(mp.mpf(m_))
+ELLIPJ_UM += [(("dd", _KM(m_) * (1 + s * mp.mpf(10) ** -20)), m_) for m_ in (0.5, 0.9, -1.0, 1 - 1e-6) for s in (1, -1)]
+ELLIPJ_UM += [(("dd", 3 * _KM(m_) + s * mp.mpf(10) ** -15), m_) for m_ in (0.3, -2.0) for s in (1, -1)]
+ELLIPJ_UM += [(2.0, ("dd", s * mp.mpf(10) ** -k)) for k in (12, 25) for s in (1, -1)] + [(2.0, 0.0), (0.0, 0.5), (2.5, ("dd", 1 - mp.mpf(10) ** -25))]
+ELLIPJ_UM += [(rnd(-12, 12), rnd(-20, 1)) for _ in range(NRAND3 * 2)] + [(rnd(0.01, 40), rnd(0.9, 1)) for _ in range(NRAND3 // 2)]
+RC_XY += [(rnd(1e-3, 1e3, log=True), rnd(1e-3, 1e3, log=True)) for _ in range(NRAND3)] + [(rnd(0, 5), rnd(-5, -0.01)) for _ in range(NRAND3 // 3)]
+RC_XY += [(("dd", mp.mpf("1e-25")), 1.0), (1.0, ("dd", -mp.mpf("1e-25")))] + [(s_, 1.0) for s_ in around(1.0)]
+RFXYZ += [(rnd(0, 10), rnd(0, 10), rnd(0.01, 10)) for _ in range(NRAND3)] + [(rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True)) for _ in range(NRAND3)]
+RFXYZ += [(0.0, y_, 1.0) for y_ in around(1.0)] + [(("dd", mp.mpf("1e-30")), 1.0, 2.0)]
+RDXYZ += [(rnd(0, 10), rnd(0, 10), rnd(0.01, 10)) for _ in range(NRAND3)] + [(rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True)) for _ in range(NRAND3)]
+RDXYZ += [(1.0, 2.0, z_) for z_ in around(1.0)] + [(("dd", mp.mpf("1e-30")), 1.0, 2.0)]
+RJXYZP += [(rnd(0, 10), rnd(0.01, 10), rnd(0.01, 10), rnd(0.01, 10)) for _ in range(NRAND3)]
+RJXYZP += [(rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True)) for _ in range(NRAND3)]
+RJXYZP += [(rnd(0, 10), rnd(0.01, 10), rnd(0.01, 10), rnd(-10, -0.01)) for _ in range(NRAND3 // 2)]
+RJXYZP += [(1.0, 2.0, 3.0, p_) for p_ in around(1.0) + around(2.0) + [("dd", mp.mpf("1e-25")), ("dd", -mp.mpf("1e-10"))]]
+RGXYZ += [(rnd(0, 10), rnd(0, 10), rnd(0.01, 10)) for _ in range(NRAND3)] + [(rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True)) for _ in range(NRAND3)]
+RGXYZ += [(0.0, y_, 1.0) for y_ in around(1.0)] + [(("dd", mp.mpf("1e-30")), 1.0, 2.0)]
+AGM_AB += [(rnd(1e-12, 1e12, log=True), rnd(1e-12, 1e12, log=True)) for _ in range(NRAND3)]
+AGM_AB += [(rnd(1e-200, 1e200, log=True), rnd(1e-200, 1e200, log=True)) for _ in range(NRAND3 // 3)]
+AGM_AB += [(rnd(-1e3, -1e-3), ("dd", -mp.mpf("1e-200"))) for _ in range(2)]
+
+FUNCS.update(
+    {
+        "ellipk": (1, ELLIPK_M, mp_ellipk, sc.ellipk),
+        "ellipkm1": (1, ELLIPKM1_P, mp_ellipkm1, sc.ellipkm1),
+        "ellipe": (1, ELLIPE_M, mp_ellipe, sc.ellipe),
+        "ellipkinc": (2, ELLIPINC_PM, mp_ellipkinc, sc.ellipkinc),
+        "ellipeinc": (2, ELLIPINC_PM, mp_ellipeinc, sc.ellipeinc),
+        "ellipj_sn": (2, ELLIPJ_UM, _mp_ellipj(0), _sc_ellipj(0)),
+        "ellipj_cn": (2, ELLIPJ_UM, _mp_ellipj(1), _sc_ellipj(1)),
+        "ellipj_dn": (2, ELLIPJ_UM, _mp_ellipj(2), _sc_ellipj(2)),
+        "ellipj_ph": (2, ELLIPJ_UM, _mp_ellipj(3), _sc_ellipj(3)),
+        "elliprc": (2, RC_XY, mp_elliprc, sc.elliprc),
+        "elliprf": (3, RFXYZ, mp_elliprf, sc.elliprf),
+        "elliprd": (3, RDXYZ, mp_elliprd, sc.elliprd),
+        "elliprj": (4, RJXYZP, mp_elliprj, sc.elliprj),
+        "elliprg": (3, RGXYZ, mp_elliprg, sc.elliprg),
+        "agm": (2, AGM_AB, mp_agm, sc.agm),
+    }
+)
+
+
 def _sc_lgam1p(x):
     from scipy.special import _ufuncs
 
@@ -461,6 +731,27 @@ SPECIAL += [
     ("stirling2", _sc_stirling2, [(5.0, 0.0), (3.0, 4.0), (-1.0, -1.0), (-1.0, 2.0)]),
 ]
 
+INF, NAN = math.inf, math.nan
+# #11. agm's values for the cases that are not finite come from xsf's tests
+# and SciPy; the ellipj outputs are separate rows (`ellipj_sn`, ...).
+SPECIAL += [
+    ("ellipk", sc.ellipk, [(1.0,), (2.0,), (-INF,), (INF,), (NAN,)]),
+    ("ellipkm1", sc.ellipkm1, [(0.0,), (-0.0,), (-1.0,), (INF,), (NAN,)]),
+    ("ellipe", sc.ellipe, [(2.0,), (-INF,), (INF,), (NAN,)]),
+    ("ellipkinc", sc.ellipkinc, [(0.0, 0.5), (0.0, -3.0), (INF, 0.5), (-INF, 0.5), (1.0, INF), (1.0, -INF), (INF, -INF), (1.0, 2.0), (NAN, 0.5), (1.0, NAN), (1.6, 1.0), (-2.0, 1.0), (0.0, 1.0), (-0.0, 0.5)]),
+    ("ellipeinc", sc.ellipeinc, [(0.0, 0.5), (0.0, -3.0), (INF, 0.5), (-INF, 0.5), (1.0, INF), (1.0, -INF), (INF, -INF), (1.0, 2.0), (NAN, 0.5), (1.0, NAN), (-0.0, 0.5)]),
+    ("ellipj_sn", _sc_ellipj(0), [(0.0, 0.5), (-0.0, 0.5), (INF, 0.5), (NAN, 0.5), (1.0, NAN), (1.0, 2.0), (1.0, -INF)]),
+    ("ellipj_cn", _sc_ellipj(1), [(INF, 0.5), (NAN, 0.5), (1.0, NAN), (1.0, 2.0), (1.0, -INF)]),
+    ("ellipj_dn", _sc_ellipj(2), [(INF, 0.5), (NAN, 0.5), (1.0, NAN), (1.0, 2.0), (1.0, -INF)]),
+    ("ellipj_ph", _sc_ellipj(3), [(0.0, 0.5), (-0.0, 0.5), (INF, 0.5), (NAN, 0.5), (1.0, NAN), (1.0, 2.0), (1.0, -INF)]),
+    ("elliprc", sc.elliprc, [(1.0, 0.0), (1.0, INF), (INF, 1.0), (-1.0, 1.0), (NAN, 1.0), (1.0, NAN), (0.0, 0.0)]),
+    ("elliprf", sc.elliprf, [(0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0), (1.0, INF, 1.0), (INF, 0.0, 1.0), (1.0, 1.0, -1.0), (NAN, 1.0, 1.0), (1.0, NAN, 1.0), (1.0, 1.0, NAN)]),
+    ("elliprd", sc.elliprd, [(1.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 1.0, INF), (INF, 1.0, 1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, 1.0), (NAN, 1.0, 1.0), (1.0, NAN, 1.0), (1.0, 1.0, NAN)]),
+    ("elliprj", sc.elliprj, [(1.0, 1.0, 1.0, INF), (1.0, 1.0, INF, 1.0), (-1.0, 1.0, 1.0, 1.0), (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 1.0), (0.0, 0.0, 0.0, 1.0), (NAN, 1.0, 1.0, 1.0), (1.0, 1.0, 1.0, NAN), (0.0, 1.0, 2.0, 0.0)]),
+    ("elliprg", sc.elliprg, [(0.0, 0.0, 0.0), (1.0, INF, 1.0), (INF, 1.0, 1.0), (NAN, 1.0, 1.0), (1.0, 1.0, -1.0), (0.0, 0.0, -1.0)]),
+    ("agm", sc.agm, [(0.0, 0.0), (99.0, 0.0), (-1.0, 10.0), (0.0, INF), (INF, 0.0), (0.0, -INF), (-INF, 0.0), (INF, -INF), (-INF, INF), (1.0, NAN), (NAN, -1.0), (1.0, INF), (INF, 1.0), (-1.0, -INF), (-INF, -1.0), (INF, INF), (-INF, -INF)]),
+]
+
 
 def write_special_values(only=None):
     path = DATA / "special_values.csv"
@@ -469,7 +760,7 @@ def write_special_values(only=None):
         old = [l for l in path.read_text().splitlines(keepends=True) if l.split(",")[0] not in only]
         lines = old
     else:
-        lines = [HEADER, "# columns: function,a0,a1,scipy  (exact non-finite or zero results)\n"]
+        lines = [HEADER, "# columns: function,a0,a1,a2,a3,scipy  (exact non-finite or zero results)\n"]
     for name, f, cases in SPECIAL:
         if only and name not in only:
             continue
@@ -478,7 +769,7 @@ def write_special_values(only=None):
                 v = float(f(*args))
             if math.isfinite(v) and v != 0.0:
                 raise SystemExit(f"{name}{args} = {v} is not a special value")
-            a = list(args) + [""] * (2 - len(args))
+            a = list(args) + [""] * (4 - len(args))
             lines.append(",".join([name] + [fmt(x) if x != "" else "" for x in a] + [fmt(v)]) + "\n")
     (DATA / "special_values.csv").write_text("".join(lines))
 
@@ -576,6 +867,9 @@ if __name__ == "__main__":
     # With function names: write only those functions' data (reference rows and
     # special values), leaving the other files untouched.
     only = sys.argv[1:] or None
+    if only == ["special"]:
+        write_special_values()
+        raise SystemExit(0)
     if only == ["tables"]:
         write_tables()
         raise SystemExit(0)

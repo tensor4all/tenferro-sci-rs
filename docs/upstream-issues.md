@@ -130,6 +130,8 @@ cases:
 | `zetac` | gh-346 | returns 0 for `127 <= x < 1075` |
 | `binom` | gh-352 | wrong for `k > 1e8 abs(n)` (4e-5 at `binom(-10.5, 500000000000.25)`) |
 | `stirling2` | gh-378 | Temme approximation for `n > 50`: 2e-5 at `S(51, 7)` |
+| `ellipj` | (xsf transformation for `m < 0`) | NaN in all four outputs for `m < 0`, e.g. `ellipj(0.0, -2.0)`; xsf evaluates `m < 0` through DLMF 22.17 |
+| `elliprf` | gh-467 | NaN or `-inf` if `x` is 0 or subnormal and `y * z` underflows, e.g. `elliprf(0, 1e-300, 1e-30)` (xsf: 3.1223528191531603e17) |
 
 
 ## xprec: `Df64::ln` and `ln_1p` return NaN for `x >= 2^1023`
@@ -164,3 +166,95 @@ cases:
   passes on Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
   Making the `f64` port independent of the platform libm (a correctly rounded
   `ln` in pure Rust) would remove the deviation; that is a separate change.
+
+## scipy/xsf: `ellipj` is wrong or NaN for `m >= 0.9999999999` outside the validity of its expansion
+
+- **Affects:** xsf `31177fd9` (`include/xsf/cephes/ellpj.h`), and SciPy 1.16.3's
+  `scipy.special.ellipj`, which gives the same values.
+- **Cause:** for `m >= 0.9999999999` the code uses an expansion in `1 - m` that
+  is valid only while `(1 - m) e^(2|u|)` is small (the Cephes header: "the
+  approximation applies only for phi < pi/2"). Beyond that it returns wrong
+  values, and for `|u| > 710`, where `cosh(u)` overflows, `ellipj` returns NaN.
+- **Evidence** (mpmath 1.3.0): `ellipj(100, 0.99999999999)` gives
+  `cn = -3.36e31`, `dn = 3.36e31`, `ph = 3.36e31` in xsf; the true values are
+  `cn = 7.899e-6`, `dn = 8.508e-6`, `ph = 10.9956`. `ellipj(1000, 0.99999999999)` and
+  `ellipj(1e5, 1.0)` give NaN (true `sn = -0.99999999985` and `1`).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port, so it has the same values;
+  `tests/reference.rs` does not compare `f64` with mpmath for these
+  arguments (`ellipj_expansion_valid`). The `Df64` path uses the AGM
+  descent for every `m < 1` and the closed forms at `m = 1`, and is checked at
+  these points.
+
+## scipy/xsf: `elliprj` is NaN for one huge `x`, `y` or `z`
+
+- **Affects:** xsf `31177fd9` (`include/xsf/ellint_carlson/_rj.hh`) and SciPy 1.18.1
+  (checked), `elliprj(x, y, z, p)` when one of `x`, `y`, `z` exceeds about
+  3.7e156 (10^156.57, in the `f64` path of this crate: 1e156 is finite, 1e157 is
+  NaN) with the others of order 1.
+- **Example:** `elliprj(1, 2, z, 4)` is `5.97353250106694e-79` for `z = 1e156`
+  and NaN for `z = 1e157, 1e160, 1e170, 1e180, 1e300` (the true value at
+  `z = 1e180` is `5.97353250106694e-91`, which `Df64` returns). A huge `p` is
+  not affected: `elliprj(1, 2, 3, 1e300)` is `2.1808378064067243e-300`.
+- **Cause:** not investigated further; the duplication overflows in an
+  intermediate product of the large argument.
+- **Neighbors:** `elliprf` has no such limit (finite up to `f64::MAX`). `elliprd`,
+  `elliprg` (one huge argument in third position) and `elliprc(1, y)` are NaN
+  only within a factor of about 3 of `f64::MAX` (above 6e307, 6e307 and 9e307),
+  where the result is far below the smallest subnormal anyway for `elliprd` and
+  `elliprc` (`elliprd(1, 2, 1e300)` is `0.0`).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port and has the same NaNs. No
+  xsref table exists for `elliprj`, and the largest argument of any `elliprj`
+  reference row is 1e90, so no test row is affected. The `Df64` path is
+  accurate (checked to 5e-32 at ratios up to 1e180) and returns NaN, by design,
+  when the largest and smallest nonzero argument differ by more than 2^600
+  (`elliprj` in `lib.rs`; `df64_elliprj_ratio_limit_is_fail_fast`).
+
+## scipy/xsf: `ellipkinc(phi, 1)` is `+inf` at the `f64` value of pi/2, where `F` is finite
+
+- **Affects:** xsf `31177fd9` (`cephes/ellik.h`), `abs(phi) >= (double)M_PI_2`.
+- **Example:** `ellipkinc(1.5707963267948966, 1.0)` is `inf` in xsf and SciPy;
+  the `f64` number 1.5707963267948966 is 6.1e-17 below pi/2, so
+  `F = asinh(tan(phi))` is finite, 38.025003373828866 (mpmath 1.3.0). The result
+  is also `+inf` for `phi <= -pi/2` (the sign of the integral is lost).
+- **Upstream:** not reported.
+- **Evidence:** the xsref `ellipkinc` rows `(+-1.5707963267948966, 1.0)` record
+  the finite value `+-38.025003373828866` with tolerance `inf` on every
+  platform, i.e. xsref knows xsf disagrees; the exact value
+  `atanh(sin(1.5707963267948966))` is 38.02500337382886806180240516117
+  (mpmath 1.3.0, 60 digits).
+- **Here:** `f64` is the faithful port, so it returns `inf` (the xsref check is
+  vacuous on those two rows because of the infinite tolerance). `Df64` compares
+  with the double-double pi/2 and returns the finite value, which agrees with
+  the exact one to 1.5e-31 (relative); `df64_matches_mpmath_on_xsref_points`
+  checks it. The special-value table does not contain this row.
+
+## mpmath: `ellipf(phi, 1)` loses accuracy near `phi = pi/2` at working precision
+
+- **Affects:** mpmath 1.3.0, `mp.ellipf(phi, 1)` for `phi` within a few
+  working-precision units of pi/2 (F(phi | 1) = atanh(sin phi) diverges at pi/2,
+  so `pi/2 - phi` cancels).
+- **Examples:** at 256 bits `mp.ellipf(mp.pi/2, 1)` returns 179.286 (the
+  argument is 5.4846e-78 below pi/2, and the exact value, computed at 2000 bits
+  for the same rounded argument, is 178.59284260210710691: 0.4% off). At 15
+  digits `mp.ellipf(mpf(1.5707963267948966), 1)` returns 38.718, where the
+  exact value is 38.0250033738 (50 and 1200 digits agree).
+- **Upstream:** not reported.
+- **Here:** the reference scripts compute every value at two working precisions
+  that must agree (`stable()`), and an `f64` argument such as
+  1.5707963267948966 is 6.1e-17 below pi/2, far above the 256-bit resolution,
+  so it is evaluated correctly (38.0250033738...). The scripts give no mpmath
+  value for `m = 1` and `abs(phi) >= pi/2` (computed at the working precision),
+  where F is infinite.
+
+## xprec: `Df64::sqrt` loses digits below about 1e-292
+
+- **Affects:** xprec 0.2.3.
+- **Example:** `Df64::from(4.450147717014403e-308).sqrt()` differs from the
+  value computed after an exact scaling by 2^1000 by 1.3e-17 (relative), and
+  `Df64::from(1e-300).sqrt()` by 6.7e-25.
+- **Upstream:** not reported.
+- **Here:** `generic::sqrt` scales arguments below 2^-900 by an exact power of
+  four; the elliptic algorithms use it. This is the square-root counterpart of
+  the subnormal low word noted in `generic/mod.rs`.

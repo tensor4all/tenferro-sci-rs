@@ -1,13 +1,14 @@
-//! ln Γ(1 + x) for `f64`.
+//! ln Γ(1 + x) and cos(x) − 1 for `f64`.
 //!
-//! Ported from xsf `include/xsf/cephes/unity.h` (`lgam1p`, `lgam1p_taylor`;
-//! the other functions of that header are not part of this crate yet).
+//! Ported from xsf `include/xsf/cephes/unity.h` (`lgam1p`, `lgam1p_taylor`,
+//! `cosm1`; the other functions of that header are not part of this crate yet).
 //! Cephes Math Library, Copyright 1984, 1987, 1989, 1992 by Stephen L.
 //! Moshier; `lgam1p` added by SciPy developers (2016); C++ translation by
 //! SciPy developers (2024).
 
 use super::consts::{MACHEP, SCIPY_EULER};
 use super::gamma::lgam_sgn;
+use super::polevl::polevl;
 use super::zeta::zeta;
 
 /// `xsf::cephes::detail::MAXITER`.
@@ -40,4 +41,23 @@ pub(crate) fn lgam1p(x: f64) -> f64 {
     } else {
         lgam_sgn(x + 1.0).0
     }
+}
+
+const UNITY_COSCOF: [f64; 7] = [
+    4.7377507964246204691685E-14,
+    -1.1470284843425359765671E-11,
+    2.0876754287081521758361E-9,
+    -2.7557319214999787979814E-7,
+    2.4801587301570552304991E-5,
+    -1.3888888888888872993737E-3,
+    4.1666666666666666609054E-2,
+];
+
+/// cos(x) - 1.
+pub(crate) fn cosm1(x: f64) -> f64 {
+    if !(-core::f64::consts::FRAC_PI_4..=core::f64::consts::FRAC_PI_4).contains(&x) {
+        return x.cos() - 1.0;
+    }
+    let xx = x * x;
+    -0.5 * xx + xx * xx * polevl(xx, &UNITY_COSCOF)
 }

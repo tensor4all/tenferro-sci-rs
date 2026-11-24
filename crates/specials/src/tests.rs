@@ -9,7 +9,7 @@ use crate::generic;
 use crate::refdata::{error, rows};
 
 /// (function, relative tolerance, absolute floor)
-const CASES: [(&str, f64, f64); 15] = [
+const CASES: [(&str, f64, f64); 30] = [
     ("gamma", 4e-15, 0.0),
     ("lgamma", 4e-15, 0.0),
     ("rgamma", 4e-15, 0.0),
@@ -33,6 +33,22 @@ const CASES: [(&str, f64, f64); 15] = [
     ("gen_harmonic", 4e-13, 0.0),
     // 6e5 additions at n = 2e5: the f64 recurrence accumulates ~1e-14.
     ("stirling2", 1e-13, 0.0),
+    // The elliptic family (#11), evaluated in f64 by the double-double algorithms.
+    ("ellipk", 1e-13, 0.0),
+    ("ellipkm1", 1e-13, 0.0),
+    ("ellipe", 1e-13, 0.0),
+    ("ellipkinc", 1e-13, 0.0),
+    ("ellipeinc", 1e-13, 0.0),
+    ("ellipj_sn", 1e-13, 0.0),
+    ("ellipj_cn", 1e-13, 0.0),
+    ("ellipj_dn", 1e-13, 0.0),
+    ("ellipj_ph", 1e-13, 0.0),
+    ("elliprc", 1e-13, 0.0),
+    ("elliprf", 1e-13, 0.0),
+    ("elliprd", 1e-13, 0.0),
+    ("elliprj", 1e-13, 0.0),
+    ("elliprg", 1e-13, 0.0),
+    ("agm", 1e-13, 0.0),
 ];
 
 fn eval(name: &str, a: &[f64]) -> f64 {
@@ -55,6 +71,21 @@ fn eval(name: &str, a: &[f64]) -> f64 {
             generic::stirling2::Prepared::Value(v) => v,
             generic::stirling2::Prepared::Kernel(n, k) => generic::stirling2::stirling2(n, k),
         },
+        "ellipk" => generic::ellip::ellipk(a[0]),
+        "ellipkm1" => generic::ellip::ellipkm1(a[0]),
+        "ellipe" => generic::ellip::ellipe(a[0]),
+        "ellipkinc" => generic::ellip::ellipkinc(a[0], a[1]),
+        "ellipeinc" => generic::ellip::ellipeinc(a[0], a[1]),
+        "ellipj_sn" => generic::ellip::ellipj(a[0], a[1]).0,
+        "ellipj_cn" => generic::ellip::ellipj(a[0], a[1]).1,
+        "ellipj_dn" => generic::ellip::ellipj(a[0], a[1]).2,
+        "ellipj_ph" => generic::ellip::ellipj(a[0], a[1]).3,
+        "elliprc" => generic::carlson::elliprc(a[0], a[1]),
+        "elliprf" => generic::carlson::elliprf(a[0], a[1], a[2]),
+        "elliprd" => generic::carlson::elliprd(a[0], a[1], a[2]),
+        "elliprj" => generic::carlson::elliprj(a[0], a[1], a[2], a[3]),
+        "elliprg" => generic::carlson::elliprg(a[0], a[1], a[2]),
+        "agm" => generic::agm::agm(a[0], a[1]),
         _ => unreachable!("{name}"),
     }
 }
@@ -65,6 +96,18 @@ fn generic_algorithms_in_f64_match_mpmath() {
         for r in rows(name).iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
+            let scale = crate::refdata::jacobi_scale(
+                name,
+                a[0],
+                a.get(1).copied().unwrap_or(0.0),
+                r.reference.0,
+            );
+            let floor = floor.max(crate::refdata::jacobi_floor(
+                scale,
+                100.0,
+                f64::EPSILON,
+                tol,
+            ));
             let e = error(got, r.reference, floor);
             assert!(
                 e <= tol,
