@@ -331,6 +331,44 @@ fn f64_keeps_xsf_value_where_it_is_finite() {
         err <= f64_tol("elliprj"),
         "elliprj{a:?} = {got:e}, error {err:e}"
     );
+    // Review of 3a7bc8c: principal values xsf evaluates to about 1e-12 (its
+    // Carlson Eq. 2.26 combination is conditioned at about 1e4), while DLMF
+    // 19.20.14 is conditioned at about 1e6; a check on the latter returned NaN.
+    // The tolerance is the documented 1e-10 of kept xsf values.
+    let pv = [
+        (
+            [
+                8.302154427603948e-102,
+                5.927836371317247e-61,
+                1.0047079450892522e-21,
+                -2.218151451072381e-81,
+            ],
+            1.923292471199615e+67,
+        ),
+        (
+            [
+                6.0170982496602805e-96,
+                1.1830348712965332e-95,
+                9.305027156391948e-60,
+                -8.436824658532037e-96,
+            ],
+            8.675124870030795e+119,
+        ),
+        (
+            [
+                6.911304916951263e-92,
+                8.656115050435896e-92,
+                1.9001214587812377e-14,
+                -7.738772926465598e-92,
+            ],
+            -3.721784502977478e+94,
+        ),
+    ];
+    for (a, want) in pv {
+        let got = specials::elliprj(a[0], a[1], a[2], a[3]);
+        let err = ((got - want) / want).abs();
+        assert!(err <= 1e-10, "elliprj{a:?} = {got:e}, error {err:e}");
+    }
 }
 
 /// Values xsf gets wrong but finite beyond 2^±300 (on `main`: -2.1e137 for a
@@ -414,11 +452,12 @@ fn f64_kept_xsf_value_is_within_1e_10() {
     assert!(err <= 1e-10, "elliprj: {got:e}, error {err:e}");
 }
 
-/// The pole (two of `x`, `y`, `z` zero, `p != 0`) is `+∞` at every scale and
-/// in both strategies, also for `p < 0` beyond 2^300, where the `f64`
-/// principal-value check must not run (review of 5e63e30: NaN there).
+/// The pole (two of `x`, `y`, `z` zero, `p != 0`) is `+∞`, and an infinite
+/// argument gives 0, at every scale and in both strategies, also for `p < 0`
+/// beyond 2^300, where the `f64` principal-value check must not run (review
+/// of 5e63e30: NaN at the pole).
 #[test]
-fn pole_is_infinite_at_every_scale() {
+fn pole_and_infinite_argument_at_every_scale() {
     for (z, p) in [
         (pow2(299), -1.0),
         (pow2(301), -1.0),
@@ -437,6 +476,21 @@ fn pole_is_infinite_at_every_scale() {
             specials::elliprj(d(0.0), d(0.0), d(z), d(p)).hi(),
             f64::INFINITY,
             "Df64 z={z:e} p={p:e}"
+        );
+    }
+    // An infinite argument gives 0, also with `p = -∞` beyond 2^300 (where the
+    // principal-value check must not run either).
+    for (y, z) in [(1.0, pow2(400)), (pow2(-400), 1.0), (pow2(400), pow2(400))] {
+        assert_eq!(
+            specials::elliprj(0.0, y, z, f64::NEG_INFINITY),
+            0.0,
+            "f64 y={y:e} z={z:e}"
+        );
+        let d = Df64::from;
+        assert_eq!(
+            specials::elliprj(d(0.0), d(y), d(z), d(f64::NEG_INFINITY)).hi(),
+            0.0,
+            "Df64 y={y:e} z={z:e}"
         );
     }
 }

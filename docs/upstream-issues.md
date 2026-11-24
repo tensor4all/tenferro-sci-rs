@@ -314,11 +314,12 @@ cases:
 - **Here:** where a path scales the arguments (tensor4all/tenferro-sci-rs#25;
   the `f64` path when one lies beyond 2^±300 and they are at most 2^600 apart,
   the `Df64` path also when their center lies beyond 2^±100), it computes the
-  condition number of the DLMF 19.20.14 combination and returns NaN when it
-  can cost more than a relative 1e-10 (above about 4.5e5 for `f64`, 4.1e21 for
-  `Df64`), instead of a value without correct digits. Elsewhere, as in the
-  example, both paths return the value as computed, as before. A remedy for
-  all scales (a transformation that does not cancel there) is separate work.
+  condition number of the combination it evaluates (Eq. 2.26 for `f64`, DLMF
+  19.20.14 for `Df64`; the two can differ by orders of magnitude) and returns
+  NaN when it can cost more than a relative 1e-10 (above about 4.5e5 for `f64`,
+  4.1e21 for `Df64`), instead of a value without correct digits. Elsewhere, as
+  in the example, both paths return the value as computed, as before. A remedy
+  for all scales (a transformation that does not cancel there) is separate work.
 
 ## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments
 

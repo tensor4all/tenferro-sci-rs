@@ -1073,20 +1073,26 @@ fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> f64 {
 }
 
 /// Condition number `(|t1| + |t2| + |t3|) / |t1 + t2 + t3|` of the
-/// principal value of R_J for `p < 0` (DLMF 19.20.14, the terms
-/// `(q - y) R_J(x, y, z, q)`, `-3 R_F(x, y, z)`, `3 R_C(x z / y, p q / y)`
-/// for sorted `x <= y <= z`), evaluated with xsf's R_J, R_F and R_C. xsf's
-/// own transformation (Carlson 1995 Eq. 2.26) cancels for the same arguments.
+/// combination [`rj_cpv_dispatch`] evaluates for the principal value of R_J
+/// with `p < 0` (Carlson 1995 Eq. 2.26, for sorted `x <= y <= z`): the terms
+/// `(q - z) R_J(x, y, z, q)`, `-3 R_F(x, y, z)` and
+/// `3 sqrt(x y z / (x y + p q)) R_C(x y + p q, p q)` with
+/// `q = (x + y - p - x y / z) / (1 - p / z)`, formed as it forms them. The
+/// condition number of DLMF 19.20.14, which the `Df64` path evaluates, is a
+/// different one and can be much larger (review of 3a7bc8c).
 fn pv_condition(x: f64, y: f64, z: f64, p: f64) -> f64 {
     let mut v = [x, y, z];
     sort3(&mut v, |a, b| a < b);
     let [x, y, z] = v;
-    let q = y + (z - y) * (y - x) / (y - p);
+    let xy = x * y;
+    let q = (nsum2(&[x, y, -p], 3) - xy / z) / (1.0 - p / z);
+    let pq = q * -p;
+    let xypq = xy + pq;
     let (mut a, mut b, mut c) = (0.0, 0.0, 0.0);
     rj(x, y, z, q, RERR, &mut a, false);
     rf(x, y, z, RERR, &mut b);
-    rc(x * z / y, p * q / y, RERR, &mut c);
-    let t = [(q - y) * a, -3.0 * b, 3.0 * c];
+    rc(xypq, pq, RERR, &mut c);
+    let t = [(q - z) * a, -3.0 * b, 3.0 * (xy * z / xypq).sqrt() * c];
     (t[0].abs() + t[1].abs() + t[2].abs()) / (t[0] + t[1] + t[2]).abs()
 }
 
@@ -1106,11 +1112,12 @@ pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
     // value is returned (the condition number does not depend on the scale,
     // so the two agree); return NaN rather than that.
     // Only where xsf takes that path (Carlson 1995, text above Eq. 2.26:
-    // `x, y, z` real, nonnegative, at most one zero, `p < 0`); the pole of two
-    // zero arguments and the domain errors keep xsf's value.
+    // `x, y, z` real, nonnegative, at most one zero, `p < 0`, all finite); the
+    // pole of two zero arguments, an infinite argument and the domain errors
+    // keep xsf's value.
     let mut v = [x, y, z];
     sort3(&mut v, |a, b| a < b);
-    let principal = p < 0.0 && v[0] >= 0.0 && v[1] > 0.0 && v[2].is_finite();
+    let principal = p < 0.0 && p.is_finite() && v[0] >= 0.0 && v[1] > 0.0 && v[2].is_finite();
     if let (Scaling::Window(j), true) = (scaling, principal) {
         let s = |v: f64| ldexp(v, -2 * j);
         if pv_ill_conditioned(pv_condition(s(x), s(y), s(z), s(p)), f64::EPSILON) {

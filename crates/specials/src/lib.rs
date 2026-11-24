@@ -801,8 +801,9 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// beyond 2^±300, none is subnormal and they are at most 2^600 apart: they
 /// are moved just into 2^±301, so that the products xsf forms stay in range,
 /// and xsf's unscaled value is kept where it agrees with the scaled one to
-/// 1e-10 (its accuracy there is xsf's own, which can be about 1e-10 rather
-/// than the 1e-14 of ordinary arguments). Arguments farther apart, or with a subnormal one (which xsf treats
+/// 1e-10 (its accuracy there is xsf's own at those arguments: about 1e-10 at
+/// the measured points rather than the 1e-14 of the reference grid; xsf's
+/// accuracy for some argument shapes is worse even at ordinary scales). Arguments farther apart, or with a subnormal one (which xsf treats
 /// as zero), are not scaled: no power of four brings them within range, and
 /// they get xsf's value, as in SciPy: NaN where its products leave the range
 /// (from a largest argument of about 2^340, or below about 2^-340, on; for
@@ -813,9 +814,9 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// (DLMF 19.20.14 for `Df64`, Carlson 1995 Eq. 2.26 in xsf) that cancels
 /// catastrophically when `|p|` is far below `y` and the arguments spread
 /// widely. Where a path scales the arguments, such a value is NaN when the
-/// cancellation can cost more than a relative 1e-10; elsewhere it is returned
-/// as computed and can be wrong, in both paths and in SciPy (see
-/// `docs/upstream-issues.md`).
+/// cancellation of the transformation it evaluates can cost more than a
+/// relative 1e-10; elsewhere it is returned as computed and can be wrong, in
+/// both paths and in SciPy (see `docs/upstream-issues.md`).
 ///
 /// # Examples
 ///

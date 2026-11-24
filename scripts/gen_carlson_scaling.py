@@ -161,6 +161,19 @@ def main() -> None:
           dd(stable(lambda: shifted(mp.elliprg, (-763, -368, -695), 232, 1))))
     print("elliprj", (-431, -326, -330, -365),
           dd(stable(lambda: shifted(mp.elliprj, (-431, -326, -330, -365), 180, -3))))
+    # Review of 3a7bc8c: principal values xsf evaluates to about 1e-12 (its
+    # Eq. 2.26 is conditioned at 1e4) although DLMF 19.20.14 is conditioned at
+    # 1e6, so the f64 check must use xsf's combination.
+    for a in [(8.302154427603948e-102, 5.927836371317247e-61, 1.0047079450892522e-21,
+               -2.218151451072381e-81),
+              (6.0170982496602805e-96, 1.1830348712965332e-95, 9.305027156391948e-60,
+               -8.436824658532037e-96),
+              (6.911304916951263e-92, 8.656115050435896e-92, 1.9001214587812377e-14,
+               -7.738772926465598e-92)]:
+        def wide_a(a=a):
+            with mp.workprec(mp.mp.prec + 400):
+                return +rj(*a, check=False)
+        print("elliprj", a, dd(stable(wide_a)))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))
