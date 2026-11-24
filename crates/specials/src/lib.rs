@@ -760,8 +760,9 @@ pub fn elliprf<T: Real>(x: T, y: T, z: T) -> T {
 ///
 /// Defined for `x, y, z >= 0`; `+∞` if an argument is infinite, NaN for a
 /// negative argument. The `f64` path scales its arguments as [`elliprj`]
-/// does; arguments more than 2^600 apart are not scaled, and xsf returns NaN
-/// there, as SciPy does, from a largest argument of about 2^512 on.
+/// does; arguments more than 2^600 apart are not scaled and get xsf's value,
+/// as in SciPy: NaN from a largest argument of about 2^512 on, and possibly a
+/// wrong finite value elsewhere (see `docs/upstream-issues.md`).
 ///
 /// # Examples
 ///
@@ -803,9 +804,10 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// 1e-10 (its accuracy there is xsf's own, which can be about 1e-10 rather
 /// than the 1e-14 of ordinary arguments). Arguments farther apart, or with a subnormal one (which xsf treats
 /// as zero), are not scaled: no power of four brings them within range, and
-/// xsf returns NaN, as SciPy does, where its products leave the range there
+/// they get xsf's value, as in SciPy: NaN where its products leave the range
 /// (from a largest argument of about 2^340, or below about 2^-340, on; for
-/// example `elliprj(2^-1000, 2^400, 2^400, 2^400)`).
+/// example `elliprj(2^-1000, 2^400, 2^400, 2^400)`), and possibly a wrong
+/// finite value elsewhere.
 ///
 /// For `p < 0`, both paths evaluate the principal value by a transformation
 /// (DLMF 19.20.14 for `Df64`, Carlson 1995 Eq. 2.26 in xsf) that cancels

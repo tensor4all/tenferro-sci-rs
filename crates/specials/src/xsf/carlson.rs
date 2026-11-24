@@ -1105,7 +1105,13 @@ pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
     // cancels has lost its digits whichever of the unscaled and the scaled
     // value is returned (the condition number does not depend on the scale,
     // so the two agree); return NaN rather than that.
-    if let (Scaling::Window(j), true) = (scaling, p < 0.0) {
+    // Only where xsf takes that path (Carlson 1995, text above Eq. 2.26:
+    // `x, y, z` real, nonnegative, at most one zero, `p < 0`); the pole of two
+    // zero arguments and the domain errors keep xsf's value.
+    let mut v = [x, y, z];
+    sort3(&mut v, |a, b| a < b);
+    let principal = p < 0.0 && v[0] >= 0.0 && v[1] > 0.0 && v[2].is_finite();
+    if let (Scaling::Window(j), true) = (scaling, principal) {
         let s = |v: f64| ldexp(v, -2 * j);
         if pv_ill_conditioned(pv_condition(s(x), s(y), s(z), s(p)), f64::EPSILON) {
             return f64::NAN;

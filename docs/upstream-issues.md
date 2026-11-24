@@ -286,7 +286,11 @@ cases:
   scale by about 1e-11). Arguments farther apart are not scaled: no power of
   four brings them within range, and evaluating xsf with only the largest moved
   into range gave values off by up to 13 orders of magnitude where xsf returns
-  NaN. Arguments within 2^±300 take xsf's path unchanged, and so does xsf's
+  NaN. At such spreads xsf's own value can also be wrong but finite, as on
+  `main`: `elliprg(6.271122910098695e-280, 8.009645382365165e-60,
+  2.6711411019225204e-264)` is 1.3071070935084508e-30 (SciPy 1.18.1 and the
+  `f64` path) for 1.4150658449666896e-30 (mpmath at 250 bits, and the `Df64`
+  path). Arguments within 2^±300 take xsf's path unchanged, and so does xsf's
   treatment of a subnormal argument as zero. Beyond 2^±300 xsf can also return a
   wrong finite value, e.g. `elliprj(3e-100, 1, 2e80, -1e-70)` times 2^-392 is
   -2.1e137 instead of 3.72e157; the scaling corrects it.

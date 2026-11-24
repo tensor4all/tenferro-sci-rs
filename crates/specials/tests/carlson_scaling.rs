@@ -250,10 +250,11 @@ fn f64_keeps_xsf_subnormal_as_zero() {
 /// Spreads beyond 2^600 at scales where xsf's products leave the range: the
 /// `f64` path does not scale these (no power of four brings such a spread
 /// within range), so it returns xsf's value, NaN here as on `main` and in
-/// SciPy. Each point must be NaN or accurate, never a wrong finite value: a
-/// retry that moved only the largest argument into range gave 7.2e54 for
-/// 1.4e41, 6.4e39 for 4.1e39, 5.1e9 for 1.0e-4 and 8.2231e-53 for 8.2310e-53
-/// on the last four (review of 470803a). `f64` only: the `Df64` R_J returns
+/// SciPy. Each of these points must be NaN or accurate: a retry that moved
+/// only the largest argument into range gave 7.2e54 for 1.4e41, 6.4e39 for
+/// 4.1e39, 5.1e9 for 1.0e-4 and 8.2231e-53 for 8.2310e-53 on the last four
+/// (review of 470803a). Elsewhere at such spreads xsf can return a wrong
+/// finite value itself, as on `main` (`docs/upstream-issues.md`). `f64` only: the `Df64` R_J returns
 /// NaN beyond a ratio of 2^600 by design. References: mpmath 1.3.0,
 /// `scripts/gen_carlson_scaling.py` (for `p < 0`, DLMF 19.20.14 checked
 /// against Carlson 1995 Eq. 2.26).
@@ -411,4 +412,31 @@ fn f64_kept_xsf_value_is_within_1e_10() {
     let want = 2.2338413140293353e+154;
     let err = ((got - want) / want).abs();
     assert!(err <= 1e-10, "elliprj: {got:e}, error {err:e}");
+}
+
+/// The pole (two of `x`, `y`, `z` zero, `p != 0`) is `+∞` at every scale and
+/// in both strategies, also for `p < 0` beyond 2^300, where the `f64`
+/// principal-value check must not run (review of 5e63e30: NaN there).
+#[test]
+fn pole_is_infinite_at_every_scale() {
+    for (z, p) in [
+        (pow2(299), -1.0),
+        (pow2(301), -1.0),
+        (pow2(400), -1.0),
+        (pow2(400), -pow2(400)),
+        (pow2(400), 1.0),
+        (pow2(-400), -pow2(-400)),
+    ] {
+        assert_eq!(
+            specials::elliprj(0.0, 0.0, z, p),
+            f64::INFINITY,
+            "f64 z={z:e} p={p:e}"
+        );
+        let d = Df64::from;
+        assert_eq!(
+            specials::elliprj(d(0.0), d(0.0), d(z), d(p)).hi(),
+            f64::INFINITY,
+            "Df64 z={z:e} p={p:e}"
+        );
+    }
 }
