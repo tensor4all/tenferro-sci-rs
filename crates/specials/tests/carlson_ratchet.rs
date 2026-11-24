@@ -379,12 +379,15 @@ fn required_rows() -> Vec<(&'static str, Vec<f64>)> {
     ]
 }
 
-/// The rows the reference test excuses with NaN are exactly those the crate
-/// documents NaN for, so a regeneration cannot weaken a row by setting its
-/// flag: `f64` R_J and R_G with exponents more than 600 bits apart (left to
-/// xsf), `f64` R_C and R_F at 2^1022 and above (`f64_top_range`), `Df64` R_J
-/// with a ratio above 2^600 (`RJ_RATIO_BITS`), and the ill-conditioned
-/// principal values in both strategies.
+/// The rows the reference test excuses with NaN are exactly those this rule
+/// selects, so a regeneration cannot weaken a row by setting its flag: `f64`
+/// R_J and R_G with exponents more than 600 bits apart (left to xsf; the
+/// rustdoc of `elliprj` and `elliprg`), `Df64` R_J with a ratio above 2^600
+/// (`RJ_RATIO_BITS`, the rustdoc of `elliprj`), the ill-conditioned principal
+/// values in both strategies (the rustdoc of `elliprj`), and `f64` R_C and R_F
+/// at 2^1022 and above (`f64_top_range`). The last is recorded only in
+/// `docs/upstream-issues.md`: the rustdoc of `elliprc` and `elliprf` does not
+/// mention it.
 #[test]
 fn nan_flags_follow_the_documented_rule() {
     let mut failures = Vec::new();
