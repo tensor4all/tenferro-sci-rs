@@ -13,6 +13,10 @@ Then read, in this order:
 3. [`CONTRIBUTING.md`](CONTRIBUTING.md), which points to the rules shared by
    every tensor4all Rust repository (issues, PR evidence, gates, review).
 
+Before implementing or reviewing changes to `specials`, including its
+reference tests and re-exports, read and apply the
+[special-functions audit guide](docs/specials-audit.md).
+
 Short version of the repository rules:
 
 - Two kinds of crates. Independent cores are pure Rust and never depend on a
