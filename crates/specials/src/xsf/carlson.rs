@@ -1005,9 +1005,10 @@ enum Scaling {
     /// 13 orders of magnitude where xsf returns NaN (review of 470803a).
     None,
     /// The largest and the smallest nonzero argument are at most
-    /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the smallest power of
-    /// four that brings every argument within 2^±([`UNSCALED_BITS`] + 1), so
-    /// every product of three stays in range. xsf picks some asymptotic
+    /// 2^(2 [`UNSCALED_BITS`]) apart: they are moved by the power of four that
+    /// brings the argument beyond 2^±[`UNSCALED_BITS`] just inside it (to
+    /// 2^±299 or 2^±300), which leaves every argument within
+    /// 2^±([`UNSCALED_BITS`] + 1), so every product of three stays in range. xsf picks some asymptotic
     /// expansions by absolute thresholds (`p <= 1e-9`, `y <= 1e-26`), so its
     /// value can depend on the scale by about 1e-11; xsf's unscaled value is
     /// therefore kept when it agrees with the scaled one to [`AGREE`], and the
