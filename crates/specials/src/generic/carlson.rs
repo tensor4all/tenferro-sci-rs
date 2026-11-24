@@ -345,24 +345,42 @@ pub(crate) fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// before any of the R_J, R_F and R_C it calls can scale, so the arguments are
 /// scaled first, by an exact power of four, as in [`rj_scaled`]: R_J is
 /// homogeneous of degree -3/2 (DLMF 19.20.14 is homogeneous term by term).
+///
+/// The combination cancels catastrophically for some arguments (`|p|` far
+/// below `y` with a wide spread: condition numbers of 1e45 and more), at any
+/// scale. Where the arguments had to be scaled, which `main` evaluated as NaN,
+/// such a result is NaN as before rather than a value without correct digits
+/// ([`PV_COND_MAX`]; tensor4all/tenferro-sci-rs#25).
 fn rj_principal<T: Real>(x: T, y: T, z: T, p: T) -> T {
     let j = rj_scale_exponent(&[x, y, z, p]);
-    let r = rj_principal_core(
+    let (r, cond) = rj_principal_core(
         ldexp(x, -2 * j),
         ldexp(y, -2 * j),
         ldexp(z, -2 * j),
         ldexp(p, -2 * j),
     );
+    if j != 0 && (cond.is_nan() || cond > PV_COND_MAX) {
+        return T::nan();
+    }
     ldexp(r, -3 * j)
 }
 
-/// [`rj_principal`] for arguments already scaled by [`rj_scale_exponent`].
-fn rj_principal_core<T: Real>(x: T, y: T, z: T, p: T) -> T {
+/// Largest condition number of the principal-value combination (DLMF
+/// 19.20.14, Carlson 1995 Eq. 2.26), `(|t1| + |t2| + |t3|) / |t1 + t2 + t3|`,
+/// accepted for a scaled evaluation: beyond it at least six digits are lost.
+pub(crate) const PV_COND_MAX: f64 = 1e6;
+
+/// [`rj_principal`] for arguments already scaled by [`rj_scale_exponent`],
+/// with the condition number of the combination.
+fn rj_principal_core<T: Real>(x: T, y: T, z: T, p: T) -> (T, f64) {
     let g = y + (z - y) * (y - x) / (y - p);
     let rj = rj_scaled(x, y, z, g);
     let rf = elliprf(x, y, z);
     let rc = elliprc(x * z / y, p * g / y);
-    ((g - y) * rj - k::<T>(3.0) * rf + k::<T>(3.0) * rc) / (y - p)
+    let terms = [(g - y) * rj, -(k::<T>(3.0) * rf), k::<T>(3.0) * rc];
+    let sum = terms[0] + terms[1] + terms[2];
+    let cond = terms.iter().map(|t| t.abs().approx_f64()).sum::<f64>() / sum.abs().approx_f64();
+    (sum / (y - p), cond)
 }
 
 /// Like [`scale_exponent`], but centers the geometric mean of the largest and

@@ -25,6 +25,7 @@
 
 use core::f64::consts::PI;
 
+use crate::generic::carlson::PV_COND_MAX;
 use crate::generic::ldexp;
 
 /// Exit status of the Carlson routines (`ellint_common.hh`). The variants no
@@ -1070,34 +1071,52 @@ fn usable(r: f64) -> bool {
 const AGREE: f64 = 1e-10;
 
 /// Evaluates `f` (R_G or R_J at arguments scaled by `4^-j`, rescaled) as
-/// [`Scaling`] says.
-fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> f64 {
+/// [`Scaling`] says; returns the value and the `j` it was evaluated with.
+fn scaled(scaling: Scaling, f: impl Fn(i32) -> f64) -> (f64, i32) {
     match scaling {
-        Scaling::None => f(0),
+        Scaling::None => (f(0), 0),
         Scaling::Window(j) => {
             let r = f(0);
             let rs = f(j);
             if usable(r) && (!usable(rs) || (r - rs).abs() <= AGREE * rs.abs()) {
-                r
+                (r, 0)
             } else if usable(rs) {
-                rs
+                (rs, j)
             } else {
-                r
+                (r, 0)
             }
         }
         Scaling::Retry(j) => {
             let r = f(0);
             if usable(r) {
-                return r;
+                return (r, 0);
             }
             let rs = f(j);
             if usable(rs) {
-                rs
+                (rs, j)
             } else {
-                r
+                (r, 0)
             }
         }
     }
+}
+
+/// Condition number `(|t1| + |t2| + |t3|) / |t1 + t2 + t3|` of the
+/// principal value of R_J for `p < 0` (DLMF 19.20.14, the terms
+/// `(q - y) R_J(x, y, z, q)`, `-3 R_F(x, y, z)`, `3 R_C(x z / y, p q / y)`
+/// for sorted `x <= y <= z`), evaluated with xsf's R_J, R_F and R_C. xsf's
+/// own transformation (Carlson 1995 Eq. 2.26) cancels for the same arguments.
+fn pv_condition(x: f64, y: f64, z: f64, p: f64) -> f64 {
+    let mut v = [x, y, z];
+    sort3(&mut v, |a, b| a < b);
+    let [x, y, z] = v;
+    let q = y + (z - y) * (y - x) / (y - p);
+    let (mut a, mut b, mut c) = (0.0, 0.0, 0.0);
+    rj(x, y, z, q, RERR, &mut a, false);
+    rf(x, y, z, RERR, &mut b);
+    rc(x * z / y, p * q / y, RERR, &mut c);
+    let t = [(q - y) * a, -3.0 * b, 3.0 * c];
+    (t[0].abs() + t[1].abs() + t[2].abs()) / (t[0] + t[1] + t[2]).abs()
 }
 
 pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
@@ -1107,13 +1126,24 @@ pub(crate) fn elliprg(x: f64, y: f64, z: f64) -> f64 {
         rg(s(x), s(y), s(z), RERR, &mut r);
         ldexp(r, j)
     })
+    .0
 }
 
 pub(crate) fn elliprj(x: f64, y: f64, z: f64, p: f64) -> f64 {
-    scaled(scaling(&[x, y, z, p]), |j| {
+    let (r, j) = scaled(scaling(&[x, y, z, p]), |j| {
         let s = |v: f64| ldexp(v, -2 * j);
         let mut r = 0.0;
         rj(s(x), s(y), s(z), s(p), RERR, &mut r, false);
         ldexp(r, -3 * j)
-    })
+    });
+    // A scaled principal value whose transformation cancels has no correct
+    // digits; return NaN, as xsf does at these scales, rather than that.
+    if j != 0 && p < 0.0 {
+        let s = |v: f64| ldexp(v, -2 * j);
+        let cond = pv_condition(s(x), s(y), s(z), s(p));
+        if cond.is_nan() || cond > PV_COND_MAX {
+            return f64::NAN;
+        }
+    }
+    r
 }

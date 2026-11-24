@@ -339,3 +339,33 @@ fn f64_scaling_corrects_wrong_finite_values() {
         "elliprg{a:?} at 2^{e}: error {err:e}"
     );
 }
+
+/// Principal values whose transformation (DLMF 19.20.14 in the `Df64` path,
+/// Carlson 1995 Eq. 2.26 in xsf) cancels completely, with condition numbers
+/// of 1e45 to 1e91: `|p|` far below `y`, spreads of 150 to 500 bits, all at
+/// scales `main` evaluates as NaN (found in review round 7, where the scaled
+/// evaluation returned +2.7e154 for -1.6e81). Both strategies must give NaN
+/// or the value, never a wrong finite number. References: mpmath 1.3.0 with
+/// 400 extra bits, `scripts/gen_carlson_scaling.py`.
+#[test]
+fn ill_conditioned_principal_value_is_nan_not_wrong() {
+    let cases = [
+        ((-675, -475, -175, -575), -1.6484213442199829e+81),
+        ((-675, -625, -475, -650), -2.4165269490410304e+216),
+        ((-625, -575, -425, -600), -6.396493574267708e+193),
+    ];
+    for ((ex, ey, ez, ep), want) in cases {
+        let a = [pow2(ex), pow2(ey), pow2(ez), -pow2(ep)];
+        let f = specials::elliprj(a[0], a[1], a[2], a[3]);
+        assert!(
+            f.is_nan() || ((f - want) / want).abs() <= f64_tol("elliprj"),
+            "f64 elliprj{a:?} = {f:e}, want {want:e} or NaN"
+        );
+        let d: Vec<Df64> = a.iter().map(|&v| Df64::from(v)).collect();
+        let g = specials::elliprj(d[0], d[1], d[2], d[3]).hi();
+        assert!(
+            g.is_nan() || ((g - want) / want).abs() <= DF64_TOL,
+            "Df64 elliprj{a:?} = {g:e}, want {want:e} or NaN"
+        );
+    }
+}

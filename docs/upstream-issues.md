@@ -292,6 +292,27 @@ cases:
   3.72e157; the scaling corrects it. `crates/specials/tests/carlson_scaling.rs`
   checks both strategies at 2^±520 and 2^±600 (tensor4all/tenferro-sci-rs#25).
 
+## scipy/xsf: `elliprj` for `p < 0` cancels catastrophically when `|p|` is far below `y`
+
+- **Affects:** xsf `31177fd9` (`_rj.hh`, the principal value of Carlson 1995
+  Eq. 2.26), SciPy 1.18.1's `scipy.special.elliprj`, and this repository's own
+  `Df64` path (DLMF 19.20.14), at every scale.
+- **Cause:** both transformations write the principal value as a combination
+  of three terms (R_J with a positive fourth argument, R_F, R_C) that cancel.
+  With `x << |p| << y << z` and a wide spread their condition number reaches
+  1e45 to 1e91 (mpmath 1.3.0 at 400 bits).
+- **Example:** `elliprj(2^-175, 2^25, 2^325, -2^-75)` is `-2.78337e-145`
+  (DLMF 19.20.14 and Eq. 2.26 in mpmath, agreeing at 400 and 800 bits); SciPy
+  and the `f64` path give `2.263919769706678e-72`, the `Df64` path
+  `5.026911708464872e-88`.
+- **Upstream:** not reported.
+- **Here:** at arguments within 2^±300 both paths return the value as
+  computed, as before. Where they scale the arguments
+  (tensor4all/tenferro-sci-rs#25) they compute the condition number of the
+  DLMF 19.20.14 combination and return NaN above 1e6, as `main` and SciPy did
+  at those scales, instead of a value without correct digits. A remedy for
+  all scales (a transformation that does not cancel there) is separate work.
+
 ## mpmath: `elliprj` for `p < 0` loses its real part at large or widely spread arguments
 
 - **Affects:** mpmath 1.3.0, `mp.elliprj(x, y, z, p)` for real `p < 0`, whose

@@ -138,6 +138,14 @@ def main() -> None:
           -4.5006477943934846e-101)
     print("elliprj", a6, dd(stable(lambda: rj(*[mp.mpf(v) * mp.mpf(4)**200 for v in a6],
                                               check=False) * mp.mpf(2)**600)))
+    # Review round 7: principal values whose transformation cancels (condition
+    # numbers 1e45 to 1e91, so 400 more bits), at exact powers of two; the test
+    # accepts NaN or these values.
+    def wide(e):
+        with mp.workprec(mp.mp.prec + 400):
+            return +rj(2.0**e[0], 2.0**e[1], 2.0**e[2], -2.0**e[3], check=False)
+    for e in [(-675, -475, -175, -575), (-675, -625, -475, -650), (-625, -575, -425, -600)]:
+        print("elliprj", e, dd(stable(lambda: wide(e))))
     # Where xsf's unscaled value is right although an argument is far beyond 2^300.
     print("elliprj", "(2^-168, 2^-362, 2^-129, -2^578)",
           dd(stable(lambda: rj(2.0**-168, 2.0**-362, 2.0**-129, -2.0**578, check=False))))

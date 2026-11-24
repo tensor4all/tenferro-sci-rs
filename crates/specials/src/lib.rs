@@ -808,6 +808,13 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 /// xsf treats as zero) next to arguments below about 2^-340 or above about
 /// 2^340: there it returns NaN, as SciPy does.
 ///
+/// For `p < 0`, both paths evaluate the principal value by a transformation
+/// (DLMF 19.20.14 for `Df64`, Carlson 1995 Eq. 2.26 in xsf) that cancels
+/// catastrophically when `|p|` is far below `y` and the arguments spread
+/// widely. Where the arguments are scaled, such a value is NaN; at arguments
+/// within 2^±300 it is returned as computed and can be wrong, in both paths
+/// and in SciPy (see `docs/upstream-issues.md`).
+///
 /// # Examples
 ///
 /// ```
