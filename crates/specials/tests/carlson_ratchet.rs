@@ -23,13 +23,15 @@
 //! `p <= 1e-9` and `y <= 1e-26`); `xsf_tiny_y` (a known xsf error, see
 //! [`f64_tolerance`]); `principal_value` (`p < 0`, well conditioned up to
 //! 2^±520, and cancelling ones beyond 2^±300); `kept_xsf` (values the `f64`
-//! window keeps from xsf); `pv_ill_conditioned` (NaN or the value).
+//! window keeps from xsf); `pv_ill_conditioned` (NaN or the value);
+//! `f64_top_range` (R_C and R_F in the top binades, where xsf returns NaN or
+//! 0, and their accurate neighbors).
 //!
 //! Both strategies: `f64` takes `Strategy::F64Kernels` (the xsf port, where the
 //! threshold band lives) and runs in every configuration; `xprec::Df64` takes
 //! `Strategy::Adaptive` (the duplication algorithms, where the generic overflow
 //! lived) and needs the `xprec` feature (on by default). Only the `Df64` tests
-//! are gated, so `cargo test --no-default-features` still runs the four `f64`
+//! are gated, so `cargo test --no-default-features` still runs the five `f64`
 //! tests.
 //!
 //! Checks:
@@ -40,7 +42,9 @@
 //!   strategy where the crate documents NaN; a finite value must then still be
 //!   within tolerance.
 //! * [`f64_matches_scipy`]: the `f64` path against SciPy 1.16.3 wherever it
-//!   does not scale the arguments.
+//!   does not scale the arguments, including SciPy's NaN and 0.
+//! * [`window_mirror_matches_source`]: the copy of the `f64` window rule that
+//!   the tolerances use still matches `src/xsf/carlson.rs`.
 //! * [`f64_homogeneity`], `df64_homogeneity` and the `beyond_spread_600`
 //!   pair: `R(λ a) = λ^d R(a)` (`d = -1/2` for R_C and R_F, `-3/2` for R_D and
 //!   R_J, `1/2` for R_G; DLMF 19.16.1-19.16.5) for `λ = 2^e` over the whole
@@ -121,12 +125,18 @@ fn rel<T: Real>(got: T, want: (f64, f64)) -> f64 {
     ((got - w) / w).abs().approx_f64()
 }
 
+/// `UNSCALED_BITS` and `AGREE` of `src/xsf/carlson.rs`, which this file mirrors
+/// in [`f64_window`] and the tolerances; [`window_mirror_matches_source`] fails
+/// when the source changes them.
+const WINDOW_BITS: i32 = 300;
+const AGREE: f64 = 1e-10;
+
 /// Whether the `f64` R_G or R_J scales `args` (`Scaling::Window` in
 /// `xsf::carlson`, as documented on [`specials::elliprj`]): a nonzero
 /// argument beyond 2^±300, none subnormal, and exponents at most 600 apart.
 /// The result is then xsf's value at one of two scales, kept from the
 /// unscaled one unless the independent evaluation shows it off by more than
-/// 1e-10: its documented accuracy is 1e-10.
+/// [`AGREE`]: its documented accuracy is 1e-10.
 fn f64_window(name: &str, args: &[f64]) -> bool {
     if !matches!(name, "elliprg" | "elliprj") || args.iter().any(|v| v.is_subnormal()) {
         return false;
@@ -137,7 +147,9 @@ fn f64_window(name: &str, args: &[f64]) -> bool {
         .map(|v| v.abs().log2().floor() as i32)
         .collect();
     match (exps.iter().max(), exps.iter().min()) {
-        (Some(&max), Some(&min)) => (max > 300 || min < -300) && max - min <= 600,
+        (Some(&max), Some(&min)) => {
+            (max > WINDOW_BITS || min < -WINDOW_BITS) && max - min <= 2 * WINDOW_BITS
+        }
         _ => false,
     }
 }
@@ -168,10 +180,17 @@ const EPS_DF64: f64 = 2.465_190_328_815_662e-32;
 ///   that bound and the parity with SciPy, not an accuracy the code can reach.
 /// * `f64` R_G and R_J where the `f64` path scales ([`f64_window`]): 1e-10,
 ///   the documented accuracy of a value kept from xsf's unscaled evaluation.
-/// * R_J with `p < 0`: at least `4 cond ε`, with `cond` the condition number
-///   of the transformation the strategy evaluates (Eq. 2.26 in `f64`, DLMF
-///   19.20.14 in `Df64`) and `ε` its epsilon: the three terms cancel, and no
-///   evaluation of them does better.
+/// * `f64` R_C and R_F in `f64_top_range`: NaN or 0 is accepted where the row
+///   allows NaN (xsf overflows in a sum of the arguments; [`F64_TOP_BITS`]);
+///   SciPy gives the same NaN and 0, which [`f64_matches_scipy`] pins.
+/// * R_J with `p < 0`: `4 cond ε`, with `cond` the condition number of the
+///   transformation the strategy evaluates (Eq. 2.26 in `f64`, DLMF 19.20.14
+///   in `Df64`) and `ε` its epsilon, since the three terms cancel and no
+///   evaluation of them does better; but never more than 1e-10. Where the
+///   crate scales, it returns NaN once the cancellation can cost more than a
+///   relative 1e-10, so a finite value must be within that; the
+///   ill-conditioned rows (condition numbers up to 1e91) are thus NaN or
+///   within 1e-10, never a wrong number.
 fn f64_tolerance(r: &Row) -> f64 {
     let (name, regime, a) = (r.name.as_str(), r.regime.as_str(), &r.args);
     let mut tf = if name == "elliprj" { 2e-14 } else { 1e-15 };
@@ -190,17 +209,21 @@ fn f64_tolerance(r: &Row) -> f64 {
         tf = tf.max(1e-10);
     }
     if name == "elliprj" && a[3] < 0.0 {
-        tf = tf.max(4.0 * r.cond_carlson * EPS_F64);
+        tf = tf.max((4.0 * r.cond_carlson * EPS_F64).min(PV_MAX));
     }
     tf
 }
 
-/// The `Df64` counterpart of [`f64_tolerance`]: 1e-30, and `4 cond ε` for a
-/// principal value.
+/// The largest tolerance of a principal value: the documented 1e-10 above
+/// which a scaling path returns NaN (`pv_ill_conditioned` in the crate).
+const PV_MAX: f64 = 1e-10;
+
+/// The `Df64` counterpart of [`f64_tolerance`]: 1e-30, and `4 cond ε`, at
+/// most [`PV_MAX`], for a principal value.
 #[cfg(feature = "xprec")]
 fn df64_tolerance(r: &Row) -> f64 {
     if r.name == "elliprj" && r.args[3] < 0.0 {
-        1e-30_f64.max(4.0 * r.cond_dlmf * EPS_DF64)
+        1e-30_f64.max((4.0 * r.cond_dlmf * EPS_DF64).min(PV_MAX))
     } else {
         1e-30
     }
@@ -219,7 +242,8 @@ fn check_table<T: Real>(label: &str, tolerance: fn(&Row) -> f64, nan_ok: fn(&Row
     let rows = table();
     assert!(rows.len() > 600, "{} rows", rows.len());
     let mut failures = Vec::new();
-    // (regime, function) -> (worst error over non-NaN results, NaN results, rows)
+    // (regime, function) -> (worst error over the other results, NaN or
+    // excused results, rows)
     let mut worst: std::collections::BTreeMap<(&str, &str), (f64, usize, usize)> =
         Default::default();
     for r in &rows {
@@ -230,13 +254,15 @@ fn check_table<T: Real>(label: &str, tolerance: fn(&Row) -> f64, nan_ok: fn(&Row
         let w = worst
             .entry((r.regime.as_str(), r.name.as_str()))
             .or_default();
+        // In `f64_top_range` the documented failure includes 0 (xsf).
+        let excused = nan_ok && (got.is_nan() || (r.regime == "f64_top_range" && got == T::zero()));
         w.2 += 1;
-        if got.is_nan() {
+        if got.is_nan() || excused {
             w.1 += 1;
         } else {
             w.0 = w.0.max(e);
         }
-        if !(got.is_nan() && nan_ok) && !within(e, tol) {
+        if !excused && !within(e, tol) {
             failures.push(format!(
                 "line {} {} {label} {}{:?} = {:e}, mpmath {:e}, error {e:.2e} > {tol:.1e}",
                 r.line,
@@ -248,7 +274,7 @@ fn check_table<T: Real>(label: &str, tolerance: fn(&Row) -> f64, nan_ok: fn(&Row
             ));
         }
     }
-    println!("{label}: worst relative error against mpmath (NaN results / rows):");
+    println!("{label}: worst relative error against mpmath (NaN or excused 0 / rows):");
     for ((regime, name), (e, nans, n)) in &worst {
         println!("  {regime:18} {name:8} {e:8.1e} ({nans:2}/{n:3})");
     }
@@ -287,6 +313,8 @@ fn f64_matches_scipy() {
         let tol = if r.name == "elliprj" { 2e-15 } else { 1e-15 };
         let ok = if r.scipy.is_nan() {
             f.is_nan()
+        } else if r.scipy == 0.0 {
+            f == 0.0
         } else {
             ((f - r.scipy) / r.scipy).abs() <= tol
         };
@@ -305,6 +333,28 @@ fn f64_matches_scipy() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// [`f64_window`], [`WINDOW_BITS`] and [`AGREE`] mirror private items of
+/// `src/xsf/carlson.rs` (`scaling`, `UNSCALED_BITS`, `AGREE`), which an
+/// integration test cannot call. If one of them changes, the tolerances here
+/// would silently score a different set of rows at 1e-10, so this fails until
+/// the mirror is updated with it.
+#[test]
+fn window_mirror_matches_source() {
+    let src = include_str!("../src/xsf/carlson.rs");
+    for needle in [
+        format!("const UNSCALED_BITS: i32 = {WINDOW_BITS};"),
+        format!("const AGREE: f64 = {AGREE:e};"),
+        "|| (max <= UNSCALED_BITS && min >= -UNSCALED_BITS)".to_string(),
+        "|| max - min > 2 * UNSCALED_BITS".to_string(),
+        "if v.is_subnormal() {\n            return Scaling::None;".to_string(),
+    ] {
+        assert!(
+            src.contains(&needle),
+            "src/xsf/carlson.rs no longer contains {needle:?}: update f64_window"
+        );
+    }
 }
 
 // --- homogeneity ---------------------------------------------------------------
@@ -339,8 +389,9 @@ fn pow2(e: i32) -> f64 {
 /// of their arguments and return NaN or 0 (SciPy 1.16.3 gives the same values;
 /// `docs/upstream-issues.md`, "`elliprj` is NaN for one huge ..."): for example
 /// `elliprc(2^1022, -2^1022)` is NaN and `elliprf(2^1022, 2^1023, 3 2^1022)`
-/// is NaN. There [`f64_homogeneity`] accepts NaN or 0 from `f64`, never a wrong
-/// nonzero value. The `Df64` path is checked up to `f64::MAX`.
+/// is NaN, pinned with SciPy's values by the `f64_top_range` rows. There
+/// [`f64_homogeneity`] accepts NaN or 0 from `f64`, never a wrong nonzero
+/// value. The `Df64` path is checked up to `f64::MAX`.
 const F64_TOP_BITS: f64 = 1022.0;
 
 /// Exponent spread, in bits, of the nonzero arguments.
@@ -591,9 +642,17 @@ fn df64_homogeneity_beyond_spread_600() {
     for (name, a) in beyond_600_bases() {
         let d: Vec<Df64> = a.iter().map(|&v| Df64::from(v)).collect();
         if name == "elliprj" {
-            // The exponents of the f64 value: the range of the arguments and
-            // the result is the same.
-            let es = exponents(name, &a, eval(name, &a));
+            // Every exponent that keeps the arguments normal, whatever the
+            // result: NaN is expected at all of them.
+            let es: Vec<i32> = (-1100..=1100)
+                .step_by(2)
+                .filter(|&e| {
+                    a.iter().filter(|v| **v != 0.0).all(|v| {
+                        let l = v.abs().log2() + f64::from(e);
+                        (-1022.0..1024.0).contains(&l)
+                    })
+                })
+                .collect();
             assert!(!es.is_empty(), "{name}{a:?}");
             for e in es {
                 let s: Vec<Df64> = d.iter().map(|&v| v * Df64::from(pow2(e))).collect();
