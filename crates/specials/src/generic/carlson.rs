@@ -391,7 +391,7 @@ fn rj_scale_exponent<T: Real>(args: &[T]) -> i32 {
 }
 
 /// Largest exponent, in bits, of an argument R_J evaluates unscaled: the
-/// cubes `p (p + λ)²` and `(p Σ√x)²` then stay within 2^±900.
+/// cubes `p (p + λ)²` and `(p Σ√x)²` then stay within about 2^±905.
 const RJ_UNSCALED_BITS: f64 = 300.0;
 
 fn rj_scaled<T: Real>(x: T, y: T, z: T, p: T) -> T {

@@ -113,6 +113,19 @@ def main() -> None:
     # Carlson (1995) Eq. 2.26 is (in `rj`).
     print("elliprj", "(2^-201, 1, 2^399, -2^399)",
           dd(stable(lambda: rj(2.0**-201, 1.0, t, -t, check=False))))
+    # The wide-ratio arms of the f64 `scale_exponent` (ratios beyond 2^600):
+    # scaled down from 2^381 with 2^-900 kept above 2^-1000, and scaled up to
+    # 2^-300 from 2^-350.4.
+    h = 2.0**380
+    print("elliprj", "(2^-900, 2^380, 2^381, 3*2^380)",
+          dd(stable(lambda: rj(2.0**-900, h, 2 * h, 3 * h))))
+    print("elliprj", "(2^-900, 2^380, 2^381, -3*2^380)",
+          dd(stable(lambda: rj(2.0**-900, h, 2 * h, -3 * h, check=False))))
+    t = 2.0**-352
+    print("elliprj", "(2^-1000, 2^-352, 2^-351, 3*2^-352)",
+          dd(stable(lambda: rj(2.0**-1000, t, 2 * t, 3 * t))))
+    print("elliprg", "(2^-900, 2^560, 2^561)",
+          dd(stable(lambda: mp.elliprg(2.0**-900, 2.0**560, 2.0**561))))
 
 
 if __name__ == "__main__":

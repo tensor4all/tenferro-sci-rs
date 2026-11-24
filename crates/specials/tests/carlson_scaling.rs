@@ -244,26 +244,36 @@ fn f64_keeps_xsf_subnormal_as_zero() {
     assert!(specials::elliprj(p(-1060), p(-1060), p(-1023), p(-1023)).is_nan());
 }
 
-/// The documented limit of the `f64` R_J: up to a largest argument of about
-/// 2^338 above a smallest one of 2^-1000 it is accurate (here against
-/// R_J(x, y, z, z) = R_D(x, y, z), DLMF 19.20.18, with the `f64` tolerance of
-/// R_J); beyond it the arguments cannot all be scaled into range, and the
-/// result is NaN, as in SciPy, not a wrong finite value.
+/// The two wide-ratio arms of the `f64` scaling (ratios beyond 2^600, where
+/// the arguments cannot be centered within 2^±300): the largest scaled down
+/// from 2^381 as far as 2^-900 stays above 2^-1000, and the largest scaled up
+/// from 2^-350.4 to 2^-300. NaN on `main`. `f64` only: these arms are in the
+/// xsf wrappers, and the `Df64` R_J returns NaN beyond a ratio of 2^600 by
+/// design. References: mpmath 1.3.0, `scripts/gen_carlson_scaling.py` (for
+/// `p < 0`, DLMF 19.20.14 checked against Carlson 1995 Eq. 2.26).
 #[test]
-fn f64_elliprj_spread_limit() {
-    let x = pow2(-1000);
-    for e in [300, 320, 336] {
-        let h = pow2(e);
-        let rj = specials::elliprj(x, h, h, h);
-        let rd = specials::elliprd(x, h, h);
-        let err = ((rj - rd) / rd).abs();
+fn f64_wide_ratio_arms() {
+    let h = pow2(380);
+    let t = pow2(-352);
+    let rj: [([f64; 4], f64); 3] = [
+        ([pow2(-900), h, 2.0 * h, 3.0 * h], 2.010295496314046e-172),
+        ([pow2(-900), h, 2.0 * h, -3.0 * h], -2.2977297286893855e-172),
+        ([pow2(-1000), t, 2.0 * t, 3.0 * t], 6.826453538994934e+158),
+    ];
+    for (a, want) in rj {
+        let got = specials::elliprj(a[0], a[1], a[2], a[3]);
+        let err = ((got - want) / want).abs();
         assert!(
             err <= f64_tol("elliprj"),
-            "2^{e}: R_J {rj:e}, R_D {rd:e}, error {err:e}"
+            "elliprj{a:?} = {got:e}, error {err:e}"
         );
     }
-    for e in [344, 400] {
-        let h = pow2(e);
-        assert!(specials::elliprj(x, h, h, h).is_nan(), "2^{e}");
-    }
+    let a = [pow2(-900), pow2(560), pow2(561)];
+    let want = 1.8553448517234111e+84;
+    let got = specials::elliprg(a[0], a[1], a[2]);
+    let err = ((got - want) / want).abs();
+    assert!(
+        err <= f64_tol("elliprg"),
+        "elliprg{a:?} = {got:e}, error {err:e}"
+    );
 }
