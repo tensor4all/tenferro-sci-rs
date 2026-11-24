@@ -759,9 +759,9 @@ pub fn elliprf<T: Real>(x: T, y: T, z: T) -> T {
 /// (DLMF 19.16.3), symmetric in its arguments.
 ///
 /// Defined for `x, y, z >= 0`; `+∞` if an argument is infinite, NaN for a
-/// negative argument. The `f64` path does not handle a largest argument of
-/// 2^512 or more with the smallest nonzero one 2^1512 or more below it: there
-/// it returns NaN, as SciPy does.
+/// negative argument. The `f64` path does not handle a largest argument above
+/// about 2^512 with the smallest nonzero one more than about 2^1512 below it:
+/// there it returns NaN, as SciPy does.
 ///
 /// # Examples
 ///
@@ -798,10 +798,10 @@ pub fn elliprg<T: Real>(x: T, y: T, z: T) -> T {
 ///
 /// The `f64` path scales its arguments by a power of four when one lies
 /// beyond 2^±300, so that the products xsf forms stay in range. It does not
-/// handle a largest argument of 2^337 or more with the smallest nonzero one
-/// 2^1337 or more below it (`elliprj(2^-1000, 2^400, 2^400, 2^400)`), nor an
-/// argument above about 2^337 next to a subnormal one (which xsf treats as
-/// zero): there it returns NaN, as SciPy does.
+/// handle a largest argument above about 2^340 with the smallest nonzero one
+/// more than about 2^1340 below it (`elliprj(2^-1000, 2^400, 2^400, 2^400)`),
+/// nor an argument above about 2^340 next to a subnormal one (which xsf
+/// treats as zero): there it returns NaN, as SciPy does.
 ///
 /// # Examples
 ///
