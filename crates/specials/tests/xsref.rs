@@ -16,15 +16,19 @@
 //!   (poles, outside the domain, non-finite inputs), the `Df64` result rounded
 //!   to `f64` must satisfy xsf's criterion against SciPy's value, i.e. the
 //!   double-double path returns the same special values as SciPy.
-
-// These tests exercise `xprec::Df64`.
-#![cfg(feature = "xprec")]
+//!
+//! `f64_matches_xsref` and `tolerance_is_the_gcc_column_on_every_platform` run
+//! in every configuration; the two `Df64` tests need the `xprec` feature (on by
+//! default).
 
 #[path = "../src/refdata.rs"]
 mod refdata;
 
-use refdata::{adjust_tolerance, error, extended_relative_error, xsref_rows};
+#[cfg(feature = "xprec")]
+use refdata::error;
+use refdata::{adjust_tolerance, extended_relative_error, xsref_rows};
 use specials::Real;
+#[cfg(feature = "xprec")]
 use xprec::Df64;
 
 fn eval<T: Real>(name: &str, a: &[T]) -> T {
@@ -146,6 +150,7 @@ fn f64_matches_xsref() {
 }
 
 /// Tolerance of the `Df64` result against the mpmath value.
+#[cfg(feature = "xprec")]
 fn dd_tolerance(name: &str, args: &[f64]) -> f64 {
     match name {
         "gamma" | "lgamma" | "rgamma" | "digamma" | "zeta" => 1e-29,
@@ -171,6 +176,7 @@ fn dd_tolerance(name: &str, args: &[f64]) -> f64 {
     }
 }
 
+#[cfg(feature = "xprec")]
 #[test]
 fn df64_matches_mpmath_on_xsref_points() {
     let mut report = Report::default();
@@ -206,6 +212,7 @@ fn df64_matches_mpmath_on_xsref_points() {
     report.assert_empty("Df64 against mpmath");
 }
 
+#[cfg(feature = "xprec")]
 #[test]
 fn df64_matches_xsref_where_mpmath_is_undefined() {
     let mut report = Report::default();

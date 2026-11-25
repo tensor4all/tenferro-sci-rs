@@ -58,39 +58,43 @@ where they pin a boundary. A random sweep complements this set.
 - Store fixtures and versioned regeneration scripts with the tests. A
   regression test for a fix must fail on the old behavior. Record skipped
   cases and why they are skipped.
-- Check which configuration actually runs a test before citing it. When
-  this guide was written (`main` at `8bf9363`), the five suites with the
-  public-API `f64` reference and parity rows of the ported functions were
-  gated as a whole file by `#![cfg(feature = "xprec")]`:
-  `crates/specials/tests/reference.rs`, `xsref.rs`, `xsf_regressions.rs`,
-  `review_regressions.rs` and `carlson_scaling.rs`. Under
-  `cargo test -p specials --no-default-features` these files compile to zero
-  tests. What still runs there: two unit tests,
-  `generic_algorithms_in_f64_match_mpmath` (the adaptive algorithms
-  instantiated with `f64`, not the public `f64` dispatch) and
-  `sinpi_is_exact_at_half_integers_and_odd_in_x` (the third,
-  `near_diagonal_matches_the_recurrence`, is gated); the ungated
-  `tests/few_special_functions.rs` (the public re-exported families against
-  mpmath); and the doc tests. The doc-test count is 32 in both
-  configurations, because examples such as the double-double one in
-  `src/lib.rs` and a line in `src/real.rs` sit behind
-  `# #[cfg(feature = "xprec")]` and assert nothing without the feature, so
-  that count does not show what was checked. A green run without `xprec` is
-  therefore no evidence for the rows of the five gated files; cite the
-  default-feature run, with the test names, for them. A failure without
-  `xprec` is real evidence, like any other. Check the `running N tests` lines,
-  and which assertions a passing test contains, rather than assuming a file
-  ran.
+- Check which configuration actually runs a test before citing it. Until
+  #30, the five suites with the public-API `f64` reference and parity rows
+  (`crates/specials/tests/reference.rs`, `xsref.rs`, `xsf_regressions.rs`,
+  `review_regressions.rs`, `carlson_scaling.rs`) were gated as a whole file by
+  `#![cfg(feature = "xprec")]` and compiled to zero tests under
+  `cargo test -p specials --no-default-features`. They now gate only their
+  `Df64` items, so their `f64` rows run in both configurations (counts at
+  #30: 65 tests in those five files without `xprec`, 73 with it). The tests
+  that still need `xprec`, and why:
+
+  | File | Tests that need `xprec` | Why |
+  | --- | --- | --- |
+  | `reference.rs` | `df64_matches_mpmath`, `df64_elliprj_ratio_limit_is_fail_fast` | Their tolerances (1e-29 to 1e-30) and the `R_J` ratio limit are statements about `Df64`. `special_values_match_scipy` and `stirling2_df64_beyond_the_work_limit_is_exact` run their `f64` halves without the feature. |
+  | `xsref.rs` | `df64_matches_mpmath_on_xsref_points`, `df64_matches_xsref_where_mpmath_is_undefined` | They check the double-double results; `f64_matches_xsref` covers every xsref row in `f64`. |
+  | `xsf_regressions.rs` | none | Every test runs its `f64` case; `for_both!` adds the `Df64` case with the feature. |
+  | `review_regressions.rs` | `n4_digammainv_df64_holds_1e_30_below_minus_1e154`, `n7_stirling2_df64_keeps_the_low_word_of_large_arguments`, `n8_poch_df64_subnormal_a`, `strategies_agree_on_extreme_arguments` | `n4`, `n7` and `n8` are `Df64`-only findings with 1e-29/1e-30 tolerances; the agreement grid compares `f64` with `Df64`. The other seven tests run their `f64` assertions. |
+  | `carlson_scaling.rs` | none | Every test checks `f64`; the `Df64` half of each needs the feature. |
+  | `carlson_ratchet.rs` | `df64_homogeneity`, `df64_homogeneity_beyond_spread_600`, `df64_reference_table` | `Df64` only, as before #30. |
+
+  A test name that says `df64` but runs without `xprec` (for example
+  `n1_zetac_df64_is_minus_infinity_where_f64_is`) checks only its `f64`
+  assertions there. The unit test `near_diagonal_matches_the_recurrence` is
+  also gated. The doc-test count is 32 in both configurations, because
+  examples such as the double-double one in `src/lib.rs` and a line in
+  `src/real.rs` sit behind `# #[cfg(feature = "xprec")]` and assert nothing
+  without the feature, so that count does not show what was checked. Check the
+  `running N tests` lines, and which assertions a passing test contains,
+  rather than assuming a file ran.
 - To make a new test cover `f64` without `xprec`, gate only its `Df64` items
-  and show its test names, with a nonzero count, in the
-  `--no-default-features` output. The existing suites above do not do this
-  yet; [#30](https://github.com/tensor4all/tenferro-sci-rs/issues/30) tracks
-  restructuring them. Update this item when it lands.
+  (`#[cfg(feature = "xprec")]` on the item, or on a block inside the test),
+  never the whole file, and show its test names, with a nonzero count, in the
+  `--no-default-features` output.
 - CI (`.github/workflows/checks.yml`) builds and tests only the default
-  features, which include `xprec`. No lane builds or tests
-  `--no-default-features`, and the PR template does not ask for such a run, so
-  nothing checks that configuration unless someone runs it (#30 above also
-  covers adding a lane).
+  features, which include `xprec`. No lane runs
+  `cargo test -p specials --no-default-features` yet (#32 tracks adding one),
+  so that configuration is checked only when someone runs it locally, with
+  the per-file test counts above.
 
 ## Check numerical range and computational work
 
