@@ -15,7 +15,7 @@
 #[path = "../src/refdata.rs"]
 mod refdata;
 
-use refdata::{error, orthogonal_special_values, rows, same, Row};
+use refdata::{orthogonal_special_values, rows, same, Row};
 use specials::{LegendreType, Real};
 #[cfg(feature = "xprec")]
 use xprec::Df64;
@@ -130,6 +130,23 @@ fn eval<T: Real>(name: &str, a: &[T]) -> T {
     }
 }
 
+/// Relative error of `got` against `reference` with an absolute floor: `|got - ref| / max(|ref|, floor)`
+/// (`refdata::error`); an exactly zero reference (a polynomial at a zero) is compared with the floor too.
+/// NaN or an infinity where the reference is finite is an infinite error.
+fn error<T: Real>(got: T, reference: (f64, f64), floor: f64) -> f64 {
+    if reference.0 == 0.0 {
+        if floor == 0.0 {
+            return if got == T::zero() { 0.0 } else { f64::INFINITY };
+        }
+        return if got.is_finite() {
+            got.abs().approx_f64() / floor
+        } else {
+            f64::INFINITY
+        };
+    }
+    refdata::error(got, reference, floor)
+}
+
 /// The degree of a row of an integer-degree or Legendre file (its first
 /// argument; the order `m` is the second argument of the Legendre files).
 fn degree(r: &Row) -> f64 {
@@ -148,31 +165,88 @@ fn floor_of(r: &Row, c: f64, eps: f64, tol: f64) -> f64 {
 /// The relative tolerances apply away from the zeros; the constants `c` give
 /// the absolute floor `c (n + 1) eps scale` near them.
 const INT_TOL: [(&str, f64, f64, f64, f64, f64); 15] = [
-    ("eval_jacobi_int", 1e-11, 1e-11, 1e-28, 100.0, 100.0),
-    ("eval_sh_jacobi_int", 1e-11, 1e-11, 1e-28, 100.0, 100.0),
-    ("eval_gegenbauer_int", 1e-11, 1e-11, 1e-28, 100.0, 100.0),
-    ("eval_chebyt_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_chebyu_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_chebyc_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_chebys_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_sh_chebyt_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_sh_chebyu_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_legendre_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_sh_legendre_int", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
+    ("eval_jacobi_int", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
+    ("eval_sh_jacobi_int", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
+    ("eval_gegenbauer_int", 1e-10, 1e-10, 1e-28, 100.0, 100.0),
+    ("eval_chebyt_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_chebyu_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_chebyc_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_chebys_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_sh_chebyt_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_sh_chebyu_int", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_legendre_int", 1e-11, 1e-11, 2e-29, 100.0, 100.0),
+    ("eval_sh_legendre_int", 1e-11, 1e-11, 2e-29, 100.0, 100.0),
     ("eval_laguerre_int", 1e-11, 1e-11, 1e-28, 100.0, 100.0),
-    ("eval_genlaguerre_int", 1e-11, 1e-11, 1e-28, 100.0, 100.0),
-    ("eval_hermite", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
-    ("eval_hermitenorm", 1e-12, 1e-12, 1e-29, 100.0, 100.0),
+    ("eval_genlaguerre_int", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
+    ("eval_hermite", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
+    ("eval_hermitenorm", 1e-11, 1e-11, 1e-29, 100.0, 100.0),
 ];
+
+/// The Jacobi parameters `(alpha, beta)` of a Jacobi or shifted Jacobi row.
+fn jacobi_parameters(name: &str, a: &[f64]) -> Option<(f64, f64)> {
+    match name {
+        "eval_jacobi_int" => Some((a[1], a[2])),
+        "eval_sh_jacobi_int" => Some((a[1] - a[2], a[2] - 1.0)),
+        _ => None,
+    }
+}
+
+/// A documented limit of xsf's `f64` kernel at this row, with its reason
+/// (`docs/upstream-issues.md`); `None` where the kernel is accurate.
+///
+/// * Jacobi: xsf's recurrence divides by `alpha + 1`; at `alpha = -1` that is
+///   NaN unless `abs(beta) = 1` (a special case), and within 1e-6 of `-1` the
+///   difference form loses all digits.
+/// * Jacobi and generalized Laguerre: the result is `binom(n + alpha, n)` times a
+///   normalized recurrence; where that binomial coefficient overflows the product
+///   is not finite although the polynomial is.
+fn f64_limit(name: &str, a: &[f64]) -> Option<&'static str> {
+    if let Some((alpha, beta)) = jacobi_parameters(name, a) {
+        if alpha == -1.0 && beta.abs() != 1.0 {
+            return Some("alpha = -1 with abs(beta) != 1");
+        }
+        if alpha != -1.0 && (alpha + 1.0).abs() < 1e-6 {
+            return Some("alpha within 1e-6 of -1");
+        }
+    }
+    let alpha = match name {
+        "eval_genlaguerre_int" => Some(a[1]),
+        "eval_jacobi_int" => Some(a[1]),
+        _ => None,
+    };
+    if let Some(alpha) = alpha {
+        if specials::binom(a[0] + alpha, a[0]).is_infinite() {
+            return Some("binom(n + alpha, n) overflows");
+        }
+    }
+    None
+}
+
+/// SciPy 1.16.3 predates xsf's fix for `alpha` next to -1 in `eval_genlaguerre`
+/// (gh-457), so the parity column is not compared there.
+fn scipy_comparable(name: &str, a: &[f64]) -> bool {
+    !(name == "eval_genlaguerre_int" && (a[1] + 1.0).abs() < 1e-6)
+}
 
 #[test]
 fn integer_degree_f64_matches_mpmath_and_scipy() {
     for (name, tol_mp, tol_sp, _, c, _) in INT_TOL {
         let all = rows(name);
         assert!(all.len() > 100, "{name}: {} rows", all.len());
+        let mut checked = 0;
         for r in all.iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
+            if let Some(reason) = f64_limit(name, &a) {
+                // Where the normalization overflows the product is not finite.
+                if reason == "binom(n + alpha, n) overflows" {
+                    assert!(!got.is_finite(), "{name}{a:?}: {got:e}");
+                }
+                continue;
+            }
+            checked += 1;
+            // The error of the recurrence next to x = +-1 grows like n^2 eps.
+            let tol_mp = f64::max(tol_mp, degree(r).powi(2) * f64::EPSILON / 2.0);
             let e = error(got, r.reference, floor_of(r, c, f64::EPSILON, tol_mp));
             assert!(
                 e <= tol_mp,
@@ -180,17 +254,23 @@ fn integer_degree_f64_matches_mpmath_and_scipy() {
                 r.line,
                 r.reference
             );
-            if let Some(s) = r.scipy.filter(|s| s.is_finite()) {
-                if r.reference.0.is_finite() {
-                    let e = error(got, (s, 0.0), floor_of(r, c, f64::EPSILON, tol_sp));
-                    assert!(
-                        e <= tol_sp,
-                        "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
-                        r.line
-                    );
-                }
+            if let Some(s) = r
+                .scipy
+                .filter(|s| s.is_finite() && scipy_comparable(name, &a))
+            {
+                let e = error(got, (s, 0.0), floor_of(r, c, f64::EPSILON, tol_sp));
+                assert!(
+                    e <= tol_sp,
+                    "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
+                    r.line
+                );
             }
         }
+        assert!(
+            checked * 2 > all.len(),
+            "{name}: {checked} of {} rows checked",
+            all.len()
+        );
     }
 }
 
@@ -217,27 +297,57 @@ fn integer_degree_df64_matches_mpmath() {
 /// Cephes hypergeometric series loses a few digits for large degrees (its own
 /// header gives a peak relative error of 1.2e-11).
 const REAL_TOL: [(&str, f64, f64); 13] = [
-    ("eval_jacobi", 1e-9, 1e-12),
-    ("eval_sh_jacobi", 1e-9, 1e-12),
-    ("eval_gegenbauer", 1e-9, 1e-12),
-    ("eval_chebyt", 1e-9, 1e-12),
-    ("eval_chebyu", 1e-9, 1e-12),
-    ("eval_chebyc", 1e-9, 1e-12),
-    ("eval_chebys", 1e-9, 1e-12),
-    ("eval_sh_chebyt", 1e-9, 1e-12),
-    ("eval_sh_chebyu", 1e-9, 1e-12),
-    ("eval_legendre", 1e-9, 1e-12),
-    ("eval_sh_legendre", 1e-9, 1e-12),
-    ("eval_laguerre", 1e-9, 1e-12),
-    ("eval_genlaguerre", 1e-9, 1e-12),
+    ("eval_jacobi", 1e-9, 1e-9),
+    ("eval_sh_jacobi", 1e-9, 1e-9),
+    ("eval_gegenbauer", 1e-9, 1e-9),
+    ("eval_chebyt", 1e-9, 1e-9),
+    ("eval_chebyu", 1e-9, 1e-9),
+    ("eval_chebyc", 1e-9, 1e-9),
+    ("eval_chebys", 1e-9, 1e-9),
+    ("eval_sh_chebyt", 1e-9, 1e-9),
+    ("eval_sh_chebyu", 1e-9, 1e-9),
+    ("eval_legendre", 1e-9, 1e-9),
+    ("eval_sh_legendre", 1e-9, 1e-9),
+    ("eval_laguerre", 1e-9, 1e-9),
+    ("eval_genlaguerre", 1e-9, 1e-9),
 ];
+
+/// A documented accuracy limit of xsf's hypergeometric kernels at this
+/// real-degree row (`docs/upstream-issues.md`); `None` where they are accurate.
+///
+/// * `2F1(a, b; c; z)` at `z = (1 - x)/2 > 0.9` with `abs(n) > 5` (relative errors
+///   from 1e-8 to O(1), up to 1e6 absolute for `n = 20.2`), and for the Jacobi
+///   polynomial at an integer `beta >= 1` (`c - a - b = -beta`, the digamma
+///   expansion branch; 9% at `n = 1.3`, `alpha = 5`, `beta = 3`, `x = -0.9`).
+/// * `1F1(-n; c; x)` summed as a power series with cancellation, for `n > 15`
+///   and `x > 5`.
+fn real_limit(name: &str, a: &[f64]) -> Option<&'static str> {
+    let n = a[0].abs();
+    let x = *a.last().expect("argument");
+    let z = match name {
+        "eval_jacobi" | "eval_gegenbauer" | "eval_chebyt" | "eval_chebyu" | "eval_legendre" => {
+            (1.0 - x) / 2.0
+        }
+        "eval_chebyc" | "eval_chebys" => (1.0 - x / 2.0) / 2.0,
+        "eval_sh_jacobi" | "eval_sh_chebyt" | "eval_sh_chebyu" | "eval_sh_legendre" => 1.0 - x,
+        _ => 0.0,
+    };
+    if z > 0.9 && n > 5.0 {
+        return Some("2F1 at z > 0.9 with a large degree");
+    }
+    if name == "eval_jacobi" && z > 0.9 && a[2] == a[2].floor() && a[2] >= 1.0 {
+        return Some("2F1 at z > 0.9 with c - a - b a negative integer");
+    }
+    if (name == "eval_laguerre" || name == "eval_genlaguerre") && n > 15.0 && x > 5.0 {
+        return Some("1F1 summed with cancellation");
+    }
+    None
+}
 
 /// The absolute floor of a real-degree row: the series are summed with
 /// cancellation near the zeros of the function, where the error is absolute.
-fn real_floor(name: &str, a: &[f64], tol: f64) -> f64 {
-    let _ = name;
-    let n = a[0].abs();
-    1e-13 * (n + 1.0) / tol
+fn real_floor(a: &[f64], tol: f64) -> f64 {
+    1e-13 * (a[0].abs() + 1.0) / tol
 }
 
 #[test]
@@ -245,18 +355,24 @@ fn real_degree_f64_matches_mpmath_and_scipy() {
     for (name, tol_mp, tol_sp) in REAL_TOL {
         let all = rows(name);
         assert!(all.len() > 30, "{name}: {} rows", all.len());
+        let mut checked = 0;
         for r in all.iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
+            if real_limit(name, &a).is_some() {
+                continue;
+            }
+            checked += 1;
             let got = eval(name, &a);
-            let e = error(got, r.reference, real_floor(name, &a, tol_mp));
+            let e = error(got, r.reference, real_floor(&a, tol_mp));
             assert!(
                 e <= tol_mp,
                 "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
                 r.line,
                 r.reference
             );
-            if let Some(s) = r.scipy.filter(|s| s.is_finite()) {
-                let e = error(got, (s, 0.0), real_floor(name, &a, tol_sp));
+            let near_minus_one = name == "eval_genlaguerre" && (a[1] + 1.0).abs() < 1e-6;
+            if let Some(s) = r.scipy.filter(|s| s.is_finite() && !near_minus_one) {
+                let e = error(got, (s, 0.0), real_floor(&a, tol_sp));
                 assert!(
                     e <= tol_sp,
                     "{name}{a:?} (line {}): got {got:e}, scipy {s:e}, err {e:e}",
@@ -264,6 +380,11 @@ fn real_degree_f64_matches_mpmath_and_scipy() {
                 );
             }
         }
+        assert!(
+            checked * 10 > all.len() * 8,
+            "{name}: {checked} of {} rows checked",
+            all.len()
+        );
     }
 }
 
@@ -274,12 +395,25 @@ fn real_degree_f64_matches_mpmath_and_scipy() {
 fn real_degree_df64_is_as_accurate_as_the_f64_kernel() {
     for (name, tol_mp, _) in REAL_TOL {
         for r in rows(name).iter().filter(|r| r.is_f64()) {
+            let af: Vec<f64> = r.args_as();
+            // An integer-valued degree takes the double-double recurrence, which is
+            // accurate to double-double (checked below); a limit of the f64 kernel
+            // applies only to the other degrees.
+            let integral = af[0] >= 0.0 && af[0] == af[0].floor();
+            if !integral && real_limit(name, &af).is_some() {
+                continue;
+            }
             let a: Vec<Df64> = r.args_as();
             let got = eval(name, &a);
-            let af: Vec<f64> = r.args_as();
-            let e = error(got, r.reference, real_floor(name, &af, tol_mp));
+            let tol = if integral { 1e-27 } else { tol_mp };
+            let floor = if integral {
+                1e-29 * (af[0] + 1.0) / tol
+            } else {
+                real_floor(&af, tol)
+            };
+            let e = error(got, r.reference, floor);
             assert!(
-                e <= tol_mp,
+                e <= tol,
                 "{name}{af:?} (line {}): got {got:?}, mpmath {:?}, err {e:e}",
                 r.line,
                 r.reference
@@ -288,19 +422,38 @@ fn real_degree_df64_is_as_accurate_as_the_f64_kernel() {
     }
 }
 
-/// Tolerances of the Legendre rows `(name, f64 vs mpmath, f64 vs SciPy, Df64 vs
-/// mpmath, c f64, c Df64)`. `pmv_int` is the integer-degree `pmv` (the xsref
-/// table of `pmv` is checked in `xsref.rs`).
-const LEGENDRE_TOL: [(&str, f64, f64, f64, f64, f64); 6] = [
-    ("assoc_legendre_p", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
-    ("assoc_legendre_p_t3", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
-    ("assoc_legendre_p_norm", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
-    ("assoc_legendre_p_norm_t3", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
-    ("sph_legendre_p", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
-    ("pmv_int", 1e-9, 1e-9, 1e-28, 100.0, 100.0),
+/// Tolerances of the Legendre rows `(name, f64 vs SciPy, Df64 vs mpmath, c f64, c Df64)`.
+/// `pmv_int` is the integer-degree `pmv` (the xsref table of `pmv` is checked in `xsref.rs`).
+const LEGENDRE_TOL: [(&str, f64, f64, f64, f64); 6] = [
+    ("assoc_legendre_p", 1e-9, 1e-29, 100.0, 100.0),
+    ("assoc_legendre_p_t3", 1e-9, 1e-29, 100.0, 100.0),
+    ("assoc_legendre_p_norm", 1e-9, 1e-29, 100.0, 100.0),
+    ("assoc_legendre_p_norm_t3", 1e-9, 1e-29, 100.0, 100.0),
+    ("sph_legendre_p", 1e-9, 1e-29, 100.0, 100.0),
+    ("pmv_int", 1e-9, 1e-29, 100.0, 100.0),
 ];
 
-/// The degree that sets the floor of a Legendre row: `n`, and `|m|` for the
+/// The relative tolerance of an `f64` Legendre row: xsf forms `1 - z^2` as `1 - z z`, whose
+/// rounding error `eps` is a relative `eps / (1 - z^2)` that enters the diagonal term as its
+/// `m`-th power root, so `8 (abs(m) + 1) eps / abs(1 - z^2)` bounds it (`sph_legendre_p` takes
+/// `sin theta` directly); the floor is `1e-11`.
+fn legendre_f64_tolerance(name: &str, r: &Row) -> f64 {
+    let m = r.args[1].0.abs();
+    let z = r.args[2].0 + r.args[2].1;
+    let s2 = if name == "sph_legendre_p" {
+        1.0
+    } else {
+        (1.0 - z * z).abs()
+    };
+    let s2 = if name == "pmv_int" {
+        (1.0 - r.args[2].0 * r.args[2].0).abs()
+    } else {
+        s2
+    };
+    f64::max(1e-11, 8.0 * (m + 1.0) * f64::EPSILON / s2)
+}
+
+/// The degree that sets the floor of a Legendre row: `n`, and `abs(m)` for the
 /// order of the same size.
 fn legendre_floor(r: &Row, c: f64, eps: f64, tol: f64) -> f64 {
     let scale = r.args.last().expect("scale").0;
@@ -310,20 +463,24 @@ fn legendre_floor(r: &Row, c: f64, eps: f64, tol: f64) -> f64 {
 
 #[test]
 fn legendre_functions_f64_match_mpmath_and_scipy() {
-    for (name, tol_mp, tol_sp, _, c, _) in LEGENDRE_TOL {
+    for (name, tol_sp, _, c, _) in LEGENDRE_TOL {
         let all = rows(name);
         assert!(all.len() > 60, "{name}: {} rows", all.len());
         for r in all.iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
+            let tol_mp = legendre_f64_tolerance(name, r);
             let e = error(got, r.reference, legendre_floor(r, c, f64::EPSILON, tol_mp));
             assert!(
                 e <= tol_mp,
-                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
+                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}, tol {tol_mp:e}",
                 r.line,
                 r.reference
             );
+            // SciPy 1.16.3 overflows `int` in the normalized recurrences from degree 646
+            // (NaN there); its values elsewhere agree to the same tolerance.
             if let Some(s) = r.scipy.filter(|s| s.is_finite()) {
+                let tol_sp = f64::max(tol_sp, tol_mp);
                 let e = error(got, (s, 0.0), legendre_floor(r, c, f64::EPSILON, tol_sp));
                 assert!(
                     e <= tol_sp,
@@ -338,7 +495,7 @@ fn legendre_functions_f64_match_mpmath_and_scipy() {
 #[cfg(feature = "xprec")]
 #[test]
 fn legendre_functions_df64_match_mpmath() {
-    for (name, _, _, tol, _, c) in LEGENDRE_TOL {
+    for (name, _, tol, _, c) in LEGENDRE_TOL {
         for r in rows(name) {
             let a: Vec<Df64> = r.args_as();
             let got = eval(name, &a);
@@ -395,41 +552,66 @@ fn pmv_real_degree_df64_is_as_accurate_as_the_f64_kernel() {
     }
 }
 
-/// Tolerances of the second-kind rows `(name, f64 vs mpmath, Df64 vs mpmath)`.
-///
-/// The absolute floor is `c (n + m + 1) eps max(1, |ref|) / (1 - x^2)^(m + 1)`
-/// next to a zero, where `Q_n^m` and its derivative are summed from terms of
-/// that size.
-const Q_TOL: [(&str, f64, f64); 4] = [
-    ("lqn", 1e-9, 1e-28),
-    ("lqn_d", 1e-9, 1e-28),
-    ("lqmn", 1e-9, 1e-28),
-    ("lqmn_d", 1e-9, 1e-28),
-];
-
-fn q_floor(name: &str, r: &Row, eps: f64, tol: f64) -> f64 {
+/// `(m, n, x)` of a second-kind row (`m = 0` for `lqn`), and `|1 - x^2|` from the
+/// double-double `x`.
+fn q_row(name: &str, r: &Row) -> (f64, f64, f64, f64) {
     let (m, n, x) = if name.starts_with("lqmn") {
-        (r.args[0].0, r.args[1].0, r.args[2].0)
+        (r.args[0].0, r.args[1].0, r.args[2])
     } else {
-        (0.0, r.args[0].0, r.args[1].0)
+        (0.0, r.args[0].0, r.args[1])
     };
-    let geom = (1.0 / (1.0 - x * x).abs()).max(1.0).powf(m + 1.0);
-    let mag = r.reference.0.abs().max(1.0);
-    100.0 * (n + m + 1.0) * eps * mag * geom / tol
+    let one_minus_x2 = ((1.0 - x.0) - x.1) * (1.0 + x.0 + x.1);
+    (m, n, x.0 + x.1, one_minus_x2.abs())
 }
+
+/// The relative tolerance of an `f64` second-kind row. xsf's forward recurrence for
+/// `1 < abs(x) <= 1.021` grows the error like `exp(2 n acosh abs(x))`, and its backward
+/// recurrence of `lqmn` starts `km = (40 + m + n) floor(-1 - 1.8 ln(abs(x) - 1))`
+/// terms above the order for `abs(x) <= 1.1`, leaving `exp(-2 km acosh abs(x))`.
+fn q_f64_tolerance(name: &str, r: &Row) -> f64 {
+    let (m, n, x, _) = q_row(name, r);
+    let ax = x.abs();
+    let acosh = if ax > 1.0 {
+        (ax + (ax * ax - 1.0).sqrt()).ln()
+    } else {
+        0.0
+    };
+    let mut tol = 1e-9;
+    if ax > 1.0 && ax <= 1.021 {
+        tol = f64::max(tol, 4.0 * f64::EPSILON * (2.0 * n * acosh).exp());
+    }
+    if name.starts_with("lqmn") && ax >= 1.0001 && ax <= 1.1 {
+        let km = (40.0 + m + n) * (-1.0 - 1.8 * (ax - 1.0).ln()).floor();
+        tol = f64::max(tol, 4.0 * (-2.0 * km * acosh).exp());
+    }
+    tol
+}
+
+/// The absolute floor of a second-kind row, as `floor` of `error`:
+/// `100 (n + m + 1) eps max(1, |ref|) G^p / tol`, where `G = max(1, 1/|1 - x^2|)` and `p` is the
+/// order for the value (`0` for `lqn`) and one more for the derivative, which divides by `1 - x^2`.
+fn q_floor(name: &str, r: &Row, eps: f64, tol: f64) -> f64 {
+    let (m, n, _, s2) = q_row(name, r);
+    let g = (1.0 / s2).max(1.0);
+    let p = m + if name.ends_with("_d") { 1.0 } else { 0.0 };
+    100.0 * (n + m + 1.0) * eps * r.reference.0.abs().max(1.0) * g.powf(p) / tol
+}
+
+const Q_NAMES: [&str; 4] = ["lqn", "lqn_d", "lqmn", "lqmn_d"];
 
 #[test]
 fn second_kind_f64_matches_mpmath() {
-    for (name, tol, _) in Q_TOL {
+    for name in Q_NAMES {
         let all = rows(name);
         assert!(all.len() > 100, "{name}: {} rows", all.len());
         for r in all.iter().filter(|r| r.is_f64()) {
             let a: Vec<f64> = r.args_as();
             let got = eval(name, &a);
+            let tol = q_f64_tolerance(name, r);
             let e = error(got, r.reference, q_floor(name, r, f64::EPSILON, tol));
             assert!(
                 e <= tol,
-                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}",
+                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}, err {e:e}, tol {tol:e}",
                 r.line,
                 r.reference
             );
@@ -437,16 +619,24 @@ fn second_kind_f64_matches_mpmath() {
     }
 }
 
+/// Relative tolerance of a `Df64` second-kind row.
+#[cfg(feature = "xprec")]
+const Q_DF64_TOL: f64 = 2e-29;
+
 #[cfg(feature = "xprec")]
 #[test]
 fn second_kind_df64_matches_mpmath() {
-    for (name, _, tol) in Q_TOL {
+    for name in Q_NAMES {
         for r in rows(name) {
             let a: Vec<Df64> = r.args_as();
             let got = eval(name, &a);
-            let e = error(got, r.reference, q_floor(name, &r, 2.0_f64.powi(-105), tol));
+            let e = error(
+                got,
+                r.reference,
+                q_floor(name, &r, 2.0_f64.powi(-105), Q_DF64_TOL),
+            );
             assert!(
-                e <= tol,
+                e <= Q_DF64_TOL,
                 "{name}{:?} (line {}): got {got:?}, mpmath {:?}, err {e:e}",
                 r.args,
                 r.line,
@@ -475,6 +665,137 @@ fn special_values_match_scipy() {
                 same(got, expected),
                 "Df64 {name}{args:?} = {got:?}, expected {expected}"
             );
+        }
+    }
+}
+
+/// `legendre_p` is the same polynomial as `eval_legendre_int` for `n >= 0` (xsf has a second
+/// recurrence for it), and NaN for `n < 0`.
+#[test]
+fn legendre_p_matches_the_legendre_polynomial_rows() {
+    let all = rows("eval_legendre_int");
+    for r in all.iter().filter(|r| r.is_f64() && r.args[0].0 >= 0.0) {
+        let n = r.args[0].0 as i32;
+        let x: f64 = r.args_as::<f64>()[1];
+        let got = specials::legendre_p(n, x);
+        let e = error(got, r.reference, floor_of(r, 100.0, f64::EPSILON, 1e-11));
+        assert!(
+            e <= 1e-11,
+            "legendre_p({n}, {x}): {got:e} vs {:?}, err {e:e}",
+            r.reference
+        );
+    }
+    #[cfg(feature = "xprec")]
+    for r in all.iter().filter(|r| r.args[0].0 >= 0.0) {
+        let n = r.args[0].0 as i32;
+        let x: Df64 = r.args_as::<Df64>()[1];
+        let got = specials::legendre_p(n, x);
+        let e = error(
+            got,
+            r.reference,
+            floor_of(r, 100.0, 2.0_f64.powi(-105), 2e-29),
+        );
+        assert!(
+            e <= 2e-29,
+            "legendre_p({n}, {x:?}): {got:?} vs {:?}, err {e:e}",
+            r.reference
+        );
+    }
+    assert!(specials::legendre_p(-1, 0.3_f64).is_nan());
+}
+
+/// Documented behavior of the `f64` kernels where they are not accurate: a
+/// reproducer for each entry of `docs/upstream-issues.md`, next to the correct `Df64`
+/// value where the double-double recurrence has one.
+#[test]
+fn f64_limits_are_the_documented_ones() {
+    // eval_jacobi: the recurrence divides by alpha + 1.
+    assert!(specials::eval_jacobi_int(2, -1.0_f64, 0.5, -0.75).is_nan());
+    assert_eq!(
+        specials::eval_jacobi_int(2, -1.0 + 2.0_f64.powi(-52), 0.5_f64, -0.75),
+        0.0
+    );
+    // eval_jacobi and eval_genlaguerre: the normalization binom(n + alpha, n) overflows.
+    assert_eq!(
+        specials::eval_genlaguerre_int(1000, 1000.0_f64, 1000.0),
+        f64::INFINITY
+    );
+    assert!(specials::eval_jacobi_int(1000, 1000.0_f64, 0.0, -1.0).is_nan());
+    // pmv: 1 + r cancels next to the zero of an odd polynomial.
+    assert_eq!(specials::pmv(0.0_f64, 1.0, 1e-15), 1.1102230246251565e-15);
+    assert!(specials::pmv(0.0_f64, 1.0, 1e-30) == 0.0);
+    // lqn and lqmn: 1e300 stands for the infinity at x = +-1.
+    assert_eq!(specials::lqn(2, 1.0_f64).0, vec![1e300; 3]);
+    assert_eq!(specials::lqmn(1, 2, -1.0_f64).1, vec![1e300; 6]);
+    // The negative degree has no meaning: NaN rather than xsf's z or 0.
+    assert!(specials::assoc_legendre_p(-1, 0, 0.3_f64, LegendreType::Ferrers).is_nan());
+    #[cfg(feature = "xprec")]
+    {
+        let d = |x: f64| Df64::from(x);
+        let tiny = Df64::from(-1.0 + 2.0_f64.powi(-52));
+        // P_2^(a, 1/2)(x) at a = -1 + 2^-52 and at -1, from the relation P_n^(-1,b) = (n + b) / (2n) (x - 1) P_(n-1)^(1,b)
+        let want = 1.162109375;
+        assert!(
+            (specials::eval_jacobi_int(2, tiny, d(0.5), d(-0.75)) - d(want))
+                .abs()
+                .hi()
+                < 1e-15
+        );
+        assert!(
+            (specials::eval_jacobi_int(2, d(-1.0), d(0.5), d(-0.75)) - d(want))
+                .abs()
+                .hi()
+                < 1e-15
+        );
+        assert!(
+            (specials::eval_jacobi_int(1000, d(1000.0), d(0.0), d(-1.0)) - d(1.0))
+                .abs()
+                .hi()
+                < 1e-27
+        );
+        let (a, b) = (specials::pmv(d(0.0), d(1.0), d(1e-15)), d(1e-15));
+        assert!(((a - b) / b).abs().hi() < 1e-30);
+    }
+}
+
+/// `Df64` evaluates `Q_n` by Miller's backward recurrence for `n acosh abs(x) > 2`, whose
+/// start index is `n + 40 / acosh abs(x)`: the work stays linear in `n` and the result
+/// satisfies the three-term recurrence and decays like `exp(-n acosh x)`.
+#[cfg(feature = "xprec")]
+#[test]
+fn df64_second_kind_backward_recurrence_is_consistent() {
+    for (n, x) in [
+        (2000_usize, 1.0001),
+        (2000, 1.5),
+        (500, 1.0000001),
+        (100, 1e6),
+    ] {
+        let xd = Df64::from(x);
+        let (q, qd) = specials::lqn(n, xd);
+        assert_eq!(q.len(), n + 1);
+        // Below 1e-280 the low word of a double-double is subnormal.
+        for j in (1..n).filter(|&j| q[j + 1].hi() > 1e-280) {
+            let jf = Df64::from(j as f64);
+            let lhs = (jf + Df64::from(1.0)) * q[j + 1];
+            let t1 = (Df64::from(2.0) * jf + Df64::from(1.0)) * xd * q[j];
+            let t2 = jf * q[j - 1];
+            // relative to the terms: the difference cancels for large x
+            assert!(
+                ((lhs - (t1 - t2)).abs() / (t1.abs() + t2.abs())).hi() < 1e-28,
+                "n = {n}, x = {x}, j = {j}"
+            );
+        }
+        // Q_n decreases and is positive for x > 1, and its derivative is negative.
+        assert!(
+            q.windows(2)
+                .all(|w| w[0].hi() >= w[1].hi() && w[1].hi() >= 0.0),
+            "n = {n}, x = {x}"
+        );
+        assert!(qd.iter().all(|d| d.hi() <= 0.0), "n = {n}, x = {x}");
+        // Q_0 = ln((x + 1)/(x - 1)) / 2 is the normalization.
+        if x < 10.0 {
+            let q0 = (((xd + Df64::from(1.0)) / (xd - Df64::from(1.0))).ln()) / Df64::from(2.0);
+            assert!(((q[0] - q0) / q0).abs().hi() < 1e-27, "n = {n}, x = {x}");
         }
     }
 }

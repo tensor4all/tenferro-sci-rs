@@ -174,11 +174,11 @@ fn dd_tolerance(name: &str, args: &[f64]) -> f64 {
         "ellipkm1" | "ellipe" | "ellipkinc" | "ellipeinc" => 1e-30,
         "ellipj_sn" | "ellipj_cn" | "ellipj_dn" => 1e-29,
         "ellipj_ph" => 5e-30,
-        // pmv (#16). An integer degree is evaluated by the double-double
-        // recurrence; a non-integer degree by the f64 kernel, whose series
-        // stops at 1e-14.
+        // pmv. An integer degree is evaluated by the double-double recurrence
+        // (worst measured 1.2e-29); a non-integer degree by the f64 kernel, whose
+        // series stops at 1e-14 (worst measured 9.6e-14).
         "pmv" if args[1] == args[1].floor() => 1e-28,
-        "pmv" => 1e-9,
+        "pmv" => 3e-13,
         _ => unreachable!("{name}"),
     }
 }
