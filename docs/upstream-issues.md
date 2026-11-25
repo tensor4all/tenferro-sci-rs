@@ -621,10 +621,36 @@ cases:
 ## scipy/xsf: `lqn` and `lqmn` return `1e300` at `x = ±1`
 
 - **Affects:** xsf `31177fd9` (`lqn`, `lqmn`) and SciPy 1.16.3 (`scipy.special.lqn(2, 1.0)` is `1e300` for every
-  entry). `pmv` converts the same stand-in to `±inf` (`SPECFUN_CONVINF`); these routines do not.
+  entry, derivatives included). `pmv` converts the same stand-in to `±inf` (`SPECFUN_CONVINF`); these routines do not.
+- **Correct values:** `Q_k(1) = +∞` and `Q_k(-1) = (-1)^(k+1) ∞` (from `Q_k = P_k ln((1+x)/(1-x))/2 - W_(k-1)` and
+  `Q_k(-x) = (-1)^(k+1) Q_k(x)`); `Q_k^i(1) = (-1)^i ∞` and `Q_k^i(-1) = (-1)^(k+1) ∞` (DLMF 14.6.2 and 14.6.4: `Q_k^i`
+  behaves like `(-1)^i (1 - x)^(-i/2)` on both sides of 1, and `Q_k^i(-x) = (-1)^(k+i+1) Q_k^i(x)` for both branches).
+  The derivatives tend to opposite infinities from `|x| < 1` and `|x| > 1`, so they have no value: NaN.
 - **Upstream:** not reported.
-- **Here:** both strategies return `1e300`, as SciPy does (the special-value rows of
-  `orthogonal_special_values.csv`); the doc of `lqn` states it.
+- **Here:** a deliberate deviation of the `f64` port: both strategies return those infinities and NaN
+  derivatives (`second_kind_at_the_endpoints`, and the `lqn`/`lqmn` rows of `orthogonal_special_values.csv`, whose
+  `scipy` column keeps `1e300`).
+
+## scipy/xsf: Chebyshev, Hermite, Laguerre and other recurrences return NaN instead of `±inf` when they overflow
+
+- **Affects:** xsf `31177fd9` (`include/xsf/orthogonal_eval.h`) and SciPy 1.16.3.
+- **Evidence** (mpmath 1.3.0; xsf built locally and SciPy 1.16.3 give NaN for the first four):
+  `eval_hermite(660, -14.568126673025812)` (true `+5.1e932`), `eval_hermite(284, -16.46689288168518)` (`+2.7e388`),
+  `eval_hermitenorm(995, 48.980587028696874)` (`-1.1e1536`), `eval_laguerre(2000, 1e5)` (`+5.6e4246`).
+  A sweep of integer degrees 50 to 4000 and `x` from `-300` to `1e5` where the true result overflows gives NaN
+  from the port (which is bit-identical to xsf there) for every overflowing Chebyshev `T` and `U`, Hermite `H` and `He` point
+  (39 to 41 points of each) and 5 of 9 generalized Laguerre points; Legendre and Jacobi at 17 of 39,
+  `eval_gegenbauer_int` in none (it returns the infinity).
+- **Cause:** a recurrence value becomes `inf` and the next step forms `inf - inf` (or `0 * inf`). Threshold
+  (xsf built locally): the first overflowing degree is the correct infinity, `T_112(-300)` and
+  `H_235(-14.568126673025812)` are `inf`, and the degrees above it are NaN (`H_656` to `H_669` checked).
+- **Upstream:** not reported.
+- **Here:** `f64` keeps xsf's NaN (faithful port). `Df64` returns the infinity with the sign of the
+  polynomial: the recurrence carries a binary exponent, so the overflow occurs only in the final scaling; for
+  `abs(x) > 2^30` where a step itself overflows, the sign and the growth are read from the same recurrence at
+  `x = ±2^30` (`resolve` in `src/generic/orthogonal.rs`). A NaN of finite arguments (the singular Jacobi
+  recurrence, `alpha <= -1`, `n < 0` for Hermite) stays NaN. A non-finite argument takes xsf's value.
+  `overflow_is_a_signed_infinity_in_df64_and_xsfs_nan_in_f64` pins both.
 
 ## scipy/xsf and SciPy 1.16.3: values the pinned xsf fixed
 
