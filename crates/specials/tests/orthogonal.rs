@@ -702,6 +702,35 @@ fn legendre_p_matches_the_legendre_polynomial_rows() {
     assert!(specials::legendre_p(-1, 0.3_f64).is_nan());
 }
 
+/// The second-kind functions at `x = +-1`: `Q_k(1) = +inf`, `Q_k(-1) = (-1)^(k+1) inf`,
+/// `Q_k^i(1) = (-1)^i inf`, `Q_k^i(-1) = (-1)^(k+1) inf` (DLMF 14.9 parity of `Q_n^m`,
+/// the sign of `d^m ln(1 - x)`), and NaN derivatives, which tend to opposite infinities from
+/// the two sides. xsf stores `1e300` in every entry.
+fn second_kind_endpoints<T: Real>() {
+    let (inf, nan) = (T::infinity(), T::nan());
+    let one = T::one();
+    let (q, d) = specials::lqn(3, one);
+    assert_eq!(q, vec![inf; 4]);
+    assert!(d.iter().all(|v| v.is_nan()));
+    let (q, d) = specials::lqn(3, -one);
+    assert_eq!(q, vec![-inf, inf, -inf, inf]);
+    assert!(d.iter().all(|v| v.is_nan()));
+    let (q, d) = specials::lqmn(2, 2, one);
+    assert_eq!(q, vec![inf, inf, inf, -inf, -inf, -inf, inf, inf, inf]);
+    assert!(d.iter().all(|v| v.is_nan()));
+    let (q, d) = specials::lqmn(2, 2, -one);
+    assert_eq!(q, vec![-inf, inf, -inf, -inf, inf, -inf, -inf, inf, -inf]);
+    assert!(d.iter().all(|v| v.is_nan()));
+    let _ = nan;
+}
+
+#[test]
+fn second_kind_at_the_endpoints() {
+    second_kind_endpoints::<f64>();
+    #[cfg(feature = "xprec")]
+    second_kind_endpoints::<Df64>();
+}
+
 /// Documented behavior of the `f64` kernels where they are not accurate: a
 /// reproducer for each entry of `docs/upstream-issues.md`, next to the correct `Df64`
 /// value where the double-double recurrence has one.
@@ -722,9 +751,25 @@ fn f64_limits_are_the_documented_ones() {
     // pmv: 1 + r cancels next to the zero of an odd polynomial.
     assert_eq!(specials::pmv(0.0_f64, 1.0, 1e-15), 1.1102230246251565e-15);
     assert!(specials::pmv(0.0_f64, 1.0, 1e-30) == 0.0);
-    // lqn and lqmn: 1e300 stands for the infinity at x = +-1.
-    assert_eq!(specials::lqn(2, 1.0_f64).0, vec![1e300; 3]);
-    assert_eq!(specials::lqmn(1, 2, -1.0_f64).1, vec![1e300; 6]);
+    // pmv of a non-integer degree is not accurate to 3e-13 everywhere: next to a zero its relative
+    // error reaches 9e-12 (mpmath: -3.133242096893011581e-14), in f64 and in Df64 alike.
+    let want = -3.133242096893012e-14;
+    let v = specials::pmv(-6.0_f64, 39.5642498749246, -0.43842672603356236);
+    assert!(
+        ((v - want) / want).abs() > 1e-12 && ((v - want) / want).abs() < 2e-11,
+        "{v:e}"
+    );
+    #[cfg(feature = "xprec")]
+    {
+        let d = Df64::from;
+        let v = specials::pmv(d(-6.0), d(39.5642498749246), d(-0.43842672603356236)).hi();
+        assert!(
+            ((v - want) / want).abs() > 1e-12 && ((v - want) / want).abs() < 2e-11,
+            "{v:e}"
+        );
+    }
+    // lqn and lqmn: xsf stores 1e300 at x = +-1; this crate returns the infinities
+    // (checked in `second_kind_at_the_endpoints`).
     // The negative degree has no meaning: NaN rather than xsf's z or 0.
     assert!(specials::assoc_legendre_p(-1, 0, 0.3_f64, LegendreType::Ferrers).is_nan());
     #[cfg(feature = "xprec")]
@@ -753,6 +798,66 @@ fn f64_limits_are_the_documented_ones() {
         );
         let (a, b) = (specials::pmv(d(0.0), d(1.0), d(1e-15)), d(1e-15));
         assert!(((a - b) / b).abs().hi() < 1e-30);
+    }
+}
+
+/// The true result is beyond the range of `f64`: `Df64` returns the infinity with the sign of
+/// the polynomial; xsf's `f64` kernels return NaN when the Hermite or Laguerre recurrence
+/// overflows (`docs/upstream-issues.md`). Values from mpmath: `H_660(-14.568...) = 5.1e932`,
+/// `H_661 = -2.7e933`, `H_284(-16.467...) = 2.7e388`, `He_995(48.98...) = -1.1e1536`,
+/// `L_2000(1e5) = 5.6e4246`, `L_2001(1e5) = -2.7e4248`.
+#[test]
+fn overflow_is_a_signed_infinity_in_df64_and_xsfs_nan_in_f64() {
+    let cases: [(&str, i64, f64, f64); 7] = [
+        ("eval_hermite", 660, -14.568126673025812, f64::INFINITY),
+        ("eval_hermite", 661, -14.568126673025812, f64::NEG_INFINITY),
+        ("eval_hermite", 284, -16.46689288168518, f64::INFINITY),
+        (
+            "eval_hermitenorm",
+            995,
+            48.980587028696874,
+            f64::NEG_INFINITY,
+        ),
+        ("eval_laguerre_int", 2000, 1e5, f64::INFINITY),
+        ("eval_laguerre_int", 2001, 1e5, f64::NEG_INFINITY),
+        ("eval_hermite", 3, 1e300, f64::INFINITY),
+    ];
+    for (name, n, x, want) in cases {
+        let f = eval::<f64>(name, &[n as f64, x]);
+        // xsf's NaN, except where the intermediate products still overflow to the right infinity
+        assert!(f.is_nan() || f == want, "f64 {name}({n}, {x}) = {f}");
+        #[cfg(feature = "xprec")]
+        {
+            let d = eval::<Df64>(name, &[Df64::from(n as f64), Df64::from(x)]).hi();
+            assert_eq!(d, want, "Df64 {name}({n}, {x})");
+        }
+    }
+    // the same polynomial of the kinds where xsf returns the infinity correctly
+    #[cfg(feature = "xprec")]
+    {
+        let d = Df64::from;
+        assert_eq!(
+            specials::eval_chebyt_int(3, d(-1e300)).hi(),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(specials::eval_chebyt_int(4, d(-1e300)).hi(), f64::INFINITY);
+        assert_eq!(
+            specials::eval_legendre_int(3, d(-1e300)).hi(),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(
+            specials::eval_chebyu_int(-5, d(1e300)).hi(),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(specials::eval_hermitenorm(2, d(-1e300)).hi(), f64::INFINITY);
+        // a documented NaN of finite arguments stays NaN
+        assert!(specials::eval_jacobi_int(3, d(-1.5), d(-0.5), d(0.3))
+            .hi()
+            .is_nan());
+        assert!(specials::eval_genlaguerre_int(2, d(-2.0), d(0.3))
+            .hi()
+            .is_nan());
+        assert!(specials::eval_hermite(-1, d(0.3)).hi().is_nan());
     }
 }
 

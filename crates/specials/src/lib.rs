@@ -70,28 +70,28 @@
 //! | `cbrt(x)` | [`cbrt`] | 1e-30 |
 //! | `expm1(x)` | [`expm1`] | 1e-30 |
 //! | `log1p(x)` | [`log1p`] | 1e-30 |
-//! | `eval_jacobi(n, α, β, x)`, integer `n` | [`eval_jacobi_int`] | 1e-28 (`α + β` not a negative integer below `-1`; NaN there) |
+//! | `eval_jacobi(n, α, β, x)`, integer `n` | [`eval_jacobi_int`] | 1e-28 away from zeros, in general `(n + 1) ε` times the largest term of the recurrence over the result (`α + β` not a negative integer below `-1`; NaN there) |
 //! | `eval_sh_jacobi(n, p, q, x)`, integer `n` | [`eval_sh_jacobi_int`] | 1e-28 |
 //! | `eval_gegenbauer(n, α, x)`, integer `n` | [`eval_gegenbauer_int`] | 1e-28 |
 //! | `eval_chebyt`, `eval_chebyu`, `eval_chebyc`, `eval_chebys`, `eval_sh_chebyt`, `eval_sh_chebyu`, integer `n` | [`eval_chebyt_int`], [`eval_chebyu_int`], [`eval_chebyc_int`], [`eval_chebys_int`], [`eval_sh_chebyt_int`], [`eval_sh_chebyu_int`] | 1e-29 |
 //! | `eval_legendre`, `eval_sh_legendre`, integer `n` | [`eval_legendre_int`], [`eval_sh_legendre_int`] | 2e-29 |
-//! | `eval_laguerre`, `eval_genlaguerre`, integer `n` | [`eval_laguerre_int`], [`eval_genlaguerre_int`] | 1e-28 |
+//! | `eval_laguerre`, `eval_genlaguerre`, integer `n` | [`eval_laguerre_int`], [`eval_genlaguerre_int`] | 1e-28 away from zeros; in general `(n + 1) ε` times the largest term of the recurrence over the result (measured 9e-29 at `eval_laguerre_int(157, 0.2230...)`, where that ratio is 63) |
 //! | `eval_hermite`, `eval_hermitenorm` | [`eval_hermite`], [`eval_hermitenorm`] | 1e-29 |
 //! | the same twelve functions with a real `n` | [`eval_jacobi`], [`eval_sh_jacobi`], [`eval_gegenbauer`], [`eval_chebyt`], [`eval_chebyu`], [`eval_chebyc`], [`eval_chebys`], [`eval_sh_chebyt`], [`eval_sh_chebyu`], [`eval_legendre`], [`eval_sh_legendre`], [`eval_laguerre`], [`eval_genlaguerre`] | as the integer-degree row for a non-negative integer-valued `n`; **`f64` accuracy for any other `n`** (`Df64` evaluates the `f64` kernel) |
-//! | `pmv(m, v, x)` (`lpmv`) | [`pmv`] | 1e-28 for an integer `v`; **`f64` accuracy (3e-13) for a non-integer `v`** |
+//! | `pmv(m, v, x)` (`lpmv`) | [`pmv`] | 1e-28 for an integer `v`; **the accuracy of xsf's `lpmv` for a non-integer `v`** (about 3e-13 on the xsref points, worse next to zeros by the condition number: 9e-12 at `pmv(-6, 39.5642498749246, -0.43842672603356236)`) |
 //! | `legendre_p(n, z)` | [`legendre_p`] | 2e-29 |
 //! | `assoc_legendre_p(n, m, z)` (`branch_cut` 2 and 3, `norm`) | [`assoc_legendre_p`], [`assoc_legendre_p_norm`] | 1e-29 |
 //! | `sph_legendre_p(n, m, θ)` | [`sph_legendre_p`] | 1e-29 (relative accuracy of `sin θ`, an absolute 1e-32, next to multiples of `π` for `m != 0`) |
-//! | `lqn(n, x)` | [`lqn`] | 2e-29 for `Q_n`; the derivative loses a factor `1/abs(1 - x^2)` |
-//! | `lqmn(m, n, x)` | [`lqmn`] | 2e-29, with a factor `1/abs(1 - x^2)^m` (`m + 1` for the derivative) |
+//! | `lqn(n, x)` | [`lqn`] | 2e-29 for `Q_n`; the derivative loses a factor `1/abs(1 - x^2)`; at `x = ±1` the values are `±∞` (xsf: `1e300`) and the derivatives NaN |
+//! | `lqmn(m, n, x)` | [`lqmn`] | 2e-29, with a factor `1/abs(1 - x^2)^m` (`m + 1` for the derivative); at `x = ±1` the values are `±∞` (xsf: `1e300`) and the derivatives NaN |
 //! | `round(x)` | not provided: use [`f64::round_ties_even`] (exact; `-0` where SciPy gives `+0` for `-1/2 <= x < 0`) | - |
 //!
-//! The polynomials and Legendre functions of integer degree evaluate a forward recurrence in the degree
-//! (work linear in `n`; Miller's backward recurrence for `lqn`, `lqmn` at `abs(x) > 1`), and
+//! The polynomials and Legendre functions of integer degree evaluate a forward recurrence in the
+//! degree (work linear in `n`; Miller's backward recurrence for `lqn`, `lqmn` at `abs(x) > 1`), and
 //! the `_int` suffix marks SciPy's integer-degree loop where the real-degree one has the same name.
-//! The work and the limits of each function are in its documentation; the limits of the `f64` kernels
-//! (xsf's, with its overflow and cancellation) are in `docs/upstream-issues.md`.
-//! Not provided: the derivatives of the Legendre functions with respect to the argument (xsf's `dual`
+//! The work and the limits of each function are in its documentation; the limits of the `f64`
+//! kernels (xsf's, with its overflow and cancellation) are in `docs/upstream-issues.md`. Not
+//! provided: the derivatives of the Legendre functions with respect to the argument (xsf's `dual`
 //! numbers; `lqn` and `lqmn` return the first derivative), the complex-argument overloads, and
 //! `sph_harm` (complex result).
 //!
@@ -1335,8 +1335,8 @@ pub fn log1p<T: Real>(x: T) -> T {
 
 /// Dispatch of an integer-degree kernel. `f64`: xsf's kernel. `Df64`: the
 /// double-double recurrence, or xsf's value for a non-finite argument (its
-/// classification of NaN and infinities is SciPy's) and where the
-/// double-double result is not finite.
+/// classification of NaN and infinities is SciPy's). A NaN or infinity that the
+/// double-double computation returns for finite arguments is kept.
 fn dispatch_int<T: Real, const N: usize>(
     args: [T; N],
     kernel: impl Fn([f64; N]) -> f64,
@@ -1349,7 +1349,7 @@ fn dispatch_int<T: Real, const N: usize>(
             if a64.iter().any(|a| !a.is_finite()) {
                 return k64(kernel(a64));
             }
-            generic::orthogonal::finite_or(adaptive(args), || kernel(a64))
+            adaptive(args)
         }
     }
 }
@@ -1371,18 +1371,28 @@ fn dispatch_real<T: Real, const N: usize>(
             if !integral || a64.iter().any(|a| !a.is_finite()) {
                 return k64(kernel(a64));
             }
-            generic::orthogonal::finite_or(adaptive(args, a64[0] as i64), || kernel(a64))
+            adaptive(args, a64[0] as i64)
         }
     }
 }
 
-/// The Jacobi polynomial `P_n^(α,β)(x)` of integer degree `n` (DLMF 18.3), from the recurrence of DLMF 18.9.2. A negative degree takes the hypergeometric form of [`eval_jacobi`] (the `f64` kernel, also for `Df64`).
+/// The Jacobi polynomial `P_n^(α,β)(x)` of integer degree `n` (DLMF 18.3), from the recurrence of
+/// DLMF 18.9.2. A negative degree takes the hypergeometric form of [`eval_jacobi`] (the `f64`
+/// kernel, also for `Df64`).
 ///
-/// `α = -1` with `abs(β) = 1` is handled as xsf does (`P_n^(-1,β) = (n + β)/(2n) (x - 1) P_(n-1)^(1,β)`); the `Df64` path also has this for every `β`, and for `β = -1`.
+/// `α = -1` with `abs(β) = 1` is handled as xsf does (`P_n^(-1,β) = (n + β)/(2n) (x - 1)
+/// P_(n-1)^(1,β)`); the `Df64` path also has this for every `β`, and for `β = -1`.
 ///
-/// The recurrence is singular where `α + β` is a negative integer below `-1`: the result is NaN or infinite there (`f64`) and NaN (`Df64`).
+/// The recurrence is singular where `α + β` is a negative integer below `-1`: the result is NaN or
+/// infinite there (`f64`) and NaN (`Df64`).
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1406,11 +1416,19 @@ pub fn eval_jacobi_int<T: Real>(n: i64, alpha: T, beta: T, x: T) -> T {
     )
 }
 
-/// The shifted Jacobi polynomial `G_n(p, q, x) = P_n^(p-q, q-1)(2x - 1) / C(2n + p - 1, n)` (SciPy's `eval_sh_jacobi`) of integer degree `n`.
+/// The shifted Jacobi polynomial `G_n(p, q, x) = P_n^(p-q, q-1)(2x - 1) / C(2n + p - 1, n)`
+/// (SciPy's `eval_sh_jacobi`) of integer degree `n`.
 ///
-/// The normalization `C(2n + p - 1, n)` can be zero (the result is then infinite or NaN, as in xsf).
+/// The normalization `C(2n + p - 1, n)` can be zero (the result is then infinite or NaN, as in
+/// xsf).
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1433,9 +1451,17 @@ pub fn eval_sh_jacobi_int<T: Real>(n: i64, p: T, q: T, x: T) -> T {
     )
 }
 
-/// The Gegenbauer (ultraspherical) polynomial `C_n^(α)(x)` of integer degree `n` (DLMF 18.3). As in xsf the result is `0` for `α = 0` (for every `n`) and for `n < 0`; for `abs(x) < 1e-5` the `f64` path sums the explicit power series.
+/// The Gegenbauer (ultraspherical) polynomial `C_n^(α)(x)` of integer degree `n` (DLMF 18.3). As in
+/// xsf the result is `0` for `α = 0` (for every `n`) and for `n < 0`; for `abs(x) < 1e-5` the `f64`
+/// path sums the explicit power series.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1452,9 +1478,16 @@ pub fn eval_gegenbauer_int<T: Real>(n: i64, alpha: T, x: T) -> T {
     )
 }
 
-/// The Chebyshev polynomial of the first kind `T_n(x)` of integer degree `n` (DLMF 18.3); `T_(-n) = T_n`.
+/// The Chebyshev polynomial of the first kind `T_n(x)` of integer degree `n` (DLMF 18.3); `T_(-n) =
+/// T_n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1470,9 +1503,16 @@ pub fn eval_chebyt_int<T: Real>(n: i64, x: T) -> T {
     )
 }
 
-/// The Chebyshev polynomial of the second kind `U_n(x)` of integer degree `n`; `U_(-1) = 0` and `U_(-n-2) = -U_n`.
+/// The Chebyshev polynomial of the second kind `U_n(x)` of integer degree `n`; `U_(-1) = 0` and
+/// `U_(-n-2) = -U_n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1490,7 +1530,13 @@ pub fn eval_chebyu_int<T: Real>(n: i64, x: T) -> T {
 
 /// The Chebyshev polynomial `C_n(x) = 2 T_n(x/2)` of integer degree `n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1508,7 +1554,13 @@ pub fn eval_chebyc_int<T: Real>(n: i64, x: T) -> T {
 
 /// The Chebyshev polynomial `S_n(x) = U_n(x/2)` of integer degree `n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1526,7 +1578,13 @@ pub fn eval_chebys_int<T: Real>(n: i64, x: T) -> T {
 
 /// The shifted Chebyshev polynomial `T*_n(x) = T_n(2x - 1)` of integer degree `n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1544,7 +1602,13 @@ pub fn eval_sh_chebyt_int<T: Real>(n: i64, x: T) -> T {
 
 /// The shifted Chebyshev polynomial `U*_n(x) = U_n(2x - 1)` of integer degree `n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1560,9 +1624,16 @@ pub fn eval_sh_chebyu_int<T: Real>(n: i64, x: T) -> T {
     )
 }
 
-/// The Legendre polynomial `P_n(x)` of integer degree `n` (DLMF 18.3); `P_(-n-1) = P_n`. The `f64` path sums an explicit power series for `abs(x) < 1e-5`.
+/// The Legendre polynomial `P_n(x)` of integer degree `n` (DLMF 18.3); `P_(-n-1) = P_n`. The `f64`
+/// path sums an explicit power series for `abs(x) < 1e-5`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1580,7 +1651,13 @@ pub fn eval_legendre_int<T: Real>(n: i64, x: T) -> T {
 
 /// The shifted Legendre polynomial `P*_n(x) = P_n(2x - 1)` of integer degree `n`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1598,7 +1675,13 @@ pub fn eval_sh_legendre_int<T: Real>(n: i64, x: T) -> T {
 
 /// The Laguerre polynomial `L_n(x)` of integer degree `n` (DLMF 18.3); `0` for `n < 0`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1614,9 +1697,16 @@ pub fn eval_laguerre_int<T: Real>(n: i64, x: T) -> T {
     )
 }
 
-/// The generalized Laguerre polynomial `L_n^(α)(x)` of integer degree `n` (DLMF 18.3). NaN for `α <= -1`, `0` for `n < 0`.
+/// The generalized Laguerre polynomial `L_n^(α)(x)` of integer degree `n` (DLMF 18.3). NaN for `α
+/// <= -1`, `0` for `n < 0`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1634,7 +1724,13 @@ pub fn eval_genlaguerre_int<T: Real>(n: i64, alpha: T, x: T) -> T {
 
 /// The physicists' Hermite polynomial `H_n(x)` (DLMF 18.3), NaN for `n < 0`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1652,7 +1748,13 @@ pub fn eval_hermite<T: Real>(n: i64, x: T) -> T {
 
 /// The probabilists' Hermite polynomial `He_n(x)`, NaN for `n < 0`.
 ///
-/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary exponent, so intermediate terms cannot overflow or underflow while the result is representable. The cost is linear in `n`. A non-finite argument or a result that overflows takes xsf's value (SciPy's NaN and infinities).
+/// `Df64` evaluates the forward recurrence in double-double; the running terms carry a binary
+/// exponent, so intermediate terms cannot overflow or underflow while the result is representable.
+/// The cost is linear in `n`. A non-finite argument takes xsf's value (SciPy's NaN and
+/// infinities). A result beyond the range of `f64` is the infinity with the sign of the
+/// polynomial in `Df64`; xsf's `f64` kernels return NaN where the Chebyshev, Hermite,
+/// Laguerre (and, at some arguments, Legendre and Jacobi) recurrences overflow
+/// (`docs/upstream-issues.md`). A NaN of finite arguments stays NaN.
 ///
 /// # Examples
 ///
@@ -1668,11 +1770,16 @@ pub fn eval_hermitenorm<T: Real>(n: i64, x: T) -> T {
     )
 }
 
-/// The Jacobi polynomial `P_n^(α,β)(x)` of real degree `n`, as the hypergeometric function `C(n + α, n) 2F1(-n, n + α + β + 1; α + 1; (1 - x)/2)`.
+/// The Jacobi polynomial `P_n^(α,β)(x)` of real degree `n`, as the hypergeometric function `C(n +
+/// α, n) 2F1(-n, n + α + β + 1; α + 1; (1 - x)/2)`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_jacobi_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_jacobi_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1690,9 +1797,13 @@ pub fn eval_jacobi<T: Real>(n: T, alpha: T, beta: T, x: T) -> T {
 
 /// The shifted Jacobi polynomial `G_n(p, q, x)` of real degree `n` (see [`eval_sh_jacobi_int`]).
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_jacobi_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_jacobi_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1708,11 +1819,16 @@ pub fn eval_sh_jacobi<T: Real>(n: T, p: T, q: T, x: T) -> T {
     )
 }
 
-/// The Gegenbauer polynomial `C_n^(α)(x)` of real degree `n`; xsf takes the integer-degree recurrence for an integer-valued `n` below `1e10`.
+/// The Gegenbauer polynomial `C_n^(α)(x)` of real degree `n`; xsf takes the integer-degree
+/// recurrence for an integer-valued `n` below `1e10`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_gegenbauer_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_gegenbauer_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1728,11 +1844,16 @@ pub fn eval_gegenbauer<T: Real>(n: T, alpha: T, x: T) -> T {
     )
 }
 
-/// The Chebyshev function `T_n(x) = 2F1(-n, n; 1/2; (1 - x)/2)` of real degree `n`; `T_n(cos t) = cos(n t)`.
+/// The Chebyshev function `T_n(x) = 2F1(-n, n; 1/2; (1 - x)/2)` of real degree `n`; `T_n(cos t) =
+/// cos(n t)`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyt_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyt_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1751,9 +1872,13 @@ pub fn eval_chebyt<T: Real>(n: T, x: T) -> T {
 
 /// The Chebyshev function `U_n(x) = (n + 1) 2F1(-n, n + 2; 3/2; (1 - x)/2)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyu_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyu_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1771,9 +1896,13 @@ pub fn eval_chebyu<T: Real>(n: T, x: T) -> T {
 
 /// `C_n(x) = 2 T_n(x/2)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyc_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebyc_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1791,9 +1920,13 @@ pub fn eval_chebyc<T: Real>(n: T, x: T) -> T {
 
 /// `S_n(x) = U_n(x/2)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebys_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_chebys_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1811,9 +1944,13 @@ pub fn eval_chebys<T: Real>(n: T, x: T) -> T {
 
 /// `T*_n(x) = T_n(2x - 1)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_chebyt_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_chebyt_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1831,9 +1968,13 @@ pub fn eval_sh_chebyt<T: Real>(n: T, x: T) -> T {
 
 /// `U*_n(x) = U_n(2x - 1)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_chebyu_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_chebyu_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1851,9 +1992,13 @@ pub fn eval_sh_chebyu<T: Real>(n: T, x: T) -> T {
 
 /// The Legendre function `P_n(x) = 2F1(-n, n + 1; 1; (1 - x)/2)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_legendre_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_legendre_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1871,9 +2016,13 @@ pub fn eval_legendre<T: Real>(n: T, x: T) -> T {
 
 /// `P*_n(x) = P_n(2x - 1)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_legendre_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_sh_legendre_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1891,9 +2040,13 @@ pub fn eval_sh_legendre<T: Real>(n: T, x: T) -> T {
 
 /// The Laguerre function `L_n(x) = 1F1(-n; 1; x)` of real degree `n`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_laguerre_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_laguerre_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1909,11 +2062,16 @@ pub fn eval_laguerre<T: Real>(n: T, x: T) -> T {
     )
 }
 
-/// The generalized Laguerre function `L_n^(α)(x) = C(n + α, n) 1F1(-n; α + 1; x)` of real degree `n`, NaN for `α <= -1`.
+/// The generalized Laguerre function `L_n^(α)(x) = C(n + α, n) 1F1(-n; α + 1; x)` of real degree
+/// `n`, NaN for `α <= -1`.
 ///
-/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is limited by cancellation near the zeros.
+/// `f64` is xsf's hypergeometric series (`hyp2f1` of Cephes, `hyp1f1` of Zhang and Jin), which
+/// loses digits for large degrees (its own header gives a peak relative error of 1.2e-11) and is
+/// limited by cancellation near the zeros.
 ///
-/// `Df64` evaluates the integer-degree recurrence (see [`eval_genlaguerre_int`]) for a non-negative integer-valued `n`, and the `f64` kernel for any other degree, whose result has `f64` accuracy.
+/// `Df64` evaluates the integer-degree recurrence (see [`eval_genlaguerre_int`]) for a non-negative
+/// integer-valued `n`, and the `f64` kernel for any other degree, with the accuracy of that
+/// kernel (not a fixed bound: it is worse near zeros and for large degrees).
 ///
 /// # Examples
 ///
@@ -1947,8 +2105,11 @@ pub fn eval_genlaguerre<T: Real>(n: T, alpha: T, x: T) -> T {
 ///
 /// `Df64` evaluates an integer degree and order by the recurrence of
 /// [`assoc_legendre_p`] (`P_n(x)` for `m = 0`), which has no such loss, with
-/// the sign convention and the NaN of xsf; any other degree takes the `f64` kernel
-/// and has `f64` accuracy.
+/// the sign convention and the NaN of xsf; any other degree takes the `f64` kernel, with the
+/// accuracy of xsf's `lpmv`: about 3e-13 on the xsref points, and worse next to a zero of
+/// the function by its condition number. For example `pmv(-6, 39.5642498749246,
+/// -0.43842672603356236)` has a relative error of 9e-12 (condition numbers `d ln P / d ln v`
+/// of 8.5e4 and `d ln P / d ln x` of 2.0e4; SciPy 1.16.3 gives the same value).
 ///
 /// # Examples
 ///
@@ -1964,7 +2125,7 @@ pub fn pmv<T: Real>(m: T, v: T, x: T) -> T {
     match T::STRATEGY {
         Strategy::F64Kernels => k64(kernel()),
         Strategy::Adaptive => match generic::legendre::pmv_int(m, v, x) {
-            Some(r) => generic::orthogonal::finite_or(r, kernel),
+            Some(r) => r,
             None => k64(kernel()),
         },
     }
@@ -1988,7 +2149,8 @@ pub enum LegendreType {
     /// `P_n^m(z) = (-1)^m (1 - z^2)^(m/2) d^m P_n / dz^m`. NaN for `abs(z) > 1`.
     Ferrers,
     /// The function on `abs(z) > 1` (cut on `-1 < z < 1`, SciPy's `branch_cut = 3`):
-    /// `P_n^m(z) = (z^2 - 1)^(m/2) d^m P_n / dz^m`. NaN for `abs(z) < 1`, and for `m != 0` at `z < -1`.
+    /// `P_n^m(z) = (z^2 - 1)^(m/2) d^m P_n / dz^m`. NaN for `abs(z) < 1`, and for `m != 0` at `z <
+    /// -1`.
     Outside,
 }
 
@@ -2060,8 +2222,8 @@ pub fn assoc_legendre_p<T: Real>(n: i32, m: i32, z: T, kind: LegendreType) -> T 
 }
 
 /// The normalized associated Legendre function: [`assoc_legendre_p`] times
-/// `sqrt((2n + 1) (n - m)! / (2 (n + m)!))`, so that the functions of one order are orthonormal on `[-1, 1]`.
-/// The normalization is built into the recurrence (no factorials are formed).
+/// `sqrt((2n + 1) (n - m)! / (2 (n + m)!))`, so that the functions of one order are orthonormal on
+/// `[-1, 1]`. The normalization is built into the recurrence (no factorials are formed).
 ///
 /// # Examples
 ///
@@ -2087,10 +2249,10 @@ pub fn assoc_legendre_p_norm<T: Real>(n: i32, m: i32, z: T, kind: LegendreType) 
 /// so the function is even in `θ`). `0` for `abs(m) > n`, NaN for `n < 0`. The azimuthal
 /// factor and the complex value of `sph_harm` are not part of this function.
 ///
-/// `Df64` takes `sin θ` and `cos θ` from the type: for `θ` next to a multiple of `π`, where `sin θ` is tiny, the relative
-/// accuracy for `m != 0` is that of `sin θ`, an absolute `1e-32`. `f64` is xsf's; the
-/// integer products under its square roots (`(2n + 1)((n - 1)^2 - m^2)`) are formed
-/// in `f64`, where xsf's `int` overflows from `n = 646` (`docs/upstream-issues.md`).
+/// `Df64` takes `sin θ` and `cos θ` from the type: for `θ` next to a multiple of `π`, where `sin θ`
+/// is tiny, the relative accuracy for `m != 0` is that of `sin θ`, an absolute `1e-32`. `f64` is
+/// xsf's; the integer products under its square roots (`(2n + 1)((n - 1)^2 - m^2)`) are formed in
+/// `f64`, where xsf's `int` overflows from `n = 646` (`docs/upstream-issues.md`).
 ///
 /// # Examples
 ///
@@ -2114,9 +2276,11 @@ pub fn sph_legendre_p<T: Real>(n: i32, m: i32, theta: T) -> T {
 /// `Q_k(x) = P_k(x) ln((1 + x)/(1 - x)) / 2 - W_(k-1)(x)` (DLMF 14.3.2) and for
 /// `abs(x) > 1` the real function of DLMF 14.3.7 (odd or even in `x` as `(-1)^(k+1)`).
 ///
-/// At `x = ±1` every entry is `1e300`, the stand-in for an infinity that xsf (and SciPy)
-/// return instead of `inf`. The derivative is `Q_k' = k (Q_(k-1) - x Q_k) / (1 - x^2)`,
-/// whose relative error grows like `eps / abs(1 - x^2)` next to `abs(x) = 1`.
+/// At `x = ±1` the values are the infinities of the functions, `Q_k(1) = +∞` and
+/// `Q_k(-1) = (-1)^(k+1) ∞`, and the derivatives are NaN (they tend to opposite infinities
+/// from the two sides). This deviates from xsf and SciPy, which store the stand-in `1e300` in
+/// every entry (`docs/upstream-issues.md`). The derivative is `Q_k' = k (Q_(k-1) - x Q_k) / (1 -
+/// x^2)`, whose relative error grows like `eps / abs(1 - x^2)` next to `abs(x) = 1`.
 ///
 /// `f64` is xsf's: the forward recurrence for `abs(x) <= 1.021`, otherwise the series of
 /// DLMF 14.3.7 for `Q_(n-1)` and `Q_n` followed by the backward recurrence. `Df64`
@@ -2133,6 +2297,9 @@ pub fn sph_legendre_p<T: Real>(n: i32, m: i32, theta: T) -> T {
 /// // Q_0(x) = atanh(x), Q_0'(x) = 1 / (1 - x^2)
 /// assert!((q[0] - 0.5_f64.atanh()).abs() < 1e-15);
 /// assert!((dq[0] - 4.0 / 3.0).abs() < 1e-15);
+///
+/// // Q_k(-1) = (-1)^(k+1) ∞
+/// assert_eq!(lqn(1, -1.0_f64).0, [f64::NEG_INFINITY, f64::INFINITY]);
 /// ```
 pub fn lqn<T: Real>(n: usize, x: T) -> (Vec<T>, Vec<T>) {
     let xf = x.approx_f64();
@@ -2164,8 +2331,8 @@ pub fn lqn<T: Real>(n: usize, x: T) -> (Vec<T>, Vec<T>) {
 /// `i = 0..=m`, `j = 0..=n` (xsf `lqmn`, real argument), as row-major `(m + 1) x (n + 1)`
 /// tables: the entry `(i, j)` is at index `i (n + 1) + j`. For `abs(x) < 1`
 /// `Q_n^m(x) = (-1)^m (1 - x^2)^(m/2) d^m Q_n / dx^m` (DLMF 14.6.2) and for `abs(x) > 1`
-/// `Q_n^m(x) = (x^2 - 1)^(m/2) d^m Q_n / dx^m` (14.6.4). At `x = ±1` every entry is
-/// `1e300`, as for [`lqn`].
+/// `Q_n^m(x) = (x^2 - 1)^(m/2) d^m Q_n / dx^m` (14.6.4). At `x = ±1` the values are infinite
+/// (`(-1)^i ∞` at `1`, `(-1)^(j+1) ∞` at `-1`) and the derivatives NaN, as for [`lqn`].
 ///
 /// `f64` is xsf's; for `-1.1 <= x <= -1.0001` xsf's start index uses `log(x - 1)`, a NaN
 /// converted to an `int` (SciPy returns zeros), and this port uses `log(abs(x) - 1)`
