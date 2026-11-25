@@ -214,10 +214,8 @@ fn f64_limit(name: &str, a: &[f64]) -> Option<&'static str> {
         "eval_jacobi_int" => Some(a[1]),
         _ => None,
     };
-    if let Some(alpha) = alpha {
-        if specials::binom(a[0] + alpha, a[0]).is_infinite() {
-            return Some("binom(n + alpha, n) overflows");
-        }
+    if alpha.is_some_and(|alpha| specials::binom(a[0] + alpha, a[0]).is_infinite()) {
+        return Some("binom(n + alpha, n) overflows");
     }
     None
 }
@@ -580,7 +578,7 @@ fn q_f64_tolerance(name: &str, r: &Row) -> f64 {
     if ax > 1.0 && ax <= 1.021 {
         tol = f64::max(tol, 4.0 * f64::EPSILON * (2.0 * n * acosh).exp());
     }
-    if name.starts_with("lqmn") && ax >= 1.0001 && ax <= 1.1 {
+    if name.starts_with("lqmn") && (1.0001..=1.1).contains(&ax) {
         let km = (40.0 + m + n) * (-1.0 - 1.8 * (ax - 1.0).ln()).floor();
         tol = f64::max(tol, 4.0 * (-2.0 * km * acosh).exp());
     }

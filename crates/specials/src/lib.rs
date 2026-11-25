@@ -1514,7 +1514,7 @@ pub fn eval_chebyc_int<T: Real>(n: i64, x: T) -> T {
 ///
 /// ```
 /// use specials::eval_chebys_int;
-/// assert!((eval_chebys_int(2, 1.0_f64) + 1.0).abs() < 1e-15); // x^2 - 1
+/// assert!(eval_chebys_int(2, 1.0_f64).abs() < 1e-15); // x^2 - 1
 /// ```
 pub fn eval_chebys_int<T: Real>(n: i64, x: T) -> T {
     dispatch_int(
@@ -1799,7 +1799,7 @@ pub fn eval_chebyc<T: Real>(n: T, x: T) -> T {
 ///
 /// ```
 /// use specials::eval_chebys;
-/// assert!((eval_chebys(2.0_f64, 1.0) + 1.0).abs() < 1e-14);
+/// assert!(eval_chebys(2.0_f64, 1.0).abs() < 1e-14);
 /// ```
 pub fn eval_chebys<T: Real>(n: T, x: T) -> T {
     dispatch_real(
