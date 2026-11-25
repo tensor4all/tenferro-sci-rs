@@ -1306,6 +1306,195 @@ pub fn log1p<T: Real>(x: T) -> T {
     }
 }
 
+// Placeholders for the orthogonal polynomials and Legendre functions.
+
+/// Placeholder.
+pub fn eval_jacobi_int<T: Real>(_n: i64, _alpha: T, _beta: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_jacobi_int<T: Real>(_n: i64, _p: T, _q: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_gegenbauer_int<T: Real>(_n: i64, _alpha: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyt_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyu_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyc_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebys_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_chebyt_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_chebyu_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_legendre_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_legendre_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_laguerre_int<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_genlaguerre_int<T: Real>(_n: i64, _alpha: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_hermite<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_hermitenorm<T: Real>(_n: i64, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_jacobi<T: Real>(_n: T, _alpha: T, _beta: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_jacobi<T: Real>(_n: T, _p: T, _q: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_gegenbauer<T: Real>(_n: T, _alpha: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyt<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyu<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebyc<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_chebys<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_chebyt<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_chebyu<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_legendre<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_sh_legendre<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_laguerre<T: Real>(_n: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn eval_genlaguerre<T: Real>(_n: T, _alpha: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn pmv<T: Real>(_m: T, _v: T, _x: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegendreType {
+    /// Placeholder.
+    Ferrers,
+    /// Placeholder.
+    Outside,
+}
+
+/// Placeholder.
+pub fn legendre_p<T: Real>(_n: i32, _z: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn assoc_legendre_p<T: Real>(_n: i32, _m: i32, _z: T, _kind: LegendreType) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn assoc_legendre_p_norm<T: Real>(_n: i32, _m: i32, _z: T, _kind: LegendreType) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn sph_legendre_p<T: Real>(_n: i32, _m: i32, _theta: T) -> T {
+    T::nan()
+}
+
+/// Placeholder.
+pub fn lqn<T: Real>(n: usize, _x: T) -> (Vec<T>, Vec<T>) {
+    (vec![T::nan(); n + 1], vec![T::nan(); n + 1])
+}
+
+/// Placeholder.
+pub fn lqmn<T: Real>(m: usize, n: usize, _x: T) -> (Vec<T>, Vec<T>) {
+    (
+        vec![T::nan(); (m + 1) * (n + 1)],
+        vec![T::nan(); (m + 1) * (n + 1)],
+    )
+}
+
 #[inline]
 fn k64<T: Real>(x: f64) -> T {
     T::from_dd(x, 0.0)

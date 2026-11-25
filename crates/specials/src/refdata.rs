@@ -112,6 +112,48 @@ pub fn data(name: &str) -> (&'static str, usize) {
         "cbrt" => (include_str!("../tests/data/cbrt.csv"), 1),
         "expm1" => (include_str!("../tests/data/expm1.csv"), 1),
         "log1p" => (include_str!("../tests/data/log1p.csv"), 1),
+        "eval_jacobi_int" => (include_str!("../tests/data/eval_jacobi_int.csv"), 5),
+        "eval_sh_jacobi_int" => (include_str!("../tests/data/eval_sh_jacobi_int.csv"), 5),
+        "eval_gegenbauer_int" => (include_str!("../tests/data/eval_gegenbauer_int.csv"), 4),
+        "eval_chebyt_int" => (include_str!("../tests/data/eval_chebyt_int.csv"), 3),
+        "eval_chebyu_int" => (include_str!("../tests/data/eval_chebyu_int.csv"), 3),
+        "eval_chebyc_int" => (include_str!("../tests/data/eval_chebyc_int.csv"), 3),
+        "eval_chebys_int" => (include_str!("../tests/data/eval_chebys_int.csv"), 3),
+        "eval_sh_chebyt_int" => (include_str!("../tests/data/eval_sh_chebyt_int.csv"), 3),
+        "eval_sh_chebyu_int" => (include_str!("../tests/data/eval_sh_chebyu_int.csv"), 3),
+        "eval_legendre_int" => (include_str!("../tests/data/eval_legendre_int.csv"), 3),
+        "eval_sh_legendre_int" => (include_str!("../tests/data/eval_sh_legendre_int.csv"), 3),
+        "eval_laguerre_int" => (include_str!("../tests/data/eval_laguerre_int.csv"), 3),
+        "eval_genlaguerre_int" => (include_str!("../tests/data/eval_genlaguerre_int.csv"), 4),
+        "eval_hermite" => (include_str!("../tests/data/eval_hermite.csv"), 3),
+        "eval_hermitenorm" => (include_str!("../tests/data/eval_hermitenorm.csv"), 3),
+        "eval_jacobi" => (include_str!("../tests/data/eval_jacobi.csv"), 4),
+        "eval_sh_jacobi" => (include_str!("../tests/data/eval_sh_jacobi.csv"), 4),
+        "eval_gegenbauer" => (include_str!("../tests/data/eval_gegenbauer.csv"), 3),
+        "eval_chebyt" => (include_str!("../tests/data/eval_chebyt.csv"), 2),
+        "eval_chebyu" => (include_str!("../tests/data/eval_chebyu.csv"), 2),
+        "eval_chebyc" => (include_str!("../tests/data/eval_chebyc.csv"), 2),
+        "eval_chebys" => (include_str!("../tests/data/eval_chebys.csv"), 2),
+        "eval_sh_chebyt" => (include_str!("../tests/data/eval_sh_chebyt.csv"), 2),
+        "eval_sh_chebyu" => (include_str!("../tests/data/eval_sh_chebyu.csv"), 2),
+        "eval_legendre" => (include_str!("../tests/data/eval_legendre.csv"), 2),
+        "eval_sh_legendre" => (include_str!("../tests/data/eval_sh_legendre.csv"), 2),
+        "eval_laguerre" => (include_str!("../tests/data/eval_laguerre.csv"), 2),
+        "eval_genlaguerre" => (include_str!("../tests/data/eval_genlaguerre.csv"), 3),
+        "pmv_int" => (include_str!("../tests/data/pmv_int.csv"), 4),
+        "pmv" => (include_str!("../tests/data/pmv.csv"), 3),
+        "assoc_legendre_p" => (include_str!("../tests/data/assoc_legendre_p.csv"), 4),
+        "assoc_legendre_p_t3" => (include_str!("../tests/data/assoc_legendre_p_t3.csv"), 4),
+        "assoc_legendre_p_norm" => (include_str!("../tests/data/assoc_legendre_p_norm.csv"), 4),
+        "assoc_legendre_p_norm_t3" => (
+            include_str!("../tests/data/assoc_legendre_p_norm_t3.csv"),
+            4,
+        ),
+        "sph_legendre_p" => (include_str!("../tests/data/sph_legendre_p.csv"), 4),
+        "lqn" => (include_str!("../tests/data/lqn.csv"), 2),
+        "lqn_d" => (include_str!("../tests/data/lqn_d.csv"), 2),
+        "lqmn" => (include_str!("../tests/data/lqmn.csv"), 3),
+        "lqmn_d" => (include_str!("../tests/data/lqmn_d.csv"), 3),
         _ => panic!("no reference data for {name}"),
     }
 }
@@ -155,6 +197,24 @@ pub fn elementary_special_values() -> Vec<(String, Vec<f64>, f64, f64)> {
                 .map(|s| num(s))
                 .collect();
             (f[0].to_string(), args, num(f[4]), num(f[5]))
+        })
+        .collect()
+}
+
+/// The exact results of the orthogonal polynomials and Legendre functions
+/// (#16): `(function, args, expected, scipy)`.
+pub fn orthogonal_special_values() -> Vec<(String, Vec<f64>, f64, f64)> {
+    include_str!("../tests/data/orthogonal_special_values.csv")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split(',').collect();
+            let args = f[1..5]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .map(|s| num(s))
+                .collect();
+            (f[0].to_string(), args, num(f[5]), num(f[6]))
         })
         .collect()
 }
@@ -297,6 +357,7 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "cbrt" => (include_str!("../tests/data/xsref/cbrt.csv"), 1),
         "expm1" => (include_str!("../tests/data/xsref/expm1.csv"), 1),
         "log1p" => (include_str!("../tests/data/xsref/log1p.csv"), 1),
+        "pmv" => (include_str!("../tests/data/xsref/pmv.csv"), 3),
         _ => panic!("no xsref table for {name}"),
     };
     text.lines()
