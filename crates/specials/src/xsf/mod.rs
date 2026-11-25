@@ -24,10 +24,14 @@ pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
 pub(crate) mod lambertw;
 pub(crate) mod lanczos;
+pub(crate) mod log;
+pub(crate) mod log_exp;
 pub(crate) mod poch;
 pub(crate) mod polevl;
 pub(crate) mod psi;
+pub(crate) mod sindg;
 pub(crate) mod stirling2;
+pub(crate) mod tandg;
 pub(crate) mod trigamma;
 pub(crate) mod unity;
 pub(crate) mod zeta;
@@ -58,5 +62,22 @@ pub(crate) fn sinpi(mut x: f64) -> f64 {
         s * (core::f64::consts::PI * (r - 2.0)).sin()
     } else {
         -s * (core::f64::consts::PI * (r - 1.0)).sin()
+    }
+}
+
+/// `cos(πx)`, from `xsf/cephes/trig.h`.
+pub(crate) fn cospi(mut x: f64) -> f64 {
+    if x < 0.0 {
+        x = -x;
+    }
+    let r = x % 2.0;
+    if r == 0.5 {
+        // We don't want to return -0.0
+        return 0.0;
+    }
+    if r < 1.0 {
+        -(core::f64::consts::PI * (r - 0.5)).sin()
+    } else {
+        (core::f64::consts::PI * (r - 1.5)).sin()
     }
 }

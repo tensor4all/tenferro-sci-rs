@@ -93,6 +93,25 @@ pub fn data(name: &str) -> (&'static str, usize) {
         "elliprj" => (include_str!("../tests/data/elliprj.csv"), 4),
         "elliprg" => (include_str!("../tests/data/elliprg.csv"), 3),
         "agm" => (include_str!("../tests/data/agm.csv"), 2),
+        "cosm1" => (include_str!("../tests/data/cosm1.csv"), 1),
+        "log1pmx" => (include_str!("../tests/data/log1pmx.csv"), 1),
+        "xlogy" => (include_str!("../tests/data/xlogy.csv"), 2),
+        "xlog1py" => (include_str!("../tests/data/xlog1py.csv"), 2),
+        "logit" => (include_str!("../tests/data/logit.csv"), 1),
+        "expit" => (include_str!("../tests/data/expit.csv"), 1),
+        "log_expit" => (include_str!("../tests/data/log_expit.csv"), 1),
+        "sinpi" => (include_str!("../tests/data/sinpi.csv"), 1),
+        "cospi" => (include_str!("../tests/data/cospi.csv"), 1),
+        "sindg" => (include_str!("../tests/data/sindg.csv"), 1),
+        "cosdg" => (include_str!("../tests/data/cosdg.csv"), 1),
+        "tandg" => (include_str!("../tests/data/tandg.csv"), 1),
+        "cotdg" => (include_str!("../tests/data/cotdg.csv"), 1),
+        "radian" => (include_str!("../tests/data/radian.csv"), 3),
+        "exp2" => (include_str!("../tests/data/exp2.csv"), 1),
+        "exp10" => (include_str!("../tests/data/exp10.csv"), 1),
+        "cbrt" => (include_str!("../tests/data/cbrt.csv"), 1),
+        "expm1" => (include_str!("../tests/data/expm1.csv"), 1),
+        "log1p" => (include_str!("../tests/data/log1p.csv"), 1),
         _ => panic!("no reference data for {name}"),
     }
 }
@@ -116,6 +135,26 @@ pub fn special_values() -> Vec<(String, Vec<f64>, f64)> {
                 .map(|s| num(s))
                 .collect();
             (f[0].to_string(), args, num(f[5]))
+        })
+        .collect()
+}
+
+/// The exact results of the elementary helpers (#19):
+/// `(function, args, expected, scipy)`, with signed zeros. `expected` is
+/// SciPy's value except where xsf's own tests fix a sign after SciPy 1.16.3
+/// (see `scripts/gen_specials_reference.py`).
+pub fn elementary_special_values() -> Vec<(String, Vec<f64>, f64, f64)> {
+    include_str!("../tests/data/elementary_special_values.csv")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split(',').collect();
+            let args = f[1..4]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .map(|s| num(s))
+                .collect();
+            (f[0].to_string(), args, num(f[4]), num(f[5]))
         })
         .collect()
 }
@@ -238,6 +277,26 @@ pub fn xsref_rows(name: &str) -> Vec<XsrefRow> {
         "ellipj_cn" => (include_str!("../tests/data/xsref/ellipj_cn.csv"), 2),
         "ellipj_dn" => (include_str!("../tests/data/xsref/ellipj_dn.csv"), 2),
         "ellipj_ph" => (include_str!("../tests/data/xsref/ellipj_ph.csv"), 2),
+        "cosm1" => (include_str!("../tests/data/xsref/cosm1.csv"), 1),
+        "log1pmx" => (include_str!("../tests/data/xsref/log1pmx.csv"), 1),
+        "xlogy" => (include_str!("../tests/data/xsref/xlogy.csv"), 2),
+        "xlog1py" => (include_str!("../tests/data/xsref/xlog1py.csv"), 2),
+        "logit" => (include_str!("../tests/data/xsref/logit.csv"), 1),
+        "expit" => (include_str!("../tests/data/xsref/expit.csv"), 1),
+        "log_expit" => (include_str!("../tests/data/xsref/log_expit.csv"), 1),
+        "sinpi" => (include_str!("../tests/data/xsref/sinpi.csv"), 1),
+        "cospi" => (include_str!("../tests/data/xsref/cospi.csv"), 1),
+        "sindg" => (include_str!("../tests/data/xsref/sindg.csv"), 1),
+        "cosdg" => (include_str!("../tests/data/xsref/cosdg.csv"), 1),
+        "tandg" => (include_str!("../tests/data/xsref/tandg.csv"), 1),
+        "cotdg" => (include_str!("../tests/data/xsref/cotdg.csv"), 1),
+        "radian" => (include_str!("../tests/data/xsref/radian.csv"), 3),
+        "round" => (include_str!("../tests/data/xsref/round.csv"), 1),
+        "exp2" => (include_str!("../tests/data/xsref/exp2.csv"), 1),
+        "exp10" => (include_str!("../tests/data/xsref/exp10.csv"), 1),
+        "cbrt" => (include_str!("../tests/data/xsref/cbrt.csv"), 1),
+        "expm1" => (include_str!("../tests/data/xsref/expm1.csv"), 1),
+        "log1p" => (include_str!("../tests/data/xsref/log1p.csv"), 1),
         _ => panic!("no xsref table for {name}"),
     };
     text.lines()

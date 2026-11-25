@@ -15,6 +15,7 @@ pub(crate) mod binom;
 pub(crate) mod carlson;
 pub(crate) mod digamma;
 pub(crate) mod digammainv;
+pub(crate) mod elementary;
 pub(crate) mod ellip;
 pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
@@ -102,13 +103,15 @@ pub(crate) fn add<T: Real>(a: T, b: T) -> T {
     }
 }
 
-/// `ln x` that is also correct for subnormal `x` and for finite `x >= 2^1023`,
+/// `ln x` that is also correct for `x < 2^-900` and for finite `x >= 2^1023`,
 /// where the double-double logarithm is not (xprec 0.2.3 returns NaN from
-/// 2^1023 up; see `docs/upstream-issues.md`): scale into the normal range by an
-/// exact power of two.
+/// 2^1023 up, and below about 1e-290 its Newton step evaluates `exp` with a
+/// subnormal low word: `ln(1e-300)` is off by 1.2e-27; see
+/// `docs/upstream-issues.md`): scale into the normal range by an exact power
+/// of two.
 pub(crate) fn ln<T: Real>(x: T) -> T {
     let xf = x.abs().approx_f64();
-    if x > T::zero() && xf < f64::MIN_POSITIVE {
+    if x > T::zero() && xf < 2.0_f64.powi(-900) {
         let scale = k::<T>(2.0_f64.powi(600));
         (x * scale).ln() - k::<T>(600.0) * T::LN_2()
     } else if x > T::zero() && xf.is_finite() && xf > 2.0_f64.powi(1000) {

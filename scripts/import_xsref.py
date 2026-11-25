@@ -249,6 +249,125 @@ def _ellipj_ref(k):
     return ref
 
 
+# Elementary helpers (#19).
+
+
+def ref_cosm1(x):
+    # cos x - 1 = -2 sin^2(x/2), without cancellation.
+    return -2 * mp.sin(mp.mpf(x) / 2) ** 2
+
+
+def ref_log1pmx(x):
+    if x < -1:
+        return None
+    if x == -1:
+        return -mp.inf
+    with mp.workprec(mp.mp.prec + extra_bits(1, x)):
+        x = mp.mpf(x)
+        return +(mp.log1p(x) - x)
+
+
+def ref_xlogy(x, y):
+    # x == 0 (and y not NaN) is 0 by convention, and y <= 0 is complex or
+    # infinite: SciPy's value is checked through xsref.
+    if x == 0 or y <= 0:
+        return None
+    return mp.mpf(x) * mp.log(y)
+
+
+def ref_xlog1py(x, y):
+    if x == 0 or y <= -1:
+        return None
+    with mp.workprec(mp.mp.prec + extra_bits(1, y)):
+        return +(mp.mpf(x) * mp.log1p(mp.mpf(y)))
+
+
+def ref_logit(x):
+    if not 0 < x < 1:
+        return None
+    with mp.workprec(mp.mp.prec + extra_bits(1, x)):
+        x = mp.mpf(x)
+        return +mp.log(x / (1 - x))
+
+
+def ref_expit(x):
+    return 1 / (1 + mp.exp(-mp.mpf(x)))
+
+
+def ref_log_expit(x):
+    return -mp.log1p(mp.exp(-mp.mpf(x)))
+
+
+def ref_sinpi(x):
+    return mp.sinpi(x)
+
+
+def ref_cospi(x):
+    return mp.cospi(x)
+
+
+# xsf's degree functions return 0 for |x| > 1e14 (total loss of precision);
+# SciPy's value is checked through xsref there.
+DG_LOSSTH = 1.0e14
+
+
+def ref_sindg(x):
+    return None if abs(x) > DG_LOSSTH else mp.sinpi(mp.mpf(x) / 180)
+
+
+def ref_cosdg(x):
+    return None if abs(x) > DG_LOSSTH else mp.cospi(mp.mpf(x) / 180)
+
+
+def ref_tandg(x):
+    if abs(x) > DG_LOSSTH or math.fmod(x, 90.0) == 0.0:
+        return None  # exact zeros and poles: SciPy's signed values
+    t = mp.mpf(x) / 180
+    return mp.sinpi(t) / mp.cospi(t)
+
+
+def ref_cotdg(x):
+    if abs(x) > DG_LOSSTH or math.fmod(x, 90.0) == 0.0:
+        return None
+    t = mp.mpf(x) / 180
+    return mp.cospi(t) / mp.sinpi(t)
+
+
+def ref_radian(d, m, s):
+    d, m, s = mp.mpf(d), mp.mpf(m), mp.mpf(s)
+    return ((d * 60 + m) * 60 + s) * mp.pi / 648000
+
+
+def ref_round(x):
+    # Round half to even; exact.
+    return mp.mpf(round(mp.mpf(x)))
+
+
+def ref_exp2(x):
+    return mp.power(2, mp.mpf(x))
+
+
+def ref_exp10(x):
+    return mp.power(10, mp.mpf(x))
+
+
+def ref_cbrt(x):
+    return mp.cbrt(x) if x >= 0 else -mp.cbrt(-mp.mpf(x))
+
+
+def ref_expm1(x):
+    return mp.expm1(x)
+
+
+def ref_log1p(x):
+    if x < -1:
+        return None
+    if x == -1:
+        return -mp.inf
+    with mp.workprec(mp.mp.prec + extra_bits(1, x)):
+        return +mp.log1p(mp.mpf(x))
+
+
 # (crate name, xsref name, signature, reference, output column)
 FUNCS = [
     ("gamma", "gamma", "d-d", ref_gamma, 0),
@@ -273,6 +392,27 @@ FUNCS = [
     ("ellipj_cn", "ellipj", "d_d-d_d_d_d", _ellipj_ref(1), 1),
     ("ellipj_dn", "ellipj", "d_d-d_d_d_d", _ellipj_ref(2), 2),
     ("ellipj_ph", "ellipj", "d_d-d_d_d_d", _ellipj_ref(3), 3),
+    # Elementary helpers (#19).
+    ("cosm1", "cosm1", "d-d", ref_cosm1, 0),
+    ("log1pmx", "log1pmx", "d-d", ref_log1pmx, 0),
+    ("xlogy", "xlogy", "d_d-d", ref_xlogy, 0),
+    ("xlog1py", "xlog1py", "d_d-d", ref_xlog1py, 0),
+    ("logit", "logit", "d-d", ref_logit, 0),
+    ("expit", "expit", "d-d", ref_expit, 0),
+    ("log_expit", "log_expit", "d-d", ref_log_expit, 0),
+    ("sinpi", "sinpi", "d-d", ref_sinpi, 0),
+    ("cospi", "cospi", "d-d", ref_cospi, 0),
+    ("sindg", "sindg", "d-d", ref_sindg, 0),
+    ("cosdg", "cosdg", "d-d", ref_cosdg, 0),
+    ("tandg", "tandg", "d-d", ref_tandg, 0),
+    ("cotdg", "cotdg", "d-d", ref_cotdg, 0),
+    ("radian", "radian", "d_d_d-d", ref_radian, 0),
+    ("round", "round", "d-d", ref_round, 0),
+    ("exp2", "exp2", "d-d", ref_exp2, 0),
+    ("exp10", "exp10", "d-d", ref_exp10, 0),
+    ("cbrt", "cbrt", "d-d", ref_cbrt, 0),
+    ("expm1", "expm1", "d-d", ref_expm1, 0),
+    ("log1p", "log1p", "d-d", ref_log1p, 0),
 ]
 
 
