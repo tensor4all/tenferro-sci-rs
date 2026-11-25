@@ -140,7 +140,8 @@ fn jacobi_scaled<T: Real>(n: i64, alpha: T, beta: T, x: T) -> Sc<T> {
 
 /// `P_n^(α,β)(x)`.
 pub(crate) fn jacobi<T: Real>(n: i64, alpha: T, beta: T, x: T) -> T {
-    jacobi_scaled(n, alpha, beta, x).value()
+    let r = jacobi_scaled(n, alpha, beta, x).value();
+    resolve(r, x, n, |xb| jacobi_scaled(n, alpha, beta, xb).value())
 }
 
 /// `C(2n + p - 1, n) = prod_(j=1..n) (n + p - 1 + j) / j`, as a scaled value.
@@ -163,7 +164,12 @@ fn binom_2n<T: Real>(n: i64, p: T) -> Sc<T> {
 
 /// The shifted Jacobi polynomial `G_n(p, q, x) = P_n^(p-q, q-1)(2x - 1) / C(2n + p - 1, n)`.
 pub(crate) fn sh_jacobi<T: Real>(n: i64, p: T, q: T, x: T) -> T {
-    let num = jacobi_scaled(n, p - q, q - T::one(), two::<T>() * x - T::one());
+    let (alpha, beta, y) = (p - q, q - T::one(), two::<T>() * x - T::one());
+    let num = jacobi_scaled(n, alpha, beta, y);
+    if num.m.is_nan() {
+        // an overflow inside the recurrence: the infinity of the numerator
+        return jacobi(n, alpha, beta, y) / binom_2n(n, p).value();
+    }
     let den = binom_2n(n, p);
     let r = super::div(num.m, den.m);
     Sc {
@@ -178,29 +184,36 @@ pub(crate) fn gegenbauer<T: Real>(n: i64, alpha: T, x: T) -> T {
     if alpha == T::zero() || n < 0 {
         return T::zero();
     }
-    let one = T::one();
-    recur(n, one, two::<T>() * alpha * x, |j, pm, p| {
-        let a = mul(two::<T>() * (j + alpha), x);
-        (mul(a, p) - mul(j + two::<T>() * alpha - one, pm)) / (j + one)
-    })
-    .value()
+    let eval = |x: T| {
+        let one = T::one();
+        recur(n, one, two::<T>() * alpha * x, |j, pm, p| {
+            let a = mul(two::<T>() * (j + alpha), x);
+            (mul(a, p) - mul(j + two::<T>() * alpha - one, pm)) / (j + one)
+        })
+        .value()
+    };
+    resolve(eval(x), x, n, eval)
 }
 
 /// `P_n(x)`, with `P_(-n-1) = P_n`.
 pub(crate) fn legendre<T: Real>(n: i64, x: T) -> T {
     let n = if n < 0 { -(n + 1) } else { n };
-    let one = T::one();
-    recur(n, one, x, |j, pm, p| {
-        let a = mul(two::<T>() * j + one, x);
-        (mul(a, p) - mul(j, pm)) / (j + one)
-    })
-    .value()
+    let eval = |x: T| {
+        let one = T::one();
+        recur(n, one, x, |j, pm, p| {
+            let a = mul(two::<T>() * j + one, x);
+            (mul(a, p) - mul(j, pm)) / (j + one)
+        })
+        .value()
+    };
+    resolve(eval(x), x, n, eval)
 }
 
 /// `T_n(x)`, with `T_(-n) = T_n`.
 pub(crate) fn chebyt<T: Real>(n: i64, x: T) -> T {
     let n = n.abs();
-    recur(n, T::one(), x, |_, pm, p| mul(two::<T>() * x, p) - pm).value()
+    let eval = |x: T| recur(n, T::one(), x, |_, pm, p| mul(two::<T>() * x, p) - pm).value();
+    resolve(eval(x), x, n, eval)
 }
 
 /// `U_n(x)`, with `U_(-1) = 0` and `U_(-n-2) = -U_n`.
@@ -209,10 +222,13 @@ pub(crate) fn chebyu<T: Real>(n: i64, x: T) -> T {
         return T::zero();
     }
     let (n, neg) = if n < -1 { (-n - 2, true) } else { (n, false) };
-    let v = recur(n, T::one(), two::<T>() * x, |_, pm, p| {
-        mul(two::<T>() * x, p) - pm
-    })
-    .value();
+    let eval = |x: T| {
+        recur(n, T::one(), two::<T>() * x, |_, pm, p| {
+            mul(two::<T>() * x, p) - pm
+        })
+        .value()
+    };
+    let v = resolve(eval(x), x, n, eval);
     if neg {
         -v
     } else {
@@ -254,11 +270,14 @@ pub(crate) fn genlaguerre<T: Real>(n: i64, alpha: T, x: T) -> T {
     if n < 0 {
         return T::zero();
     }
-    recur(n, one, one + alpha - x, |j, pm, p| {
-        let a = two::<T>() * j + one + alpha - x;
-        (mul(a, p) - mul(j + alpha, pm)) / (j + one)
-    })
-    .value()
+    let eval = |x: T| {
+        recur(n, one, one + alpha - x, |j, pm, p| {
+            let a = two::<T>() * j + one + alpha - x;
+            (mul(a, p) - mul(j + alpha, pm)) / (j + one)
+        })
+        .value()
+    };
+    resolve(eval(x), x, n, eval)
 }
 
 /// Probabilists' Hermite polynomial `He_n(x)`; NaN for `n < 0`.
@@ -266,7 +285,8 @@ pub(crate) fn hermitenorm<T: Real>(n: i64, x: T) -> T {
     if n < 0 {
         return T::nan();
     }
-    recur(n, T::one(), x, |j, pm, p| mul(x, p) - mul(j, pm)).value()
+    let eval = |x: T| recur(n, T::one(), x, |j, pm, p| mul(x, p) - mul(j, pm)).value();
+    resolve(eval(x), x, n, eval)
 }
 
 /// Physicists' Hermite polynomial `H_n(x)`; NaN for `n < 0`.
@@ -274,19 +294,46 @@ pub(crate) fn hermite<T: Real>(n: i64, x: T) -> T {
     if n < 0 {
         return T::nan();
     }
-    recur(n, T::one(), two::<T>() * x, |j, pm, p| {
-        mul(two::<T>() * x, p) - mul(two::<T>() * j, pm)
-    })
-    .value()
+    let eval = |x: T| {
+        recur(n, T::one(), two::<T>() * x, |j, pm, p| {
+            mul(two::<T>() * x, p) - mul(two::<T>() * j, pm)
+        })
+        .value()
+    };
+    resolve(eval(x), x, n, eval)
 }
 
-/// The `f64` value of an integer-degree kernel where a double-double result
-/// is not finite: an overflow or an infinite argument, whose classification
-/// (sign of the infinity, NaN) follows xsf.
-pub(crate) fn finite_or<T: Real>(r: T, f64_kernel: impl FnOnce() -> f64) -> T {
-    if r.approx_f64().is_finite() {
-        r
+/// A NaN that came from an overflow inside a step of a recurrence (a huge finite `x`
+/// makes `2 x p` infinite, and the next step forms `inf - inf`) is the infinity of the
+/// polynomial. Beyond its zeros the polynomial of degree `n` has the sign of its leading
+/// term and grows like `|x|^n`; both are read from the same recurrence at `x = ±2^30`.
+/// A NaN whose argument is not huge, or whose prediction is representable (a result
+/// that the recurrence should have computed), stays NaN.
+fn resolve<T: Real>(r: T, x: T, n: i64, redo: impl Fn(T) -> T) -> T {
+    if !r.is_nan() || !x.is_finite() {
+        return r;
+    }
+    let xf = x.approx_f64();
+    let big = 2.0_f64.powi(30);
+    if xf.abs() <= big {
+        return r;
+    }
+    let v = redo(k::<T>(big.copysign(xf)));
+    let vf = v.approx_f64();
+    if vf.is_nan() || vf == 0.0 {
+        return r;
+    }
+    if vf.is_infinite() {
+        return v;
+    }
+    let log2 = vf.abs().log2() + n as f64 * (xf.abs().log2() - 30.0);
+    if log2 > 1024.0 {
+        if vf < 0.0 {
+            -T::infinity()
+        } else {
+            T::infinity()
+        }
     } else {
-        T::from_dd(f64_kernel(), 0.0)
+        r
     }
 }

@@ -1904,6 +1904,17 @@ XSF_EXPECTED = {
     ("pmv", (0.0, 1.5, -1.0)): INF,  # sin(pi nu) < 0 gives +inf at x = -1
     ("assoc_legendre_p", (3, 0, -1.0)): -1.0,  # P_n(-1) = (-1)^n, scipy/gh-23101
     ("assoc_legendre_p_t3", (3, 0, -1.0)): -1.0,
+    # Deliberate deviation: the infinities of Q_n at x = +-1 (xsf and SciPy store 1e300), NaN derivatives.
+    ("lqn", (2, 1.0)): INF,
+    ("lqn", (2, -1.0)): -INF,
+    ("lqn", (0, 1.0)): INF,
+    ("lqn_d", (2, 1.0)): NAN,
+    ("lqn_d", (2, -1.0)): NAN,
+    ("lqmn", (1, 2, 1.0)): -INF,
+    ("lqmn", (1, 2, -1.0)): -INF,
+    ("lqmn", (0, 0, 1.0)): INF,
+    ("lqmn_d", (1, 2, 1.0)): NAN,
+    ("lqmn_d", (1, 2, -1.0)): NAN,
 }
 
 
@@ -1912,7 +1923,7 @@ def write_ortho_special_values():
         HEADER,
         "# columns: function,a0,a1,a2,a3,expected,scipy  (exact results: non-finite, zero or +-1)\n",
         "# expected = the value of xsf at the pinned commit (SciPy's value, except where its own tests fix another: XSF_EXPECTED);\n",
-        "# lqn and lqmn return the 1e300 stand-in for an infinity at x = +-1.\n",
+        "# lqn and lqmn: xsf and SciPy store the stand-in 1e300 at x = +-1; the crate returns the infinities and NaN derivatives (the scipy column keeps 1e300).\n",
     ]
     for name, f, cases in ORTHO_SPECIAL:
         for args in cases:

@@ -19,7 +19,8 @@
 //!   are formed in `f64`; the `int` products overflow from `n = 646`;
 //! * `lqmn` for `-1.1 <= x <= -1.0001` evaluates `log(|x| - 1)` where xsf
 //!   evaluates `log(x - 1)`, a NaN converted to an `int`;
-//! * `legendre_p` returns NaN for a negative degree (xsf returns `z`).
+//! * `legendre_p` returns NaN for a negative degree (xsf returns `z`);
+//! * `lqn` and `lqmn` return the infinities of the functions at `x = ±1`, where xsf stores `1e300`.
 
 use core::f64::consts::PI;
 
@@ -227,15 +228,21 @@ pub(crate) fn lq0(x: f64) -> f64 {
 }
 
 /// `Q_n(x)` and `Q_n'(x)` for `n = 0..qn.len()` (`lqn`, real argument). At
-/// `x = +-1` every entry is the sentinel `1e300`, as in xsf.
+/// `x = +-1` the values are infinite and the derivatives NaN.
 pub(crate) fn lqn(x: f64, qn: &mut [f64], qd: &mut [f64]) {
     let n = qn.len() - 1;
     let eps = 1.0e-16;
 
     if x.abs() == 1.0 {
+        // Deviation from xsf, which stores 1e300: Q_k(1) = +inf and Q_k(-1) = (-1)^(k+1) inf
+        // (Q_k(-x) = (-1)^(k+1) Q_k(x)), and the derivative has opposite infinities on the two sides.
         for k in 0..=n {
-            qn[k] = 1.0e300;
-            qd[k] = 1.0e300;
+            qn[k] = if x > 0.0 || k % 2 == 1 {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            };
+            qd[k] = f64::NAN;
         }
         return;
     }
@@ -322,7 +329,7 @@ pub(crate) fn lqn(x: f64, qn: &mut [f64], qd: &mut [f64]) {
 
 /// `Q_n^m(x)` and its derivative for `m = 0..=mmax` and `n = 0..=nmax`
 /// (`lqmn`, real argument), row-major with `nmax + 1` columns. At `x = +-1`
-/// every entry is the sentinel `1e300`, as in xsf.
+/// the values are infinite and the derivatives NaN.
 pub(crate) fn lqmn(x: f64, mmax: usize, nmax: usize, qm: &mut [f64], qd: &mut [f64]) {
     let m = mmax;
     let n = nmax;
@@ -330,10 +337,18 @@ pub(crate) fn lqmn(x: f64, mmax: usize, nmax: usize, qm: &mut [f64], qd: &mut [f
     let at = |i: usize, j: usize| i * w + j;
 
     if x.abs() == 1.0 {
+        // Deviation from xsf, which stores 1e300: Q_j^i(x) ~ (-1)^i (1 - x)^(-i/2) at x = 1 and
+        // Q_j^i(-x) = (-1)^(j+i+1) Q_j^i(x), so the entry is (-1)^i inf at 1 and (-1)^(j+1) inf
+        // at -1; the derivative has opposite infinities on the two sides.
         for i in 0..(m + 1) {
             for j in 0..(n + 1) {
-                qm[at(i, j)] = 1e300;
-                qd[at(i, j)] = 1e300;
+                let negative = if x > 0.0 { i % 2 == 1 } else { j % 2 == 0 };
+                qm[at(i, j)] = if negative {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                };
+                qd[at(i, j)] = f64::NAN;
             }
         }
         return;

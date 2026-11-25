@@ -260,14 +260,20 @@ fn q_values<T: Real>(x: T, n: usize) -> Vec<T> {
     q
 }
 
-/// `Q_n(x)` and `Q_n'(x)` for `n = 0..qn.len()`, `x` finite. At `x = +-1` every
-/// entry is `1e300`, the stand-in for an infinity of xsf.
+/// `Q_n(x)` and `Q_n'(x)` for `n = 0..qn.len()`, `x` finite. At `x = +-1` the
+/// values are infinite and the derivatives NaN.
 pub(crate) fn lqn<T: Real>(x: T, qn: &mut [T], qd: &mut [T]) {
     let n = qn.len() - 1;
     if x.abs() == T::one() {
+        // Q_j(1) = +inf, Q_j(-1) = (-1)^(j+1) inf; the derivative has opposite infinities on
+        // the two sides of the point.
         for j in 0..=n {
-            qn[j] = T::from_dd(1.0e300, 0.0);
-            qd[j] = T::from_dd(1.0e300, 0.0);
+            qn[j] = if x > T::zero() || j % 2 == 1 {
+                T::infinity()
+            } else {
+                -T::infinity()
+            };
+            qd[j] = T::nan();
         }
         return;
     }
@@ -282,13 +288,26 @@ pub(crate) fn lqn<T: Real>(x: T, qn: &mut [T], qd: &mut [T]) {
 }
 
 /// `Q_n^m(x)` and its derivative for `m = 0..=mmax`, `n = 0..=nmax`, row-major with
-/// `nmax + 1` columns, `x` finite. At `x = +-1` every entry is `1e300`.
+/// `nmax + 1` columns, `x` finite. At `x = +-1` the values are infinite and the derivatives NaN.
 pub(crate) fn lqmn<T: Real>(x: T, mmax: usize, nmax: usize, qm: &mut [T], qd: &mut [T]) {
     let w = nmax + 1;
     let one = T::one();
     if x.abs() == one {
-        for v in qm.iter_mut().chain(qd.iter_mut()) {
-            *v = T::from_dd(1.0e300, 0.0);
+        // Q_j^i(1) = (-1)^i inf, Q_j^i(-1) = (-1)^(j+1) inf; the derivatives are NaN.
+        for i in 0..=mmax {
+            for j in 0..=nmax {
+                let negative = if x > T::zero() {
+                    i % 2 == 1
+                } else {
+                    j % 2 == 0
+                };
+                qm[i * w + j] = if negative {
+                    -T::infinity()
+                } else {
+                    T::infinity()
+                };
+                qd[i * w + j] = T::nan();
+            }
         }
         return;
     }
