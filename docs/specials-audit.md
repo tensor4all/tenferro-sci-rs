@@ -65,12 +65,12 @@ where they pin a boundary. A random sweep complements this set.
   `#![cfg(feature = "xprec")]` and compiled to zero tests under
   `cargo test -p specials --no-default-features`. They now gate only their
   `Df64` items, so their `f64` rows run in both configurations (counts at
-  #30: 64 tests in those five files without `xprec`, 73 with it). The tests
+  #30: 65 tests in those five files without `xprec`, 73 with it). The tests
   that still need `xprec`, and why:
 
   | File | Tests that need `xprec` | Why |
   | --- | --- | --- |
-  | `reference.rs` | `df64_matches_mpmath`, `stirling2_df64_beyond_the_work_limit_is_exact`, `df64_elliprj_ratio_limit_is_fail_fast` | Their tolerances (1e-29 to 1e-30) and the `R_J` ratio limit are statements about `Df64`. `special_values_match_scipy` runs its `f64` half without the feature. |
+  | `reference.rs` | `df64_matches_mpmath`, `df64_elliprj_ratio_limit_is_fail_fast` | Their tolerances (1e-29 to 1e-30) and the `R_J` ratio limit are statements about `Df64`. `special_values_match_scipy` and `stirling2_df64_beyond_the_work_limit_is_exact` run their `f64` halves without the feature. |
   | `xsref.rs` | `df64_matches_mpmath_on_xsref_points`, `df64_matches_xsref_where_mpmath_is_undefined` | They check the double-double results; `f64_matches_xsref` covers every xsref row in `f64`. |
   | `xsf_regressions.rs` | none | Every test runs its `f64` case; `for_both!` adds the `Df64` case with the feature. |
   | `review_regressions.rs` | `n4_digammainv_df64_holds_1e_30_below_minus_1e154`, `n7_stirling2_df64_keeps_the_low_word_of_large_arguments`, `n8_poch_df64_subnormal_a`, `strategies_agree_on_extreme_arguments` | `n4`, `n7` and `n8` are `Df64`-only findings with 1e-29/1e-30 tolerances; the agreement grid compares `f64` with `Df64`. The other seven tests run their `f64` assertions. |

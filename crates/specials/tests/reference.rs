@@ -265,14 +265,13 @@ fn special_values_match_scipy() {
     }
 }
 
-#[cfg(feature = "xprec")]
 /// `S(n, n-3) = C(n,4) + 10 C(n,5) + 15 C(n,6)` in f64 (relative error ~1e-15 for the n used).
 fn stirling2_n_minus_3(n: f64) -> f64 {
     let c = |j: u32| (0..j).fold(1.0, |acc, i| acc * (n - f64::from(i)) / f64::from(i + 1));
     c(4) + 10.0 * c(5) + 15.0 * c(6)
 }
 
-#[cfg(feature = "xprec")]
+/// The `f64` assertion runs in every configuration, the `Df64` ones with `xprec`.
 #[test]
 fn stirling2_df64_beyond_the_work_limit_is_exact() {
     // (k-1)(n-k) = 3.6e7 > 3e7, beyond the recurrence: n - k = 3 <= 64 takes the
@@ -281,26 +280,32 @@ fn stirling2_df64_beyond_the_work_limit_is_exact() {
     // evaluated in f64.
     let (n, k) = (1.2e7, 1.2e7 - 3.0);
     let exact = stirling2_n_minus_3(n);
-    let df = specials::stirling2(Df64::from(n), Df64::from(k));
-    let e = (df.hi() - exact).abs() / exact;
-    assert!(
-        e < 1e-14,
-        "S({n}, {k}): {:e} vs {exact:e}, error {e:e}",
-        df.hi()
-    );
+    #[cfg(feature = "xprec")]
+    {
+        let df = specials::stirling2(Df64::from(n), Df64::from(k));
+        let e = (df.hi() - exact).abs() / exact;
+        assert!(
+            e < 1e-14,
+            "S({n}, {k}): {:e} vs {exact:e}, error {e:e}",
+            df.hi()
+        );
+    }
     let f = specials::stirling2(n, k);
     assert!(
         ((f - exact) / exact).abs() < 1e-14,
         "f64 S({n}, {k}) = {f:e}"
     );
     // Within the limit (cost 6e5): the exact recurrence, to double-double.
-    let (n, k) = (2e5, 2e5 - 3.0);
-    let df = specials::stirling2(Df64::from(n), Df64::from(k));
-    let exact = stirling2_n_minus_3(n);
-    assert!(
-        (df.hi() - exact).abs() / exact < 1e-14,
-        "f64 formula limits the check"
-    );
+    #[cfg(feature = "xprec")]
+    {
+        let (n, k) = (2e5, 2e5 - 3.0);
+        let df = specials::stirling2(Df64::from(n), Df64::from(k));
+        let exact = stirling2_n_minus_3(n);
+        assert!(
+            (df.hi() - exact).abs() / exact < 1e-14,
+            "f64 formula limits the check"
+        );
+    }
 }
 
 /// R_J(x, y, z, z) = R_D(x, y, z) (DLMF 19.20.? degenerate case). The `Df64`
