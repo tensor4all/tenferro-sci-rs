@@ -157,3 +157,101 @@ fn near_diagonal_matches_the_recurrence() {
         }
     }
 }
+
+/// The integer-degree recurrences and the Legendre-function recurrences of `generic`, evaluated
+/// in `f64`, against the mpmath rows. The last argument of a row is its scale (the largest term of
+/// the recurrence), so the absolute floor near a zero is `100 (n + 1) eps scale`.
+#[test]
+fn generic_orthogonal_algorithms_in_f64_match_mpmath() {
+    use crate::generic::{legendre as gl, orthogonal as go};
+    let tol = 1e-10;
+    let names = [
+        "eval_jacobi_int",
+        "eval_sh_jacobi_int",
+        "eval_gegenbauer_int",
+        "eval_chebyt_int",
+        "eval_chebyu_int",
+        "eval_chebyc_int",
+        "eval_chebys_int",
+        "eval_sh_chebyt_int",
+        "eval_sh_chebyu_int",
+        "eval_legendre_int",
+        "eval_sh_legendre_int",
+        "eval_laguerre_int",
+        "eval_genlaguerre_int",
+        "eval_hermite",
+        "eval_hermitenorm",
+        "assoc_legendre_p",
+        "assoc_legendre_p_t3",
+        "assoc_legendre_p_norm",
+        "assoc_legendre_p_norm_t3",
+        "sph_legendre_p",
+        "pmv_int",
+    ];
+    for name in names {
+        let all = rows(name);
+        assert!(all.len() > 60, "{name}: {} rows", all.len());
+        for r in all.iter().filter(|r| r.is_f64()) {
+            let a: Vec<f64> = r.args_as();
+            // `j + 2 alpha - 1` absorbs alpha of 1e-8 or less in f64 (double-double keeps it in the low word)
+            if name == "eval_gegenbauer_int" && a[1].abs() < 1e-8 {
+                continue;
+            }
+            let n = a[0] as i64;
+            let got = match name {
+                "eval_jacobi_int" => go::jacobi(n, a[1], a[2], a[3]),
+                "eval_sh_jacobi_int" => go::sh_jacobi(n, a[1], a[2], a[3]),
+                "eval_gegenbauer_int" => go::gegenbauer(n, a[1], a[2]),
+                "eval_chebyt_int" => go::chebyt(n, a[1]),
+                "eval_chebyu_int" => go::chebyu(n, a[1]),
+                "eval_chebyc_int" => go::chebyc(n, a[1]),
+                "eval_chebys_int" => go::chebys(n, a[1]),
+                "eval_sh_chebyt_int" => go::sh_chebyt(n, a[1]),
+                "eval_sh_chebyu_int" => go::sh_chebyu(n, a[1]),
+                "eval_legendre_int" => go::legendre(n, a[1]),
+                "eval_sh_legendre_int" => go::sh_legendre(n, a[1]),
+                "eval_laguerre_int" => go::genlaguerre(n, 0.0, a[1]),
+                "eval_genlaguerre_int" => go::genlaguerre(n, a[1], a[2]),
+                "eval_hermite" => go::hermite(n, a[1]),
+                "eval_hermitenorm" => go::hermitenorm(n, a[1]),
+                "assoc_legendre_p" => {
+                    gl::assoc_legendre_p(false, n as i32, a[1] as i32, a[2], false)
+                }
+                "assoc_legendre_p_t3" => {
+                    gl::assoc_legendre_p(false, n as i32, a[1] as i32, a[2], true)
+                }
+                "assoc_legendre_p_norm" => {
+                    gl::assoc_legendre_p(true, n as i32, a[1] as i32, a[2], false)
+                }
+                "assoc_legendre_p_norm_t3" => {
+                    gl::assoc_legendre_p(true, n as i32, a[1] as i32, a[2], true)
+                }
+                "sph_legendre_p" => gl::sph_legendre_p(n as i32, a[1] as i32, a[2]),
+                _ => gl::pmv_int(a[0], a[1], a[2]).expect("integer arguments"),
+            };
+            // degree and order set the size of the absolute floor
+            let size = if name.contains("legendre") || name == "pmv_int" {
+                a[0].abs().max(a[1].abs())
+            } else {
+                a[0].abs()
+            };
+            let scale = a[a.len() - 1];
+            let floor = 100.0 * (size + 1.0) * f64::EPSILON * scale;
+            let reference = r.reference.0 + r.reference.1;
+            let ok = got.is_finite()
+                && ((got - reference).abs() <= tol * reference.abs().max(floor / tol)
+                    || (got - reference).abs() <= floor);
+            // sph and normalized rows near |z| = 1 carry the 1 - z z rounding of the input
+            let ok = ok
+                || (name.starts_with("assoc") || name == "sph_legendre_p") && {
+                    let e = error(got, r.reference, floor / tol);
+                    e <= 1e-8
+                };
+            assert!(
+                ok,
+                "{name}{a:?} (line {}): got {got:e}, mpmath {:?}",
+                r.line, r.reference
+            );
+        }
+    }
+}

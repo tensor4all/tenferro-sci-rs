@@ -33,7 +33,7 @@ batching and traced use on top.
 
 | Crate | Contents | Status |
 | --- | --- | --- |
-| [`specials`](crates/specials) | Special functions for `f64` (a port of SciPy's [xsf](https://github.com/scipy/xsf)) and double-double `xprec::Df64` (precision-adaptive algorithms). Gamma family so far. | not published |
+| [`specials`](crates/specials) | Special functions for `f64` (a port of SciPy's [xsf](https://github.com/scipy/xsf)) and double-double `xprec::Df64` (precision-adaptive algorithms). Gamma family (gamma, beta, polygamma, zeta, Stirling numbers, ...), complete and incomplete elliptic integrals, Jacobi elliptic functions and Carlson forms, elementary helpers (`cosm1`, `xlogy`, `sinpi`, `exp10`, ...), classical orthogonal polynomials of integer and real degree, and Legendre functions (`pmv`, associated, spherical, second kind) so far. | not published |
 
 ## Validation
 
