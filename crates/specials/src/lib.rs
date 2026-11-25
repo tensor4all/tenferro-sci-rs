@@ -1004,7 +1004,8 @@ pub fn logit<T: Real>(x: T) -> T {
 ///
 /// `expit(-∞) = 0`, `expit(+∞) = 1`. On the `f64` path the result is `0` for
 /// `x < -709.78` (where `e^-x` overflows, as in SciPy), although the exact
-/// value is subnormal down to `x ≈ -745`.
+/// value is subnormal down to `x ≈ -745`; the `Df64` path returns that
+/// subnormal value.
 ///
 /// # Examples
 ///
@@ -1092,7 +1093,7 @@ pub fn cospi<T: Real>(x: T) -> T {
 /// The argument is reduced exactly, so multiples of 90° give exact `0` and
 /// `±1`, unlike `x.to_radians().sin()`. `sindg(±0) = ±0`. For
 /// `|x| > 1e14` the result is `0` (no fractional degrees are left; SciPy
-/// returns 0 there too). NaN for NaN and infinite `x`.
+/// returns 0 there too, also for `±∞`). NaN for NaN.
 ///
 /// # Examples
 ///
@@ -1112,8 +1113,8 @@ pub fn sindg<T: Real>(x: T) -> T {
 
 /// cos(x°), the cosine of an angle in degrees (`scipy.special.cosdg`).
 ///
-/// Reduced exactly as [`sindg`]; `0` for `|x| > 1e14`; NaN for NaN and
-/// infinite `x`.
+/// Reduced exactly as [`sindg`]; `0` for `|x| > 1e14` and `±∞` (as SciPy);
+/// NaN for NaN.
 ///
 /// # Examples
 ///
@@ -1134,8 +1135,8 @@ pub fn cosdg<T: Real>(x: T) -> T {
 ///
 /// Exact `±0` at multiples of 180°, `±1` at odd multiples of 45° and `±∞` at
 /// odd multiples of 90°, signed as in SciPy (`tandg(90) = +∞`,
-/// `tandg(270) = -∞`, `tandg(540) = -0`); `0` for `|x| > 1e14`; NaN for NaN
-/// and infinite `x`.
+/// `tandg(270) = -∞`, `tandg(540) = -0`); `0` for `|x| > 1e14` and `±∞`
+/// (as SciPy); NaN for NaN.
 ///
 /// # Examples
 ///
@@ -1156,8 +1157,8 @@ pub fn tandg<T: Real>(x: T) -> T {
 /// cot(x°), the cotangent of an angle in degrees (`scipy.special.cotdg`).
 ///
 /// `±∞` at multiples of 180° (`cotdg(0) = +∞`, `cotdg(-0) = -∞`), exact `±0`
-/// at odd multiples of 90°, signed as in SciPy; `0` for `|x| > 1e14`; NaN for
-/// NaN and infinite `x`.
+/// at odd multiples of 90°, signed as in SciPy; `0` for `|x| > 1e14` and `±∞`
+/// (as SciPy); NaN for NaN.
 ///
 /// # Examples
 ///

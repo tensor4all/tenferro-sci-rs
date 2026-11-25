@@ -51,7 +51,8 @@ pub(crate) fn log1p<T: Real>(x: T) -> T {
         return x;
     }
     if x < k(-0.5) {
-        return (T::one() + x).ln();
+        // The crate's `ln`, which rescales below 2^-900 (`1 + x` that small).
+        return ln(T::one() + x);
     }
     if x.approx_f64() > 2.0_f64.powi(100) {
         return ln(x) + x.recip();
@@ -168,13 +169,19 @@ pub(crate) fn xlog1py<T: Real>(x: T, y: T) -> T {
 }
 
 /// `1/(1 + e^-x)`; `e^x/(1 + e^x)` for `x < 0`, so that neither form
-/// overflows before the result underflows.
+/// overflows before the result underflows. Below `x = -708` the result is
+/// `e^x` to double-double precision and below the normal range of the low
+/// word; the type's `exp` returns 0 from about -709.8, so it is the `f64`
+/// (subnormal) `e^x`.
 pub(crate) fn expit<T: Real>(x: T) -> T {
     if x.is_nan() {
         return x;
     }
     if x.is_infinite() {
         return if x > T::zero() { T::one() } else { T::zero() };
+    }
+    if x < k(-708.0) {
+        return T::from_dd(x.approx_f64().exp(), 0.0);
     }
     if x < T::zero() {
         let e = x.exp();
@@ -206,7 +213,8 @@ pub(crate) fn logit<T: Real>(x: T) -> T {
 }
 
 /// `ln expit(x) = -ln(1 + e^-x)`: `x - log1p(e^x)` for `x < 0`,
-/// `-log1p(e^-x)` otherwise (`-0` at `+∞`, as in xsf).
+/// `-log1p(e^-x)` otherwise (`-0` at `+∞`, as in xsf). Above `x = 708` the
+/// result is `-e^-x` (subnormal), from `f64`, as in [`expit`].
 pub(crate) fn log_expit<T: Real>(x: T) -> T {
     if x.is_nan() {
         return x;
@@ -216,6 +224,9 @@ pub(crate) fn log_expit<T: Real>(x: T) -> T {
             return x;
         }
         x - log1p(x.exp())
+    } else if x > k(708.0) {
+        let v = -(-x.approx_f64()).exp();
+        T::from_dd(v, 0.0)
     } else {
         let e = if x.is_infinite() {
             T::zero()

@@ -500,6 +500,11 @@ mod df64 {
         let expected = Df64::from(1e-25).ln();
         let got = specials::log1p(x);
         assert!(((got - expected) / expected).abs().hi() < 1e-30, "{got:?}");
+        // ... and with 1 + x below 2^-900, where xprec's ln is off by 1.2e-27.
+        // mpmath: ln(1e-300) = -690.7755278982137 - 2.3670096176709832e-14.
+        let got = specials::log1p(Df64::new_full(-1.0, 1e-300));
+        let expected = Df64::new_full(-690.7755278982137, -2.3670096176709832e-14);
+        assert!(((got - expected) / expected).abs().hi() < 1e-30, "{got:?}");
         // xprec: exp2(±inf) = NaN.
         assert_eq!(
             specials::exp2(Df64::from(f64::INFINITY)).hi(),
@@ -536,7 +541,8 @@ mod df64 {
 
     /// On a grid of extreme arguments both strategies classify the result
     /// alike (NaN, the same infinity, the same signed zero) and, where it is
-    /// finite, agree to `1e-14` relative or `1e-300` absolute, except at the
+    /// finite, agree to `1e-14` relative or `1e-300` absolute (`expit(-720)`:
+    /// `f64` flushes to 0 as SciPy, `Df64` is subnormal), except at the
     /// `f64` known limits (`f64_known_limit`).
     #[test]
     fn strategies_agree_on_extreme_arguments() {
@@ -555,6 +561,8 @@ mod df64 {
             -1.0,
             7.5,
             -7.5,
+            720.0,
+            -720.0,
             1e15,
             -1e15,
             1e300,
@@ -592,7 +600,7 @@ mod df64 {
                 let f = eval::<f64>(name, &a);
                 let ad: Vec<Df64> = a.iter().map(|&x| Df64::from(x)).collect();
                 let d = eval::<Df64>(name, &ad).hi();
-                let ok = if f.is_nan() || d.is_nan() || f.is_infinite() || f == 0.0 {
+                let ok = if f.is_nan() || d.is_nan() || f.is_infinite() || f == 0.0 && d == 0.0 {
                     same(Df64::from(d), f)
                 } else {
                     (f - d).abs() <= 1e-14 * f.abs() || (f - d).abs() <= 1e-300
@@ -610,26 +618,47 @@ mod df64 {
         );
     }
 
-    /// `f64` and `Df64` agree on every exact result and every xsref row to the
-    /// `f64` rounding of the `Df64` value (the strategies differ, the special
-    /// values do not).
+    /// On every xsref row both strategies classify the result alike (NaN,
+    /// the same infinity, the same signed zero) and otherwise agree to `1e-14`
+    /// relative or `1e-300` absolute (`expit(-710)`: `f64` 0, `Df64` the
+    /// subnormal value).
     #[test]
-    fn strategies_agree_on_the_sign_of_zero_results() {
+    fn strategies_agree_on_every_xsref_row() {
+        let mut fails = vec![];
         for name in NAMES {
             for r in xsref_rows(name) {
                 let f = eval::<f64>(name, &r.args);
                 let a: Vec<Df64> = r.args.iter().map(|&x| Df64::from(x)).collect();
                 let d = eval::<Df64>(name, &a).hi();
-                if f == 0.0 && d == 0.0 {
-                    assert_eq!(
-                        f.is_sign_negative(),
-                        d.is_sign_negative(),
-                        "{name} line {} {:?}",
-                        r.line,
-                        r.args
-                    );
+                let ok = if f.is_nan() || d.is_nan() || f.is_infinite() || f == 0.0 && d == 0.0 {
+                    same(Df64::from(d), f)
+                } else {
+                    (f - d).abs() <= 1e-14 * f.abs() || (f - d).abs() <= 1e-300
+                };
+                if !ok {
+                    fails.push(format!(
+                        "{name} line {} {:?}: f64 {f:e}, Df64 {d:e}",
+                        r.line, r.args
+                    ));
                 }
             }
+        }
+        assert!(fails.is_empty(), "{}", fails.join("\n"));
+    }
+
+    /// Between the underflow of the type's `exp` (about ±709.8) and the end
+    /// of the subnormal range, `expit` and `log_expit` return the subnormal
+    /// value, as the `f64` path of `log_expit` (`-e^-x`) does.
+    #[test]
+    fn df64_expit_and_log_expit_subnormal_results() {
+        for x in [709.0_f64, 710.0, 720.0, 740.0, 745.0] {
+            let want = -(-x).exp();
+            assert!(want != 0.0 || x >= 745.0);
+            let got = specials::log_expit(Df64::from(x)).hi();
+            assert_eq!(got, want, "log_expit({x})");
+            assert_eq!(specials::log_expit(x), want, "f64 log_expit({x})");
+            let got = specials::expit(Df64::from(-x)).hi();
+            assert_eq!(got, -want, "expit({})", -x);
         }
     }
 }
