@@ -92,7 +92,7 @@ where they pin a boundary. A random sweep complements this set.
   `--no-default-features` output.
 - CI (`.github/workflows/checks.yml`) builds and tests only the default
   features, which include `xprec`. No lane runs
-  `cargo test -p specials --no-default-features` yet (#30 tracks adding one),
+  `cargo test -p specials --no-default-features` yet (#32 tracks adding one),
   so that configuration is checked only when someone runs it locally, with
   the per-file test counts above.
 
