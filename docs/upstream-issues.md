@@ -132,6 +132,7 @@ cases:
 | `stirling2` | gh-378 | Temme approximation for `n > 50`: 2e-5 at `S(51, 7)` |
 | `ellipj` | (xsf transformation for `m < 0`) | NaN in all four outputs for `m < 0`, e.g. `ellipj(0.0, -2.0)`; xsf evaluates `m < 0` through DLMF 22.17 |
 | `elliprf` | gh-467 | NaN or `-inf` if `x` is 0 or subnormal and `y * z` underflows, e.g. `elliprf(0, 1e-300, 1e-30)` (xsf: 3.1223528191531603e17) |
+| `sindg`, `tandg`, `cotdg` | scipy/scipy#20731 (xsf `tests/xsf_tests/test_trig.cpp`) | signed zeros and infinities: `sindg(-0) = +0`, `tandg(-0) = +0`, `tandg(-90) = +inf`, `tandg(540) = +0`, `cotdg(-0) = +inf`, `cotdg(270) = +0`, ... (18 rows of `tests/data/elementary_special_values.csv`, whose `expected` column follows xsf's tests and whose `scipy` column keeps SciPy's value) |
 
 
 ## xprec: `Df64::ln` and `ln_1p` return NaN for `x >= 2^1023`
@@ -260,6 +261,77 @@ cases:
   so it is evaluated correctly (38.0250033738...). The scripts give no mpmath
   value for `m = 1` and `abs(phi) >= pi/2` (computed at the working precision),
   where F is infinite.
+
+## scipy/xsref: wrong references in the `log_expit` and `cbrt` tables
+
+- **Affects:** xsref `c5fde949` `tables/scipy_special_tests/log_expit/*_d-d.parquet`
+  and `cbrt/*_d-d.parquet`.
+- **Example:** `log_expit` at `x = 500, 710, 725, 735` has the reference `0`;
+  the value is `-e^-x` (`-7.1245764067412860e-218` at 500, mpmath at 256 bits),
+  which xsf returns. `cbrt` at `x = -10` and `-1` has the reference NaN; the
+  real cube root is `-2.154434690031884` and `-1`, which xsf returns. xsref
+  records the resulting error as the tolerance (up to 1.4e106, and `inf` for
+  `cbrt`), so the rows pass xsf's criterion without checking anything.
+- **Upstream:** not reported.
+- **Here:** `tests/elementary.rs` keeps the rows with their recorded tolerance
+  but leaves them out of the reported worst errors (`BAD_REFERENCE`); the
+  importer adds mpmath double-double values at these points, which the `Df64`
+  path is checked against, and `tests/data/log_expit.csv` and `cbrt.csv`
+  check both types at such arguments against mpmath.
+
+## scipy/xsref: the degree-function tables are SciPy values, not references
+
+- **Affects:** xsref `c5fde949` `sindg`, `cosdg`, `tandg` and `cotdg` (every row
+  has `fallback = True`: the "reference" is SciPy's own output).
+- **Example:** `cotdg(1)` is `57.289961630759144` in the table (Cephes'
+  `tan(89 π/180)`); the value is `57.28996163075942` (relative difference
+  4.8e-15, which is Cephes' error: rounding `89 π/180` costs the condition
+  number of `tan`, about 90 there). `sindg(30)` is `0.49999999999999994`.
+- **Upstream:** not reported (xsref marks the rows as fallback).
+- **Here:** the tables pin parity with xsf only; `f64` accuracy is checked
+  against mpmath in `tests/data/{sindg,cosdg,tandg,cotdg}.csv` with a
+  tolerance that grows with the condition number of `tan`
+  (`tests/elementary.rs`, `f64_tolerance`), and `Df64` is checked to 1e-30.
+
+## scipy/xsf: `cotdg(x)` is `±inf` for `0 < |x| < 1e-14`
+
+- **Affects:** xsf `31177fd9` (`cephes/tandg.h`, `tancot`) and SciPy 1.16.3.
+- **Example:** `cotdg(1e-300)` is `+inf`; the value is `5.729577951308232e301`.
+  `tancot` folds `x` to `90 - x`, which rounds to `90` for `|x|` below
+  `45 ε ≈ 1e-14`, and returns the pole. The same happens to `tandg` within
+  `1e-14` of an odd multiple of 90°.
+- **Upstream:** not reported.
+- **Here:** the `f64` path keeps xsf's value (parity); `tests/elementary.rs`
+  checks those rows against SciPy only (`f64_known_limit`). The `Df64` path
+  computes the two complementary angles separately and returns the finite
+  value (checked against mpmath).
+
+## xprec: defects in elementary functions of `Df64`
+
+- **Affects:** xprec 0.2.3.
+- **Examples:**
+  - `Df64::from(-0.0).exp_m1()` and `.ln_1p()` are `+0` (should be `-0`).
+  - `Df64::new_full(-1.0, 1e-25).ln_1p()` is `-inf`: it starts from
+    `ln_1p` of the high word, `-1`. The value is `ln(1e-25) = -57.56...`.
+  - `Df64::exp2` is `exp(x ln 2)`: NaN at `±inf`, and its relative error grows
+    with `|x|` (1.9e-30 at `x = 1023.9`). `Df64::from(10.0).powf(x)` likewise
+    (2.8e-30 at `x = 307.9`).
+  - `Float::cbrt` for `Df64` is `todo!()` and panics.
+  - `Df64::sin` and `cos` panic (an `assert!` in the kernel) for NaN and
+    `±inf`.
+  - `Df64::ln` loses accuracy below about 1e-290, where `exp` in its Newton
+    step has a subnormal low word: `Df64::from(1e-300).ln()` is off by 1.2e-27
+    (relative).
+  - A product that is zero is `+0` whatever the signs:
+    `Df64::from(-10.0) * Df64::from(0.0)` is `+0`.
+- **Upstream:** not reported.
+- **Here:** `generic/elementary.rs` handles each (signed zeros returned
+  directly, `1 + x` evaluated exactly near `-1`, `exp2`/`exp10` with an exact
+  integer split, `cbrt` by a Newton step from the `f64` root, non-finite
+  arguments returned before `sin`/`cos`, zero products signed from the `f64`
+  product), and `generic::ln` now rescales arguments below 2^-900 (it
+  previously did so only below `f64::MIN_POSITIVE`).
+  `tests/elementary.rs::df64::xprec_defects_are_handled` checks them.
 
 ## xprec: `Df64::sqrt` loses digits below about 1e-292
 

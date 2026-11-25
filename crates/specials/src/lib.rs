@@ -51,6 +51,30 @@
 //! | `elliprg(x, y, z)` | [`elliprg`] | 1e-30 |
 //! | `elliprj(x, y, z, p)` | [`elliprj`] | 1e-30 |
 //! | `agm(a, b)` | [`agm`] | 1e-30 |
+//! | `cosm1(x)` | [`cosm1`] | 1e-30 for `abs(x) <= 2^50`; beyond, `f64` accuracy (absolute 1e-16) |
+//! | `log1pmx(x)` (xsf `log1pmx`) | [`log1pmx`] | 1e-30 |
+//! | `xlogy(x, y)` | [`xlogy`] | 1e-30 |
+//! | `xlog1py(x, y)` | [`xlog1py`] | 1e-30 |
+//! | `logit(x)` | [`logit`] | 1e-30 |
+//! | `expit(x)` | [`expit`] | 1e-30 |
+//! | `log_expit(x)` | [`log_expit`] | 1e-30 |
+//! | `sinpi(x)` (xsf `sinpi`) | [`sinpi`] | 1e-30 |
+//! | `cospi(x)` (xsf `cospi`) | [`cospi`] | 1e-30 |
+//! | `sindg(x)` | [`sindg`] | 1e-30 |
+//! | `cosdg(x)` | [`cosdg`] | 1e-30 |
+//! | `tandg(x)` | [`tandg`] | 1e-30 |
+//! | `cotdg(x)` | [`cotdg`] | 1e-30 |
+//! | `radian(d, m, s)` | [`radian`] | 1e-30 |
+//! | `exp2(x)` | [`exp2`] | 1e-30 |
+//! | `exp10(x)` | [`exp10`] | 1e-30 |
+//! | `cbrt(x)` | [`cbrt`] | 1e-30 |
+//! | `expm1(x)` | [`expm1`] | 1e-30 |
+//! | `log1p(x)` | [`log1p`] | 1e-30 |
+//! | `round(x)` | not provided: use [`f64::round_ties_even`] (exact; `-0` where SciPy gives `+0` for `-1/2 <= x < 0`) | - |
+//!
+//! `exp2`, `exp10`, `cbrt`, `expm1` and `log1p` are `std`'s functions for
+//! `f64` (they pass xsref's tables); the crate provides them for the `Df64`
+//! path, where `xprec`'s versions have defects (`docs/upstream-issues.md`).
 //!
 //! A double-double result below about 1e-292 has a subnormal low word, so its
 //! relative accuracy falls towards that of `f64` at the bottom of the range;
@@ -865,6 +889,419 @@ pub fn agm<T: Real>(a: T, b: T) -> T {
     match T::STRATEGY {
         Strategy::F64Kernels => k64(xsf::agm::agm(a.approx_f64(), b.approx_f64())),
         Strategy::Adaptive => generic::agm::agm(a, b),
+    }
+}
+
+/// cos(x) − 1, accurate where `x` is close to a multiple of 2π (`scipy.special.cosm1`).
+///
+/// `cosm1(±0) = +0`; NaN for infinite `x`. Not in `std`: `x.cos() - 1.0`
+/// loses all digits for small `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::cosm1;
+///
+/// // cos(1e-10) - 1 = -5e-21, which `(1e-10_f64).cos() - 1.0` rounds to 0.
+/// assert!((cosm1(1e-10_f64) + 5e-21).abs() < 1e-36);
+/// ```
+pub fn cosm1<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::unity::cosm1(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::cosm1(x),
+    }
+}
+
+/// ln(1 + x) − x (`scipy.special.log1pmx`), accurate for small `x` where it
+/// is about `-x²/2`.
+///
+/// `-∞` at `x = -1`; NaN for `x < -1`, for NaN and for `x = +∞` (`∞ - ∞`, as
+/// SciPy).
+///
+/// # Examples
+///
+/// ```
+/// use specials::log1pmx;
+///
+/// let x = 1e-5_f64;
+/// // -x²/2 + x³/3 - x⁴/4 + ..., the next term is x⁵/5 = 2e-26.
+/// let series = -x * x / 2.0 + x * x * x / 3.0 - x * x * x * x / 4.0;
+/// assert!((log1pmx(x) - series).abs() < 1e-25);
+/// assert_eq!(log1pmx(-1.0_f64), f64::NEG_INFINITY);
+/// ```
+pub fn log1pmx<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::unity::log1pmx(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::log1pmx(x),
+    }
+}
+
+/// x ln y, with `xlogy(0, y) = 0` for every `y` that is not NaN
+/// (`scipy.special.xlogy`), including `y = 0` and `y < 0`.
+///
+/// For `x != 0`: `∓∞` at `y = 0` (sign opposite to `x`), NaN for `y < 0`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::xlogy;
+///
+/// assert_eq!(xlogy(0.0_f64, 0.0), 0.0); // the convention 0 ln 0 = 0
+/// assert!((xlogy(2.0_f64, core::f64::consts::E) - 2.0).abs() < 1e-15);
+/// assert!(xlogy(0.0_f64, f64::NAN).is_nan());
+/// ```
+pub fn xlogy<T: Real>(x: T, y: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::log::xlogy(x.approx_f64(), y.approx_f64())),
+        Strategy::Adaptive => generic::elementary::xlogy(x, y),
+    }
+}
+
+/// x ln(1 + y), with `xlog1py(0, y) = 0` for every `y` that is not NaN
+/// (`scipy.special.xlog1py`).
+///
+/// For `x != 0`: `∓∞` at `y = -1`, NaN for `y < -1`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::xlog1py;
+///
+/// assert_eq!(xlog1py(0.0_f64, -1.0), 0.0);
+/// // ln(1 + y) ≈ y for tiny y, with full relative accuracy.
+/// assert!((xlog1py(3.0_f64, 1e-20) - 3e-20).abs() < 1e-35);
+/// ```
+pub fn xlog1py<T: Real>(x: T, y: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::log::xlog1py(x.approx_f64(), y.approx_f64())),
+        Strategy::Adaptive => generic::elementary::xlog1py(x, y),
+    }
+}
+
+/// ln(x/(1 − x)), the logit function, inverse of [`expit`] (`scipy.special.logit`).
+///
+/// `logit(0) = -∞` (also for `-0`), `logit(1) = +∞`; NaN outside `[0, 1]`
+/// and for NaN.
+///
+/// # Examples
+///
+/// ```
+/// use specials::logit;
+///
+/// assert_eq!(logit(0.5_f64), 0.0);
+/// assert_eq!(logit(0.0_f64), f64::NEG_INFINITY);
+/// assert_eq!(logit(1.0_f64), f64::INFINITY);
+/// assert!(logit(1.5_f64).is_nan());
+/// ```
+pub fn logit<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::log_exp::logit(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::logit(x),
+    }
+}
+
+/// 1/(1 + e^−x), the logistic sigmoid (`scipy.special.expit`).
+///
+/// `expit(-∞) = 0`, `expit(+∞) = 1`. On the `f64` path the result is `0` for
+/// `x < -709.78` (where `e^-x` overflows, as in SciPy), although the exact
+/// value is subnormal down to `x ≈ -745`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::expit;
+///
+/// assert_eq!(expit(0.0_f64), 0.5);
+/// assert_eq!(expit(f64::NEG_INFINITY), 0.0);
+/// assert!((expit(-50.0_f64) - 1.9287498479639178e-22).abs() < 1e-37);
+/// ```
+pub fn expit<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::log_exp::expit(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::expit(x),
+    }
+}
+
+/// ln(expit(x)) = −ln(1 + e^−x) (`scipy.special.log_expit`), accurate for
+/// large `|x|` where `expit(x).ln()` is not.
+///
+/// `log_expit(-∞) = -∞`, `log_expit(+∞) = -0`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::log_expit;
+///
+/// // ln expit(-1000) = -1000 - ln(1 + e^-1000) = -1000 to double precision.
+/// assert_eq!(log_expit(-1000.0_f64), -1000.0);
+/// assert!((log_expit(40.0_f64) + 4.248354255291589e-18).abs() < 1e-33);
+/// ```
+pub fn log_expit<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::log_exp::log_expit(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::log_expit(x),
+    }
+}
+
+/// sin(πx), with the argument reduced exactly (`scipy.special.sinpi`).
+///
+/// Exact zeros at the integers, signed as in SciPy: `sinpi(±0) = ±0`;
+/// for an integer `n > 0`, `+0` if `n` is even and `-0` if odd, and the
+/// opposite for `n < 0`. NaN for infinite `x`. Every `f64` with `|x| >= 2^52`
+/// is an integer or half-integer, so the result there is exactly `0` or `±1`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::sinpi;
+///
+/// assert_eq!(sinpi(0.5_f64), 1.0);
+/// assert_eq!(sinpi(1.0_f64), 0.0); // while (π).sin() = 1.2e-16
+/// assert!(sinpi(1.0_f64).is_sign_negative());
+/// assert_eq!(sinpi(1e300_f64), 0.0);
+/// ```
+pub fn sinpi<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::sinpi(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::sinpi(x),
+    }
+}
+
+/// cos(πx), with the argument reduced exactly (`scipy.special.cospi`).
+///
+/// Exact `+0` at every half-integer (never `-0`); NaN for infinite `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::cospi;
+///
+/// assert_eq!(cospi(1.0_f64), -1.0);
+/// assert_eq!(cospi(-1.5_f64), 0.0);
+/// assert!(cospi(-1.5_f64).is_sign_positive());
+/// ```
+pub fn cospi<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::cospi(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::cospi(x),
+    }
+}
+
+/// sin(x°), the sine of an angle in degrees (`scipy.special.sindg`).
+///
+/// The argument is reduced exactly, so multiples of 90° give exact `0` and
+/// `±1`, unlike `x.to_radians().sin()`. `sindg(±0) = ±0`. For
+/// `|x| > 1e14` the result is `0` (no fractional degrees are left; SciPy
+/// returns 0 there too). NaN for NaN and infinite `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::sindg;
+///
+/// assert_eq!(sindg(180.0_f64), 0.0); // 180f64.to_radians().sin() = 1.2e-16
+/// assert_eq!(sindg(-90.0_f64), -1.0);
+/// assert!((sindg(30.0_f64) - 0.5).abs() < 1e-16);
+/// ```
+pub fn sindg<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::sindg::sindg(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::sindg(x),
+    }
+}
+
+/// cos(x°), the cosine of an angle in degrees (`scipy.special.cosdg`).
+///
+/// Reduced exactly as [`sindg`]; `0` for `|x| > 1e14`; NaN for NaN and
+/// infinite `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::cosdg;
+///
+/// assert_eq!(cosdg(90.0_f64), 0.0); // 90f64.to_radians().cos() = 6.1e-17
+/// assert_eq!(cosdg(180.0_f64), -1.0);
+/// ```
+pub fn cosdg<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::sindg::cosdg(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::cosdg(x),
+    }
+}
+
+/// tan(x°), the tangent of an angle in degrees (`scipy.special.tandg`).
+///
+/// Exact `±0` at multiples of 180°, `±1` at odd multiples of 45° and `±∞` at
+/// odd multiples of 90°, signed as in SciPy (`tandg(90) = +∞`,
+/// `tandg(270) = -∞`, `tandg(540) = -0`); `0` for `|x| > 1e14`; NaN for NaN
+/// and infinite `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::tandg;
+///
+/// assert_eq!(tandg(45.0_f64), 1.0);
+/// assert_eq!(tandg(90.0_f64), f64::INFINITY);
+/// assert_eq!(tandg(-180.0_f64), 0.0);
+/// ```
+pub fn tandg<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::tandg::tandg(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::tancot(x, false),
+    }
+}
+
+/// cot(x°), the cotangent of an angle in degrees (`scipy.special.cotdg`).
+///
+/// `±∞` at multiples of 180° (`cotdg(0) = +∞`, `cotdg(-0) = -∞`), exact `±0`
+/// at odd multiples of 90°, signed as in SciPy; `0` for `|x| > 1e14`; NaN for
+/// NaN and infinite `x`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::cotdg;
+///
+/// assert_eq!(cotdg(45.0_f64), 1.0);
+/// assert_eq!(cotdg(90.0_f64), 0.0);
+/// assert_eq!(cotdg(0.0_f64), f64::INFINITY);
+/// ```
+pub fn cotdg<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::tandg::cotdg(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::tancot(x, true),
+    }
+}
+
+/// Degrees, minutes and seconds to radians: `((60 d + m) 60 + s) π/648000`
+/// (`scipy.special.radian`).
+///
+/// # Examples
+///
+/// ```
+/// use specials::radian;
+///
+/// // 30° 30′ 36″ = 30.51°
+/// assert!((radian(30.0_f64, 30.0, 36.0) - 30.51_f64.to_radians()).abs() < 1e-15);
+/// ```
+pub fn radian<T: Real>(d: T, m: T, s: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(xsf::sindg::radian(
+            d.approx_f64(),
+            m.approx_f64(),
+            s.approx_f64(),
+        )),
+        Strategy::Adaptive => generic::elementary::radian(d, m, s),
+    }
+}
+
+/// 2^x (`scipy.special.exp2`).
+///
+/// For `f64` this is `f64::exp2`, which passes SciPy's reference table; this
+/// function exists for the double-double path, where `xprec`'s `exp2` gives
+/// NaN at `±∞` and loses digits for large `|x|`. Unlike SciPy (Cephes), which
+/// returns `0` below `x = -1024`, the `f64` result is subnormal down to
+/// `x = -1074`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::exp2;
+///
+/// assert_eq!(exp2(10.0_f64), 1024.0);
+/// assert_eq!(exp2(f64::NEG_INFINITY), 0.0);
+/// ```
+pub fn exp2<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(x.approx_f64().exp2()),
+        Strategy::Adaptive => generic::elementary::exp2(x),
+    }
+}
+
+/// 10^x (`scipy.special.exp10`).
+///
+/// For `f64` this is `10f64.powf(x)`, which passes SciPy's reference table;
+/// it exists for the double-double path, where `10^x` as `exp(x ln 10)` loses
+/// `|x ln 10|` units of the epsilon. Like [`exp2`], the `f64` result is
+/// subnormal below `x = -308.25`, where SciPy returns `0`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::exp10;
+///
+/// assert_eq!(exp10(3.0_f64), 1000.0);
+/// assert_eq!(exp10(-1.0_f64), 0.1);
+/// ```
+pub fn exp10<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(10.0_f64.powf(x.approx_f64())),
+        Strategy::Adaptive => generic::elementary::exp10(x),
+    }
+}
+
+/// ∛x, the real cube root (`scipy.special.cbrt`); odd, `±0`, `±∞` and NaN
+/// map to themselves.
+///
+/// For `f64` this is `f64::cbrt`; it exists for the double-double path,
+/// where `xprec` 0.2.3's `Float::cbrt` is not implemented and panics.
+///
+/// # Examples
+///
+/// ```
+/// use specials::cbrt;
+///
+/// assert_eq!(cbrt(-27.0_f64), -3.0);
+/// assert!(cbrt(-0.0_f64).is_sign_negative());
+/// ```
+pub fn cbrt<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(x.approx_f64().cbrt()),
+        Strategy::Adaptive => generic::elementary::cbrt(x),
+    }
+}
+
+/// e^x − 1 (`scipy.special.expm1`).
+///
+/// For `f64` this is `f64::exp_m1`; it exists for the double-double path,
+/// where `xprec` 0.2.3's `exp_m1(-0)` is `+0`. `expm1(-∞) = -1`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::expm1;
+///
+/// assert!((expm1(1e-10_f64) - 1.00000000005e-10).abs() < 1e-26);
+/// assert!(expm1(-0.0_f64).is_sign_negative());
+/// ```
+pub fn expm1<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(x.approx_f64().exp_m1()),
+        Strategy::Adaptive => generic::elementary::expm1(x),
+    }
+}
+
+/// ln(1 + x) (`scipy.special.log1p`).
+///
+/// `-∞` at `x = -1`, NaN below. For `f64` this is `f64::ln_1p`; it exists
+/// for the double-double path, where `xprec` 0.2.3's `ln_1p` returns `+0`
+/// for `-0` and `-∞` for arguments within `2^-53` above `-1`.
+///
+/// # Examples
+///
+/// ```
+/// use specials::log1p;
+///
+/// assert!((log1p(1e-20_f64) - 1e-20).abs() < 1e-36);
+/// assert_eq!(log1p(-1.0_f64), f64::NEG_INFINITY);
+/// assert!(log1p(-0.0_f64).is_sign_negative());
+/// ```
+pub fn log1p<T: Real>(x: T) -> T {
+    match T::STRATEGY {
+        Strategy::F64Kernels => k64(x.approx_f64().ln_1p()),
+        Strategy::Adaptive => generic::elementary::log1p(x),
     }
 }
 
