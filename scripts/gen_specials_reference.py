@@ -13,6 +13,9 @@ Outputs (committed; regenerating them is a separate commit):
 
 * crates/specials/tests/data/<function>.csv  -- reference values
 * crates/specials/tests/data/special_values.csv  -- SciPy's non-finite / zero results
+* crates/specials/tests/data/elementary_special_values.csv  -- the same for the
+  elementary helpers of #19 (`uv run scripts/gen_specials_reference.py elementary`
+  writes only those and their reference files)
 * crates/specials/src/generic/tables.rs  -- Bernoulli-number tables and constants
 
 Every real number is written as a double-double pair `hi,lo` with
@@ -686,6 +689,259 @@ FUNCS.update(
 )
 
 
+# --------------------------------------------------------------------------
+# Elementary helpers (#19). Reference values are exact mpmath expressions;
+# the points cover both sides of every branch switch of the double-double
+# code (|x| = 1/2 in log1pmx, 0.3 / 0.65 in logit, the half-integers where
+# exp2 / exp10 change n, the octant and quadrant boundaries of the degree
+# functions, 2^+-900 in cbrt, -1/2 and 2^100 in log1p), arguments whose low
+# word matters (next to the zeros of sinpi, cospi, sindg, tandg, cotdg and
+# next to -1 in log1p), and fixed-seed random double-double arguments.
+# --------------------------------------------------------------------------
+
+RNGE = random.Random(20261125)
+INF, NAN = math.inf, math.nan
+
+
+def rnde(lo, hi, log=False):
+    """rnd() with this family's own generator, so that the other tables keep their points."""
+    if log:
+        u = mp.exp(mp.log(lo) + (mp.log(hi) - mp.log(lo)) * mp.mpf(RNGE.random()))
+    else:
+        u = mp.mpf(lo) + (mp.mpf(hi) - mp.mpf(lo)) * mp.mpf(RNGE.random())
+    return ("dd", u * (1 + mp.mpf(RNGE.random()) * mp.mpf(2) ** -60))
+
+
+def near(t, d):
+    t = mp.mpf(t)
+    return [("dd", t - d), ("dd", t + d)]
+
+
+NR = 40
+TINY = mp.mpf("1e-25")
+
+
+def _ext(*xs):
+    return mp.mp.prec + _extra(*xs)
+
+
+def mp_cosm1(x):
+    return -2 * mp.sin(x / 2) ** 2
+
+
+def mp_log1pmx(x):
+    if x <= -1:
+        return None
+    with mp.workprec(_ext(1, x)):
+        return +(mp.log1p(x) - x)
+
+
+def mp_xlogy(x, y):
+    if x == 0 or y <= 0:
+        return None
+    return x * mp.log(y)
+
+
+def mp_xlog1py(x, y):
+    if x == 0 or y <= -1:
+        return None
+    with mp.workprec(_ext(1, y)):
+        return +(x * mp.log1p(y))
+
+
+def mp_logit(x):
+    if not 0 < x < 1:
+        return None
+    with mp.workprec(_ext(1, x)):
+        return +mp.log(x / (1 - x))
+
+
+def mp_expit(x):
+    return 1 / (1 + mp.exp(-x))
+
+
+def mp_log_expit(x):
+    return -mp.log1p(mp.exp(-x))
+
+
+def _dg(x):
+    """x/180 with enough bits that sinpi of it is exact to the precision."""
+    return x / 180
+
+
+def mp_sindg(x):
+    return None if abs(x) > 1e14 else mp.sinpi(_dg(x))
+
+
+def mp_cosdg(x):
+    return None if abs(x) > 1e14 else mp.cospi(_dg(x))
+
+
+def mp_tandg(x):
+    if abs(x) > 1e14 or mp.fmod(x, 90) == 0:
+        return None
+    return mp.sinpi(_dg(x)) / mp.cospi(_dg(x))
+
+
+def mp_cotdg(x):
+    if abs(x) > 1e14 or mp.fmod(x, 90) == 0:
+        return None
+    return mp.cospi(_dg(x)) / mp.sinpi(_dg(x))
+
+
+def mp_radian(d, m, s):
+    return ((d * 60 + m) * 60 + s) * mp.pi / 648000
+
+
+def mp_sinpi(x):
+    return None if x == mp.floor(x) else mp.sinpi(x)
+
+
+def mp_cospi(x):
+    return None if x - mp.floor(x) == mp.mpf(1) / 2 else mp.cospi(x)
+
+
+def mp_log1p(x):
+    if x <= -1:
+        return None
+    with mp.workprec(_ext(1, x)):
+        return +mp.log1p(x)
+
+
+def mp_cbrt(x):
+    return mp.cbrt(x) if x >= 0 else -mp.cbrt(-x)
+
+
+TWOPI = ("dd", 2 * mp.pi)
+COSM1_X = [1e-300, 1e-20, 1e-8, 0.1, 0.5, 1.0, 2.0, 3.0, 6.283185307179586, 100.0, 1e5, 1e10, 1e14, -0.7, TWOPI, PI, ("dd", 2 * mp.pi * 10**6 + TINY)]
+COSM1_X += [("dd", mp.mpf(2) ** 50 * (1 - mp.mpf(2) ** -70)), 2.0**50] + [rnde(1e6, 1e15, log=True) for _ in range(NR // 4)]
+COSM1_X += around(mp.pi / 4) + [rnde(-10, 10) for _ in range(NR)] + [("dd", 2 * mp.pi * n + TINY) for n in (1, 3)]
+LOG1PMX_X = [-0.999, -0.75, -1e-10, 1e-10, 1e-300, 0.3, 1.0, 10.0, 1e10, 1e300, ("dd", -1 + TINY), THIRD, MTHIRD]
+LOG1PMX_X += around(0.5) + around(-0.5) + [rnde(-0.99, 5) for _ in range(NR)] + [rnde(1e-20, 0.5, log=True) for _ in range(NR // 4)]
+XLOGY_XY = [(2.0, 3.0), (-1.5, 1e-300), (1e-300, 1e300), (3.0, 1 + 1e-10), (THIRD, PI), (-2.0, 0.5), (1e300, 0.5), (5.0, ("dd", 1 + TINY))]
+XLOGY_XY += [(rnde(-10, 10), rnde(1e-5, 1e5, log=True)) for _ in range(NR)]
+XLOG1PY_XY = [(2.0, 1e-20), (-3.0, -0.5), (1.0, ("dd", -1 + TINY)), (5.0, 1e100), (THIRD, MTHIRD), (1.5, 1.7e308)]
+XLOG1PY_XY += [(rnde(-10, 10), rnde(-0.99, 1e3)) for _ in range(NR)]
+LOGIT_X = [1e-300, 1e-10, 0.1, 0.5, 0.9, 1 - 1e-10, 1 - 2.0**-53, ("dd", 1 - TINY), ("dd", mp.mpf(1) / 2 + TINY), ("dd", mp.mpf(1) / 2 - TINY), THIRD]
+LOGIT_X += around(0.3) + around(0.65) + [rnde(0, 1) for _ in range(NR)]
+EXPIT_X = [-745.0, -700.0, -50.0, -1e-20, 1e-20, 1.0, 36.0, 40.0, 100.0, 700.0, THIRD, MTHIRD] + [rnde(-50, 50) for _ in range(NR)]
+LOG_EXPIT_X = [-1000.0, -50.0, -1.0, -1e-20, 1e-20, 1.0, 30.0, 50.0, 700.0, 740.0, THIRD, MTHIRD] + [rnde(-50, 50) for _ in range(NR)]
+SINPI_X = [1e-300, 0.25, 1.5, 3.7, -2.3, 1e10 + 0.3, 2.0**52 + 0.5, 1e15 + 0.25, THIRD, MTHIRD]
+SINPI_X += [p for t in (0.5, 1, 2, 1.5, -3) for p in near(t, TINY)] + [rnde(-100, 100) for _ in range(NR)]
+COSPI_X = list(SINPI_X)
+DG_X = [1e-300, 1.0, 30.0, 45.0, 60.0, 89.999, 135.5, 179.9, 359.9, -720.5, 1e13 + 0.5, THIRD, ("dd", mp.mpf(1e14) - mp.mpf("0.25"))]
+DG_X += [p for t in (45, 90, 135, 180, 270, 360, -90) for p in near(t, mp.mpf("1e-20"))] + [rnde(-1e4, 1e4) for _ in range(NR)]
+RADIAN_DMS = [(30.0, 30.0, 36.0), (-10.0, 5.0, 1.5), (1e6, 59.0, 59.999), (THIRD, MTHIRD, PI)] + [(rnde(-360, 360), rnde(0, 60), rnde(0, 60)) for _ in range(NR // 2)]
+EXP2_X = [-1074.5, -1060.0, -1022.5, -100.3, -1e-20, 1e-20, 10.3, 1000.5, 1023.9, THIRD, PI]
+EXP2_X += around(0.5) + around(1023.5) + around(-0.5) + [rnde(-1000, 1000) for _ in range(NR)]
+EXP10_X = [-323.5, -307.9, -300.3, -1e-20, 1e-20, 1.3, 22.7, 300.7, 307.9, 308.2, THIRD, PI]
+EXP10_X += around(0.5) + around(-300.5) + [rnde(-300, 300) for _ in range(NR)]
+CBRT_X = [1e-320, 1e-300, 1e-10, 0.3, 1.0, 2.0, 27.0, 1e10, 1e300, 1.7e308, -8.0, -1e-5, THIRD, MTHIRD, PI]
+CBRT_X += around(mp.mpf(2) ** -900) + around(mp.mpf(2) ** 900) + [rnde(1e-300, 1e300, log=True) for _ in range(NR)]
+EXPM1_X = [-800.0, -40.0, -1.0, -1e-10, 1e-20, 1e-10, 0.5, 1.0, 50.0, 709.7, THIRD, MTHIRD, ("dd", TINY)] + [rnde(-30, 30) for _ in range(NR)]
+LOG1P_X = [-0.999999, ("dd", -1 + TINY), -1e-20, 1e-20, 0.1, 1.0, 1e10, 1e300, 1.7e308, THIRD, MTHIRD]
+LOG1P_X += around(-0.5) + around(mp.mpf(2) ** 100) + [rnde(-0.99, 1e6) for _ in range(NR)]
+
+
+def _ufunc(name):
+    from scipy.special import _ufuncs
+
+    return getattr(_ufuncs, name)
+
+
+ELEMENTARY = {
+    "cosm1": (1, COSM1_X, mp_cosm1, sc.cosm1),
+    "log1pmx": (1, LOG1PMX_X, mp_log1pmx, lambda x: _ufunc("_log1pmx")(x)),
+    "xlogy": (2, XLOGY_XY, mp_xlogy, sc.xlogy),
+    "xlog1py": (2, XLOG1PY_XY, mp_xlog1py, sc.xlog1py),
+    "logit": (1, LOGIT_X, mp_logit, sc.logit),
+    "expit": (1, EXPIT_X, mp_expit, sc.expit),
+    "log_expit": (1, LOG_EXPIT_X, mp_log_expit, sc.log_expit),
+    "sinpi": (1, SINPI_X, mp_sinpi, lambda x: _ufunc("_sinpi")(x)),
+    "cospi": (1, COSPI_X, mp_cospi, lambda x: _ufunc("_cospi")(x)),
+    "sindg": (1, DG_X, mp_sindg, sc.sindg),
+    "cosdg": (1, DG_X, mp_cosdg, sc.cosdg),
+    "tandg": (1, DG_X, mp_tandg, sc.tandg),
+    "cotdg": (1, DG_X, mp_cotdg, sc.cotdg),
+    "radian": (3, RADIAN_DMS, mp_radian, sc.radian),
+    "exp2": (1, EXP2_X, lambda x: mp.power(2, x), sc.exp2),
+    "exp10": (1, EXP10_X, lambda x: mp.power(10, x), sc.exp10),
+    "cbrt": (1, CBRT_X, mp_cbrt, sc.cbrt),
+    "expm1": (1, EXPM1_X, mp.expm1, sc.expm1),
+    "log1p": (1, LOG1P_X, mp_log1p, sc.log1p),
+}
+FUNCS.update(ELEMENTARY)
+
+# SciPy's non-finite and zero results of the elementary helpers, with the sign
+# of zero, in their own file (tests/elementary.rs reads it without xprec).
+ELEMENTARY_SPECIAL = [
+    ("cosm1", sc.cosm1, [(0.0,), (-0.0,), (INF,), (-INF,), (NAN,)]),
+    ("log1pmx", lambda x: _ufunc("_log1pmx")(x), [(0.0,), (-0.0,), (-1.0,), (-2.0,), (INF,), (-INF,), (NAN,)]),
+    ("xlogy", sc.xlogy, [(0.0, 0.0), (0.0, -1.0), (0.0, INF), (0.0, -INF), (0.0, NAN), (1.0, 0.0), (-1.0, 0.0), (1.0, -1.0), (NAN, 1.0), (1.0, NAN), (INF, 1.0), (-0.0, 0.0)]),
+    ("xlog1py", sc.xlog1py, [(0.0, -1.0), (0.0, -2.0), (0.0, NAN), (1.0, -1.0), (-1.0, -1.0), (1.0, -2.0), (NAN, 0.0), (1.0, 0.0), (1.0, -0.0)]),
+    ("logit", sc.logit, [(0.0,), (-0.0,), (1.0,), (-0.5,), (1.5,), (INF,), (-INF,), (NAN,), (0.5,)]),
+    ("expit", sc.expit, [(-INF,), (INF,), (NAN,), (-800.0,)]),
+    ("log_expit", sc.log_expit, [(-INF,), (INF,), (NAN,), (800.0,)]),
+    ("sinpi", lambda x: _ufunc("_sinpi")(x), [(0.0,), (-0.0,), (1.0,), (-1.0,), (2.0,), (-2.0,), (3.0,), (-3.0,), (1e300,), (-1e300,), (2.0**53,), (INF,), (-INF,), (NAN,)]),
+    ("cospi", lambda x: _ufunc("_cospi")(x), [(0.5,), (-0.5,), (1.5,), (-1.5,), (2.5,), (1e15 + 0.5,), (INF,), (-INF,), (NAN,)]),
+    ("sindg", sc.sindg, [(0.0,), (-0.0,), (180.0,), (-180.0,), (360.0,), (-360.0,), (540.0,), (1e15,), (-1e15,), (INF,), (-INF,), (NAN,)]),
+    ("cosdg", sc.cosdg, [(90.0,), (-90.0,), (270.0,), (450.0,), (1e15,), (INF,), (NAN,)]),
+    ("tandg", sc.tandg, [(0.0,), (-0.0,), (90.0,), (-90.0,), (270.0,), (-270.0,), (450.0,), (-450.0,), (180.0,), (-180.0,), (360.0,), (-360.0,), (540.0,), (720.0,), (900.0,), (1080.0,), (-540.0,), (-720.0,), (-900.0,), (-1080.0,), (1e15,), (INF,), (NAN,)]),
+    ("cotdg", sc.cotdg, [(0.0,), (-0.0,), (90.0,), (-90.0,), (270.0,), (-270.0,), (450.0,), (-450.0,), (630.0,), (-630.0,), (180.0,), (-180.0,), (360.0,), (-360.0,), (1e15,), (INF,), (NAN,)]),
+    ("radian", sc.radian, [(0.0, 0.0, 0.0), (-0.0, -0.0, -0.0), (INF, 0.0, 0.0), (INF, -INF, 0.0), (NAN, 0.0, 0.0)]),
+    ("exp2", sc.exp2, [(-INF,), (INF,), (NAN,), (1025.0,), (-1080.0,)]),
+    ("exp10", sc.exp10, [(-INF,), (INF,), (NAN,), (309.0,), (-400.0,)]),
+    ("cbrt", sc.cbrt, [(0.0,), (-0.0,), (INF,), (-INF,), (NAN,)]),
+    ("expm1", sc.expm1, [(0.0,), (-0.0,), (INF,), (-INF,), (NAN,), (710.0,)]),
+    ("log1p", sc.log1p, [(0.0,), (-0.0,), (-1.0,), (-2.0,), (INF,), (-INF,), (NAN,)]),
+]
+
+
+def xsf_trig_sign_rules(name, x):
+    """The value xsf's own `tests/xsf_tests/test_trig.cpp` (pinned commit,
+    the "IEEE ... scipy/20731" cases) requires, or None where it says nothing.
+
+    SciPy 1.16.3 vendors an xsf from before that fix, so it disagrees on some
+    of these signs; the crate ports xsf at the pinned commit and follows it.
+    """
+    neg = math.copysign(1.0, x) < 0
+    if name in ("sindg", "tandg") and x == 0.0:
+        return -0.0 if neg else 0.0
+    if name == "tandg" and x % 180.0 == 0.0:
+        n = int(x // 180.0)  # x = n 180, n != 0: -0 for odd n > 0 and even n < 0
+        return -0.0 if (n > 0) == (n % 2 != 0) else 0.0
+    if name == "tandg" and x % 180.0 == 90.0:
+        n = int((x - 90.0) // 180.0)  # x = (2n + 1) 90
+        return -INF if n % 2 != 0 else INF
+    if name == "cotdg" and x % 180.0 == 90.0:
+        n = int((x - 90.0) // 180.0)  # x = (2n + 1) 90: +0 at 90, -0 at 270, ...
+        return -0.0 if n % 2 != 0 else 0.0
+    if name == "cotdg" and x % 180.0 == 0.0:
+        n = int(x // 180.0)  # x = n 180 (n = -0 for -0)
+        return -INF if (neg and n % 2 == 0) or (not neg and n % 2 != 0) else INF
+    return None
+
+
+def write_elementary_special_values():
+    lines = [
+        HEADER,
+        "# columns: function,a0,a1,a2,expected,scipy  (exact results: non-finite, signed zero or +-1)\n",
+        "# expected = SciPy's value, except for the signed zeros and infinities of sindg, tandg and\n",
+        "# cotdg that xsf's tests/xsf_tests/test_trig.cpp (scipy/20731) fixes after SciPy 1.16.3.\n",
+    ]
+    for name, f, cases in ELEMENTARY_SPECIAL:
+        for args in cases:
+            with np.errstate(all="ignore"):
+                v = float(f(*args))
+            if math.isfinite(v) and v not in (0.0, 1.0, -1.0):
+                raise SystemExit(f"{name}{args} = {v} is not a special value")
+            rule = xsf_trig_sign_rules(name, args[0]) if len(args) == 1 and math.isfinite(args[0]) else None
+            expected = v if rule is None else rule
+            a = list(args) + [""] * (3 - len(args))
+            lines.append(",".join([name] + [fmt(x) if x != "" else "" for x in a] + [fmt(expected), fmt(v)]) + "\n")
+    (DATA / "elementary_special_values.csv").write_text("".join(lines))
+
+
 def write_reference(only=None):
     DATA.mkdir(parents=True, exist_ok=True)
     for name, (nargs, points, mpf, scf) in FUNCS.items():
@@ -789,6 +1045,18 @@ def rs_pair(v) -> str:
     return f"({hi!r}, {lo!r})"
 
 
+def pieces(v, n):
+    """`v` as `n` doubles, each the rounding of what the previous ones leave."""
+    out = []
+    with mp.workprec(600):
+        v = +v
+        for _ in range(n):
+            h = float(v)
+            out.append(h)
+            v -= mp.mpf(h)
+    return out
+
+
 def write_tables():
     stirling = [mp.bernoulli(2 * k) / (2 * k * (2 * k - 1)) for k in range(1, NB + 1)]
     digamma = [mp.bernoulli(2 * k) / (2 * k) for k in range(1, NB + 1)]
@@ -843,6 +1111,9 @@ def write_tables():
             f"`ζ⁽ⁿ⁾(0)/n!` for `n = 0..{NZ0}` (Taylor series of ζ(s) about 0, DLMF 25.2.1 / 25.6.1).",
             [mp.zeta(0, derivative=n) / mp.factorial(n) for n in range(NZ0)],
         ),
+        "/// `2π` as five `f64` pieces whose sum is exact to about 2^-270 (Cody–Waite\n",
+        "/// reduction of `cosm1`).\n",
+        f"pub(crate) const TWO_PI_PIECES: [f64; 5] = [{', '.join(repr(v) for v in pieces(2 * mp.pi, 5))}];\n",
         "/// `√(2π)`.\n",
         f"pub(crate) const SQRT_2PI: (f64, f64) = {rs_pair(mp.sqrt(2 * mp.pi))};\n",
         "/// `ln √(2π)`.\n",
@@ -870,11 +1141,16 @@ if __name__ == "__main__":
     if only == ["special"]:
         write_special_values()
         raise SystemExit(0)
+    if only == ["elementary"]:
+        write_reference(list(ELEMENTARY))
+        write_elementary_special_values()
+        raise SystemExit(0)
     if only == ["tables"]:
         write_tables()
         raise SystemExit(0)
     write_reference(only)
-    write_special_values(only)
+    write_special_values([n for n in only if n not in ELEMENTARY] if only else None)
     if not only:
+        write_elementary_special_values()
         write_tables()
     print("wrote", DATA, "" if only else "and " + str(CRATE / "src" / "generic" / "tables.rs"))
