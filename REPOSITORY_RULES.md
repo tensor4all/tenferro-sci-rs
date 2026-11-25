@@ -54,6 +54,10 @@ Where this file and the code disagree, the code wins and this file is fixed.
 
 ## Numerical Validation
 
+Use the [special-functions audit guide](docs/specials-audit.md) when
+implementing or reviewing changes to `specials`, including its reference
+tests and the functions it re-exports from dependencies.
+
 - Every function is checked against reference values with a stated tolerance:
   mpmath (arbitrary precision) as ground truth, and SciPy for parity. A test
   that only checks that a result is finite, or has the right sign, is not
