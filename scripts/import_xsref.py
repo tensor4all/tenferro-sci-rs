@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from fractions import Fraction
 import subprocess
 import sys
 from pathlib import Path
@@ -368,6 +369,61 @@ def ref_log1p(x):
         return +mp.log1p(mp.mpf(x))
 
 
+# Associated Legendre function of integer order (#16).
+
+
+def _frac(v):
+    """The exact value of a finite mpmath real as a Fraction."""
+    p, q = mp.libmp.to_rational(mp.mpf(v)._mpf_)
+    return Fraction(p, q)
+
+
+def _legendre_derivative(n, m, x):
+    """d^m P_n / dx^m at the exact rational x, from the explicit sum
+    P_n(x) = sum_k (-1)^k (2n-2k)! / (2^n k! (n-k)! (n-2k)!) x^(n-2k)."""
+    f = math.factorial
+    total = Fraction(0)
+    for k in range(n // 2 + 1):
+        p = n - 2 * k
+        if p < m:
+            break
+        c = Fraction((-1) ** k * f(2 * n - 2 * k), 2**n * f(k) * f(n - k) * f(p))
+        total += c * Fraction(f(p), f(p - m)) * x ** (p - m)
+    return total
+
+
+def ref_pmv(m, v, x):
+    """Ferrers function P_v^m(x), -1 < x < 1.
+
+    Integer degree: (-1)^m (1 - x^2)^(m/2) d^m P_n / dx^m, with the
+    derivative of the Legendre polynomial exact in rational arithmetic (DLMF
+    14.6.1), and P_n^(-m) = (-1)^m (n-m)!/(n+m)! P_n^m (DLMF 14.9.3). Other
+    degrees: mpmath's `legenp` of type 2.
+
+    Outside that domain, at x = +-1 (xsf returns a signed infinity or a value
+    that depends on its own series) and where xsf documents no result
+    (non-integer m, or a negative order beyond the degree), SciPy's value is
+    checked through xsref.
+    """
+    if m != math.floor(m) or not abs(x) < 1:
+        return None
+    vx = -v - 1 if v < 0 else v
+    if m < 0 and not (vx + m + 1 > 0 or vx != math.floor(vx)):
+        return None
+    if vx == math.floor(vx):
+        n, mm = int(vx), abs(int(m))
+        if mm > n:
+            return mp.mpf(0)
+        xf = _frac(x)
+        d = _legendre_derivative(n, mm, xf)
+        s = mp.mpf(d.numerator) / mp.mpf(d.denominator)
+        val = (-1) ** mm * mp.sqrt(1 - mp.mpf(x) ** 2) ** mm * s
+        if m < 0:
+            val *= (-1) ** mm * mp.factorial(n - mm) / mp.factorial(n + mm)
+        return val
+    return mp.legenp(mp.mpf(v), int(m), mp.mpf(x), type=2)
+
+
 # (crate name, xsref name, signature, reference, output column)
 FUNCS = [
     ("gamma", "gamma", "d-d", ref_gamma, 0),
@@ -413,6 +469,8 @@ FUNCS = [
     ("cbrt", "cbrt", "d-d", ref_cbrt, 0),
     ("expm1", "expm1", "d-d", ref_expm1, 0),
     ("log1p", "log1p", "d-d", ref_log1p, 0),
+    # Associated Legendre function (#16).
+    ("pmv", "pmv", "d_d_d-d", ref_pmv, 0),
 ]
 
 
