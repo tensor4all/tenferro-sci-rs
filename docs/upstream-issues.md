@@ -652,6 +652,21 @@ cases:
   recurrence, `alpha <= -1`, `n < 0` for Hermite) stays NaN. A non-finite argument takes xsf's value.
   `overflow_is_a_signed_infinity_in_df64_and_xsfs_nan_in_f64` pins both.
 
+## scipy/xsf: integer-degree Chebyshev `T` overflows when the result is above about half of `f64::MAX`
+
+- **Affects:** xsf `31177fd9` (`eval_chebyt(long, double)` in `include/xsf/orthogonal_eval.h`) and SciPy 1.16.3,
+  and `eval_sh_chebyt`, which calls it.
+- **Evidence:** `eval_chebyt(2, 9.4e153)` is `inf` (true `1.7672e308`) and `eval_chebyt(3, 3.107e102)` is `inf`
+  (true `1.1997e308`); SciPy 1.16.3 gives `inf` for `eval_chebyt(2, 9e153)` (true `1.62e308`);
+  `eval_sh_chebyt(2, 4.6e153)` is `inf` (true `1.6928e308`). `eval_chebyt(2, 6.5e153)` (`8.45e307`) is exact.
+- **Cause:** the kernel runs the recurrence of `U_n` and returns `T_n = (U_n - U_(n-2)) / 2`. For `abs(x) > 1`,
+  `abs(U_n)` is about twice `abs(T_n)`, so `U_n` overflows while `T_n` is still representable: every `T_n` with
+  `f64::MAX / 2 <~ abs(T_n) < f64::MAX` is `inf`. `eval_chebyu` and `eval_chebyc` return their recurrence
+  value directly and do not have this band.
+- **Upstream:** not reported.
+- **Here:** `f64` keeps xsf's value (faithful port). `Df64` returns the finite value
+  (`eval_chebyt_int(2, 9.4e153)` = `1.7672e308`).
+
 ## scipy/xsf and SciPy 1.16.3: values the pinned xsf fixed
 
 SciPy 1.16.3 bundles an older copy of this code. At the pinned xsf commit these differ, and the
