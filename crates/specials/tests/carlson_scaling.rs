@@ -23,13 +23,14 @@
 //! Those worst errors hold for these base points; beyond 2^±300 the `f64`
 //! path can keep xsf's unscaled value, whose error can reach about 1e-10
 //! (`f64_kept_xsf_value_is_within_1e_10`).
-
-// These tests exercise `xprec::Df64`.
-#![cfg(feature = "xprec")]
+//!
+//! Every test checks `f64` and runs in every configuration; the `Df64` half of
+//! each needs the `xprec` feature (on by default).
 
 use core::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use specials::Real;
+#[cfg(feature = "xprec")]
 use xprec::Df64;
 
 /// Exponents `e` of the scale `2^e`: each makes at least one strategy of
@@ -45,6 +46,7 @@ fn f64_tol(name: &str) -> f64 {
     }
 }
 
+#[cfg(feature = "xprec")]
 const DF64_TOL: f64 = 1e-30;
 
 /// `(name, base point, mpmath value at the base point)`.
@@ -157,16 +159,30 @@ fn pow2(e: i32) -> f64 {
     2.0_f64.powi(e)
 }
 
-/// The relative errors of `f64` and `Df64` at `2^e a`, rescaled to `a`.
-fn errors(name: &str, a: &[f64], want: (f64, f64), e: i32) -> (f64, f64) {
-    let scaled: Vec<f64> = a.iter().map(|v| v * pow2(e)).collect();
+/// The arguments `2^e a` and the factor `2^(-d e)` that rescales `R(2^e a)`
+/// back to `R(a)`.
+fn scaled(name: &str, a: &[f64], e: i32) -> (Vec<f64>, f64) {
     // R(2^e a) 2^(-d e) = R(a); `-d e` is an integer since `e` is even.
-    let back = pow2(-twice_degree(name) * e / 2);
+    (
+        a.iter().map(|v| v * pow2(e)).collect(),
+        pow2(-twice_degree(name) * e / 2),
+    )
+}
+
+/// The relative error of `f64` at `2^e a`, rescaled to `a`.
+fn f64_error(name: &str, a: &[f64], want: (f64, f64), e: i32) -> f64 {
+    let (s, back) = scaled(name, a, e);
+    (eval(name, &s) * back - want.0).abs() / want.0.abs()
+}
+
+/// The relative error of `Df64` at `2^e a`, rescaled to `a`.
+#[cfg(feature = "xprec")]
+fn df64_error(name: &str, a: &[f64], want: (f64, f64), e: i32) -> f64 {
+    let (s, back) = scaled(name, a, e);
     let w = Df64::from_dd(want.0, want.1);
-    let f = eval(name, &scaled) * back;
-    let d: Vec<Df64> = scaled.iter().map(|&v| Df64::from(v)).collect();
+    let d: Vec<Df64> = s.iter().map(|&v| Df64::from(v)).collect();
     let g = eval(name, &d) * Df64::from(back);
-    ((f - want.0).abs() / want.0.abs(), ((g - w) / w).abs().hi())
+    ((g - w) / w).abs().hi()
 }
 
 /// The issue's example: R_J(a, a, a, -a) at a = 2^520 is
@@ -180,11 +196,14 @@ fn elliprj_principal_value_at_2_520() {
         ((f - want) / want).abs() <= f64_tol("elliprj"),
         "f64 (F64Kernels): {f:e}, want {want:e}"
     );
-    let d = Df64::from(a);
-    let g = specials::elliprj(d, d, d, -d) * Df64::from(pow2(780));
-    let w = Df64::from_dd(-0.5651621397896542, 8.788410726402706e-18);
-    let e = ((g - w) / w).abs().hi();
-    assert!(e <= DF64_TOL, "Df64 (Adaptive): {g:?}, error {e:e}");
+    #[cfg(feature = "xprec")]
+    {
+        let d = Df64::from(a);
+        let g = specials::elliprj(d, d, d, -d) * Df64::from(pow2(780));
+        let w = Df64::from_dd(-0.5651621397896542, 8.788410726402706e-18);
+        let e = ((g - w) / w).abs().hi();
+        assert!(e <= DF64_TOL, "Df64 (Adaptive): {g:?}, error {e:e}");
+    }
 }
 
 /// Every function, both strategies, at `2^e` times each base point.
@@ -193,12 +212,16 @@ fn carlson_forms_at_2_pow_pm_520_and_pm_600() {
     let mut failures = Vec::new();
     for &(name, a, want) in CASES {
         for e in SCALES {
-            let (ef, ed) = errors(name, a, want, e);
+            let ef = f64_error(name, a, want, e);
             if ef.is_nan() || ef > f64_tol(name) {
                 failures.push(format!("f64 {name}{a:?} at 2^{e}: error {ef:e}"));
             }
-            if ed.is_nan() || ed > DF64_TOL {
-                failures.push(format!("Df64 {name}{a:?} at 2^{e}: error {ed:e}"));
+            #[cfg(feature = "xprec")]
+            {
+                let ed = df64_error(name, a, want, e);
+                if ed.is_nan() || ed > DF64_TOL {
+                    failures.push(format!("Df64 {name}{a:?} at 2^{e}: error {ed:e}"));
+                }
             }
         }
     }
@@ -217,14 +240,17 @@ fn elliprj_at_the_ratio_limit_centered_near_2_99() {
         (-z, (-2.843329141308721e-178, 2.482035430738333e-195)),
     ];
     for (p, want) in cases {
-        let w = Df64::from_dd(want.0, want.1);
         let f = specials::elliprj(x, y, z, p);
         let ef = ((f - want.0) / want.0).abs();
         assert!(ef <= f64_tol("elliprj"), "f64 p={p:e}: {f:e}, error {ef:e}");
-        let d = Df64::from;
-        let g = specials::elliprj(d(x), d(y), d(z), d(p));
-        let ed = ((g - w) / w).abs().hi();
-        assert!(ed <= DF64_TOL, "Df64 p={p:e}: {g:?}, error {ed:e}");
+        #[cfg(feature = "xprec")]
+        {
+            let w = Df64::from_dd(want.0, want.1);
+            let d = Df64::from;
+            let g = specials::elliprj(d(x), d(y), d(z), d(p));
+            let ed = ((g - w) / w).abs().hi();
+            assert!(ed <= DF64_TOL, "Df64 p={p:e}: {g:?}, error {ed:e}");
+        }
     }
 }
 
@@ -441,12 +467,15 @@ fn ill_conditioned_principal_value_is_nan_not_wrong() {
             f.is_nan() || ((f - want) / want).abs() <= f64_tol("elliprj"),
             "f64 elliprj{a:?} = {f:e}, want {want:e} or NaN"
         );
-        let d: Vec<Df64> = a.iter().map(|&v| Df64::from(v)).collect();
-        let g = specials::elliprj(d[0], d[1], d[2], d[3]).hi();
-        assert!(
-            g.is_nan() || ((g - want) / want).abs() <= DF64_TOL,
-            "Df64 elliprj{a:?} = {g:e}, want {want:e} or NaN"
-        );
+        #[cfg(feature = "xprec")]
+        {
+            let d: Vec<Df64> = a.iter().map(|&v| Df64::from(v)).collect();
+            let g = specials::elliprj(d[0], d[1], d[2], d[3]).hi();
+            assert!(
+                g.is_nan() || ((g - want) / want).abs() <= DF64_TOL,
+                "Df64 elliprj{a:?} = {g:e}, want {want:e} or NaN"
+            );
+        }
     }
 }
 
@@ -487,12 +516,15 @@ fn pole_and_infinite_argument_at_every_scale() {
             f64::INFINITY,
             "f64 z={z:e} p={p:e}"
         );
-        let d = Df64::from;
-        assert_eq!(
-            specials::elliprj(d(0.0), d(0.0), d(z), d(p)).hi(),
-            f64::INFINITY,
-            "Df64 z={z:e} p={p:e}"
-        );
+        #[cfg(feature = "xprec")]
+        {
+            let d = Df64::from;
+            assert_eq!(
+                specials::elliprj(d(0.0), d(0.0), d(z), d(p)).hi(),
+                f64::INFINITY,
+                "Df64 z={z:e} p={p:e}"
+            );
+        }
     }
     // An infinite argument gives 0, also with `p = -∞` beyond 2^300 (where the
     // principal-value check must not run either).
@@ -502,11 +534,14 @@ fn pole_and_infinite_argument_at_every_scale() {
             0.0,
             "f64 y={y:e} z={z:e}"
         );
-        let d = Df64::from;
-        assert_eq!(
-            specials::elliprj(d(0.0), d(y), d(z), d(f64::NEG_INFINITY)).hi(),
-            0.0,
-            "Df64 y={y:e} z={z:e}"
-        );
+        #[cfg(feature = "xprec")]
+        {
+            let d = Df64::from;
+            assert_eq!(
+                specials::elliprj(d(0.0), d(y), d(z), d(f64::NEG_INFINITY)).hi(),
+                0.0,
+                "Df64 y={y:e} z={z:e}"
+            );
+        }
     }
 }

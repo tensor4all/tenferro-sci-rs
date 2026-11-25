@@ -8,17 +8,17 @@
 //!
 //! The xsf sources are BSD-3-Clause licensed; see `LICENSE-BSD-3-Clause-xsf`
 //! in this crate. Reference values, tolerances and regression-issue comments
-//! are kept as in xsf. Every case runs for `f64` and for `xprec::Df64`; the
-//! `Df64` result is rounded to its high word (`hi()`) and compared against the
-//! same f64-rounded reference with the same tolerance. Complex-valued and
-//! float-template cases are not ported.
+//! are kept as in xsf. Every case runs for `f64` and, with the `xprec` feature
+//! (on by default), for `xprec::Df64`; the `Df64` result is rounded to its high
+//! word (`hi()`) and compared against the same f64-rounded reference with the
+//! same tolerance. Without `xprec` every test still runs its `f64` case.
+//! Complex-valued and float-template cases are not ported.
 
-// These tests exercise `xprec::Df64`.
-#![cfg(feature = "xprec")]
 // Reference values keep the digits xsf's tests give them.
 #![allow(clippy::excessive_precision, clippy::approx_constant)]
 
 use specials::Real;
+#[cfg(feature = "xprec")]
 use xprec::Df64;
 
 /// Test-only bridge between `f64` references and the generic `Real` types.
@@ -38,6 +38,7 @@ impl Num for f64 {
     }
 }
 
+#[cfg(feature = "xprec")]
 impl Num for Df64 {
     const NAME: &'static str = "Df64";
     fn from_f64(x: f64) -> Self {
@@ -111,9 +112,11 @@ fn linspace(start: f64, end: f64, n: usize) -> Vec<f64> {
     }
 }
 
+/// Runs a case for `f64` and, with `xprec`, for `Df64`.
 macro_rules! for_both {
     ($f:ident) => {{
         $f::<f64>();
+        #[cfg(feature = "xprec")]
         $f::<Df64>();
     }};
 }
@@ -1817,15 +1820,21 @@ fn non_finite_agreement() {
     let cases = [(1000.0f64, -300.0f64), (1000.0, -400.0), (2000.0, -350.0)];
     for (n, a) in cases {
         let f = specials::gen_harmonic(n, a);
-        let d = specials::gen_harmonic(xprec::Df64::from(n), xprec::Df64::from(a)).to_f64();
         assert_eq!(f, f64::INFINITY, "gen_harmonic({n},{a}) f64");
-        assert_eq!(d, f64::INFINITY, "gen_harmonic({n},{a}) Df64");
+        #[cfg(feature = "xprec")]
+        {
+            let d = specials::gen_harmonic(Df64::from(n), Df64::from(a)).to_f64();
+            assert_eq!(d, f64::INFINITY, "gen_harmonic({n},{a}) Df64");
+        }
     }
     for x in [-1e-200f64, -1e-160, -1e-155] {
         let f = specials::trigamma(x);
-        let d = specials::trigamma(xprec::Df64::from(x)).to_f64();
         assert_eq!(f, f64::INFINITY, "trigamma({x}) f64");
-        assert_eq!(d, f64::INFINITY, "trigamma({x}) Df64");
+        #[cfg(feature = "xprec")]
+        {
+            let d = specials::trigamma(Df64::from(x)).to_f64();
+            assert_eq!(d, f64::INFINITY, "trigamma({x}) Df64");
+        }
     }
 }
 

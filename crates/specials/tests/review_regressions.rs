@@ -6,24 +6,31 @@
 //! which must agree to 1e-40, rounded to a double-double `(hi, lo)`. The
 //! Stirling numbers are exact Python integers (recurrence, closed forms, and
 //! Graham–Knuth–Patashnik (6.43)).
+//!
+//! Without the `xprec` feature (on by default) the tests run their `f64`
+//! assertions only; `n4`, `n7`, `n8` and the agreement grid compare against
+//! `Df64` and need the feature.
 
-// These tests exercise `xprec::Df64`.
-#![cfg(feature = "xprec")]
-
+#[cfg(feature = "xprec")]
 use specials::Real;
 use std::sync::mpsc;
 use std::time::Duration;
+#[cfg(feature = "xprec")]
 use xprec::Df64;
 
 /// A function evaluated in both strategies.
+#[cfg(feature = "xprec")]
 type Unary = (&'static str, fn(f64) -> f64, fn(Df64) -> Df64);
+#[cfg(feature = "xprec")]
 type Binary = (&'static str, fn(f64, f64) -> f64, fn(Df64, Df64) -> Df64);
 
+#[cfg(feature = "xprec")]
 fn dd(hi: f64, lo: f64) -> Df64 {
     Df64::from_dd(hi, lo)
 }
 
 /// Relative error of a double-double result against a double-double reference.
+#[cfg(feature = "xprec")]
 fn rel(got: Df64, want: (f64, f64)) -> f64 {
     let w = dd(want.0, want.1);
     ((got - w) / w).abs().hi()
@@ -46,14 +53,17 @@ fn within<R: Send + 'static>(secs: u64, what: &str, f: impl FnOnce() -> R + Send
 fn n1_zetac_df64_is_minus_infinity_where_f64_is() {
     for s in [-261.5, -1000.5, -100000.5] {
         assert_eq!(specials::zetac(s), f64::NEG_INFINITY, "f64 zetac({s})");
-        let d = specials::zetac(Df64::from(s));
-        assert_eq!(
-            d.hi(),
-            f64::NEG_INFINITY,
-            "Df64 zetac({s}) = ({}, {})",
-            d.hi(),
-            d.lo()
-        );
+        #[cfg(feature = "xprec")]
+        {
+            let d = specials::zetac(Df64::from(s));
+            assert_eq!(
+                d.hi(),
+                f64::NEG_INFINITY,
+                "Df64 zetac({s}) = ({}, {})",
+                d.hi(),
+                d.lo()
+            );
+        }
     }
 }
 
@@ -61,6 +71,7 @@ fn n1_zetac_df64_is_minus_infinity_where_f64_is() {
 
 #[test]
 fn n2_gen_harmonic_df64_where_n_pow_1_minus_a_overflows() {
+    #[cfg(feature = "xprec")]
     let cases: [(f64, f64, (f64, f64)); 3] = [
         (
             1e4,
@@ -70,6 +81,7 @@ fn n2_gen_harmonic_df64_where_n_pow_1_minus_a_overflows() {
         (1e4, -76.5, (1.295328955639185e308, 2.714431127064219e291)),
         (1e3, -102.3, (8.093462544814556e307, 2.712975987891481e291)),
     ];
+    #[cfg(feature = "xprec")]
     for (n, a, want) in cases {
         let d = specials::gen_harmonic(Df64::from(n), Df64::from(a));
         let e = rel(d, want);
@@ -83,6 +95,7 @@ fn n2_gen_harmonic_df64_where_n_pow_1_minus_a_overflows() {
     }
     // The true value overflows: both strategies give +inf.
     assert_eq!(specials::gen_harmonic(1e5, -61.3), f64::INFINITY);
+    #[cfg(feature = "xprec")]
     assert_eq!(
         specials::gen_harmonic(Df64::from(1e5), Df64::from(-61.3)).hi(),
         f64::INFINITY
@@ -95,16 +108,20 @@ fn n2_gen_harmonic_df64_where_n_pow_1_minus_a_overflows() {
 fn n3_trigamma_df64_subnormal_is_infinite() {
     for x in [5e-324, 1e-310, 2.2e-308, 1e-300, 7.4e-155] {
         assert_eq!(specials::trigamma(x), f64::INFINITY, "f64 trigamma({x})");
-        let d = specials::trigamma(Df64::from(x));
-        assert_eq!(
-            d.hi(),
-            f64::INFINITY,
-            "Df64 trigamma({x}) = ({}, {})",
-            d.hi(),
-            d.lo()
-        );
+        #[cfg(feature = "xprec")]
+        {
+            let d = specials::trigamma(Df64::from(x));
+            assert_eq!(
+                d.hi(),
+                f64::INFINITY,
+                "Df64 trigamma({x}) = ({}, {})",
+                d.hi(),
+                d.lo()
+            );
+        }
     }
-    // Just above the overflow, the new branch keeps full accuracy.
+    // Just above the overflow, the new branch keeps full accuracy (Df64).
+    #[cfg(feature = "xprec")]
     for (x, want) in [
         (7.5e-155, (1.7777777777777775e308, -2.7458982980522117e291)),
         (1e-154, (1e308, 4.320353973117618e291)),
@@ -116,6 +133,7 @@ fn n3_trigamma_df64_subnormal_is_infinite() {
 
 // -------------------------------------------------------------- N4 digammainv
 
+#[cfg(feature = "xprec")]
 #[test]
 fn n4_digammainv_df64_holds_1e_30_below_minus_1e154() {
     let cases: [(f64, (f64, f64)); 4] = [
@@ -140,7 +158,7 @@ fn n4_digammainv_df64_holds_1e_30_below_minus_1e154() {
 
 #[test]
 fn n5_gen_harmonic_returns_for_infinite_and_huge_n() {
-    let zeta2 = (1.6449340668482264, 3.040672350398476e-17);
+    let zeta2: (f64, f64) = (1.6449340668482264, 3.040672350398476e-17);
     within(20, "gen_harmonic at n = inf", move || {
         // n = +inf: the limit, the same in both strategies.
         for a in [0.5, 1.0, 0.0, -3.0, f64::NEG_INFINITY] {
@@ -149,15 +167,20 @@ fn n5_gen_harmonic_returns_for_infinite_and_huge_n() {
                 f64::INFINITY,
                 "f64 (inf, {a})"
             );
-            let d = specials::gen_harmonic(Df64::from(f64::INFINITY), Df64::from(a));
-            assert_eq!(d.hi(), f64::INFINITY, "Df64 (inf, {a})");
+            #[cfg(feature = "xprec")]
+            {
+                let d = specials::gen_harmonic(Df64::from(f64::INFINITY), Df64::from(a));
+                assert_eq!(d.hi(), f64::INFINITY, "Df64 (inf, {a})");
+            }
         }
         let f = specials::gen_harmonic(f64::INFINITY, 2.0);
         assert!(
             (f - zeta2.0).abs() <= 2e-16 * zeta2.0,
             "f64 (inf, 2) = {f:e}"
         );
+        #[cfg(feature = "xprec")]
         let d = specials::gen_harmonic(Df64::from(f64::INFINITY), Df64::from(2.0));
+        #[cfg(feature = "xprec")]
         assert!(
             rel(d, zeta2) <= 1e-30,
             "Df64 (inf, 2) = ({}, {})",
@@ -166,6 +189,7 @@ fn n5_gen_harmonic_returns_for_infinite_and_huge_n() {
         );
         for a in [f64::INFINITY, f64::MAX] {
             assert_eq!(specials::gen_harmonic(f64::INFINITY, a), 1.0);
+            #[cfg(feature = "xprec")]
             assert_eq!(
                 specials::gen_harmonic(Df64::from(f64::INFINITY), Df64::from(a)).hi(),
                 1.0
@@ -189,8 +213,11 @@ fn n5_gen_harmonic_returns_for_infinite_and_huge_n() {
                 ef <= 4e-15,
                 "f64 gen_harmonic({n}, {a}) = {f:e}, err {ef:e}"
             );
-            let e = rel(specials::gen_harmonic(Df64::from(n), Df64::from(a)), want);
-            assert!(e <= 1e-30, "Df64 gen_harmonic({n}, {a}): err {e:e}");
+            #[cfg(feature = "xprec")]
+            {
+                let e = rel(specials::gen_harmonic(Df64::from(n), Df64::from(a)), want);
+                assert!(e <= 1e-30, "Df64 gen_harmonic({n}, {a}): err {e:e}");
+            }
         }
     });
     // The Euler-Maclaurin cutoff N = 40 + |a| made the direct sum O(|a|) (no end
@@ -203,6 +230,7 @@ fn n5_gen_harmonic_returns_for_infinite_and_huge_n() {
             (1e300, 1e300, 1.0),
         ] {
             assert_eq!(specials::gen_harmonic(n, a), want, "f64 ({n}, {a})");
+            #[cfg(feature = "xprec")]
             assert_eq!(
                 specials::gen_harmonic(Df64::from(n), Df64::from(a)).hi(),
                 want,
@@ -238,6 +266,7 @@ fn n6_stirling2_truncates_in_both_strategies() {
     ];
     for (n, k, want) in cases {
         assert_eq!(specials::stirling2(n, k), want, "f64 stirling2({n}, {k})");
+        #[cfg(feature = "xprec")]
         assert_eq!(
             specials::stirling2(Df64::from(n), Df64::from(k)).hi(),
             want,
@@ -260,11 +289,15 @@ fn n6_stirling2_truncates_in_both_strategies() {
             ((f - want.0) / want.0).abs() <= 1e-5,
             "f64 stirling2({n}, {k}) = {f:e}"
         );
-        let e = rel(specials::stirling2(Df64::from(n), Df64::from(k)), want);
-        assert!(e <= 1e-30, "Df64 stirling2({n}, {k}): err {e:e}");
+        #[cfg(feature = "xprec")]
+        {
+            let e = rel(specials::stirling2(Df64::from(n), Df64::from(k)), want);
+            assert!(e <= 1e-30, "Df64 stirling2({n}, {k}): err {e:e}");
+        }
     }
 }
 
+#[cfg(feature = "xprec")]
 #[test]
 fn n7_stirling2_df64_keeps_the_low_word_of_large_arguments() {
     let n = Df64::from(1e17);
@@ -315,8 +348,11 @@ fn stirling2_overflow_is_plus_infinity_beyond_the_work_limit() {
             f64::INFINITY,
             "f64 stirling2({n}, {k})"
         );
-        let d = specials::stirling2(Df64::from(n), Df64::from(k)).hi();
-        assert_eq!(d, f64::INFINITY, "Df64 stirling2({n}, {k})");
+        #[cfg(feature = "xprec")]
+        {
+            let d = specials::stirling2(Df64::from(n), Df64::from(k)).hi();
+            assert_eq!(d, f64::INFINITY, "Df64 stirling2({n}, {k})");
+        }
     }
 }
 
@@ -350,20 +386,27 @@ fn stirling2_near_the_diagonal_beyond_the_work_limit() {
         let f = specials::stirling2(n, k);
         let ef = ((f - want.0) / want.0).abs();
         assert!(ef <= 1e-13, "f64 stirling2({n}, {k}) = {f:e}, err {ef:e}");
-        let e = rel(specials::stirling2(Df64::from(n), Df64::from(k)), want);
-        assert!(e <= 1e-30, "Df64 stirling2({n}, {k}): err {e:e}");
+        #[cfg(feature = "xprec")]
+        {
+            let e = rel(specials::stirling2(Df64::from(n), Df64::from(k)), want);
+            assert!(e <= 1e-30, "Df64 stirling2({n}, {k}): err {e:e}");
+        }
     }
-    let m = Df64::from(2.0_f64.powi(60));
-    let e = rel(
-        specials::stirling2(m, m - Df64::from(4.0)),
-        (8.129553516447896e141, 3.1025560135222333e125),
-    );
-    assert!(e <= 1e-30, "Df64 stirling2(2^60, 2^60 - 4): err {e:e}");
+    #[cfg(feature = "xprec")]
+    {
+        let m = Df64::from(2.0_f64.powi(60));
+        let e = rel(
+            specials::stirling2(m, m - Df64::from(4.0)),
+            (8.129553516447896e141, 3.1025560135222333e125),
+        );
+        assert!(e <= 1e-30, "Df64 stirling2(2^60, 2^60 - 4): err {e:e}");
+    }
     assert_eq!(specials::stirling2(4e6, 3999936.0), f64::INFINITY);
 }
 
 // ---------------------------------------------------------------- N8 poch
 
+#[cfg(feature = "xprec")]
 #[test]
 fn n8_poch_df64_subnormal_a() {
     let cases: [(f64, f64, (f64, f64)); 4] = [
@@ -405,6 +448,7 @@ fn n8_poch_df64_subnormal_a() {
 
 /// Over fixed extreme and non-finite arguments: where f64 gives ±∞, ±0 or NaN,
 /// Df64 gives the same; where f64 is finite, Df64 is finite too.
+#[cfg(feature = "xprec")]
 #[test]
 fn strategies_agree_on_extreme_arguments() {
     let base = [

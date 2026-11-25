@@ -12,10 +12,12 @@ This file only records what is specific to `tenferro-sci-rs`. The repository's o
 ## Local facts
 
 - **MSRV**: the same `rust-version` as tenferro-rs (1.96 at the time of writing), set once in the root `Cargo.toml`.
-- **Feature combinations CI builds**: default features. GPU features are added with the first GPU path.
+- **Feature combinations CI builds**: default features. GPU features are added with the first GPU path. No CI lane
+  builds `specials` with `--no-default-features` yet (#30); run it locally (below).
 - **Platforms claimed**: Linux x86_64, tested in CI. Other platforms are not claimed yet.
 - **Local gate**: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace`, and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
+  `cargo test --workspace`, `cargo clippy -p specials --no-default-features --all-targets -- -D warnings`,
+  `cargo test -p specials --no-default-features`, and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
 
 ## Anything here that departs from the shared rules
 
