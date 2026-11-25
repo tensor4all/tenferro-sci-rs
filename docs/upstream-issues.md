@@ -158,8 +158,9 @@ cases:
   evaluates `exp` of a difference of ln Γ values of size 2e3 through xsf's
   `lgam`, so that ulp becomes a relative error of 4.3956e-13. That is exactly
   xsf's own error in the `clang-darwin-aarch64` column, and 7.2× the
-  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only xsref row of the
-  twelve tables that fails on macOS.
+  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only `binom` row that
+  fails on macOS; the two `pmv` rows in the Apple libm `pmv` entry below are
+  the others.
 - **Upstream:** not reported (not a bug: C does not require `log` to be
   correctly rounded).
 - **Here:** the gcc-linux-x86_64 tolerances are asserted on every platform, as
