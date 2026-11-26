@@ -16,8 +16,8 @@ This file only records what is specific to `tenferro-sci-rs`. The repository's o
   builds `specials` with `--no-default-features` yet (#32); run it locally (below).
 - **Platforms claimed**: Linux x86_64, tested in CI. Other platforms are not claimed yet.
 - **Local gate**: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace`, `cargo clippy -p specials --no-default-features --all-targets -- -D warnings`,
-  `cargo test -p specials --no-default-features`, and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
+  `cargo test --profile ci --workspace`, `cargo clippy -p specials --no-default-features --all-targets -- -D warnings`,
+  `cargo test --profile ci -p specials --no-default-features`, and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
 
 ## Anything here that departs from the shared rules
 

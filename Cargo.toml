@@ -13,3 +13,27 @@ repository = "https://github.com/tensor4all/tenferro-sci-rs"
 few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
 xprec = "0.2.3"
+
+# No default profile carries debug info (tensor4all-agent-rules, rules/rust/performance.md,
+# "Build Profiles And Target Hygiene"); `debug-assertions` and `overflow-checks` stay on.
+[profile.dev]
+debug = 0
+debug-assertions = true
+overflow-checks = true
+
+[profile.test]
+debug = 0
+debug-assertions = true
+overflow-checks = true
+
+# CI builds and tests with this profile (rules/common/repository.md, "Build Profiles"). It inherits
+# `test`, not `release`: `specials` has no `debug_assert!` of its own, but the code it runs does.
+# Every finite double-double table value goes through `xprec::Df64::new_full` (`src/real.rs`), whose only
+# validation is `debug_assert!(hi + lo == hi || !hi.is_finite())`, and `few_special_functions` states
+# its domain preconditions the same way. Inheriting `release` would turn a bad table entry from a
+# failing test into a silent wrong number. `overflow-checks` also stays on, for the integer orders
+# (`n: i64`) the public API takes.
+[profile.ci]
+inherits = "test"
+incremental = false
+strip = "symbols"
