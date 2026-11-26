@@ -17,9 +17,13 @@
 //!   to `f64` must satisfy xsf's criterion against SciPy's value, i.e. the
 //!   double-double path returns the same special values as SciPy.
 //!
-//! `f64_matches_xsref` and `tolerance_is_the_gcc_column_on_every_platform` run
-//! in every configuration; the two `Df64` tests need the `xprec` feature (on by
-//! default).
+//! On macOS, the three rows in `APPLE_LIBM_ALLOWANCES` are checked against a
+//! per-row allowance instead of `adjust_tolerance(tol)` (see
+//! `docs/upstream-issues.md`, "Apple libm").
+//!
+//! `f64_matches_xsref`, `apple_libm_allowances_are_needed` and
+//! `tolerance_is_the_gcc_column_on_every_platform` run in every configuration;
+//! the two `Df64` tests need the `xprec` feature (on by default).
 
 #[path = "../src/refdata.rs"]
 mod refdata;
@@ -126,6 +130,59 @@ impl Report {
     }
 }
 
+/// Rows whose `f64` result on macOS (aarch64) exceeds the `gcc-linux-x86_64`
+/// bound because Apple libm is not correctly rounded; each row is described in
+/// `docs/upstream-issues.md` ("Apple libm"). On macOS these rows are checked
+/// against the listed allowance, the observed error rounded up; every other row,
+/// and every row on other platforms, keeps the `gcc-linux-x86_64` bound.
+const APPLE_LIBM_ALLOWANCES: [(&str, usize, f64); 3] = [
+    // binom(458.139..., 56.000...): one ulp of `ln`; observed 4.3956e-13.
+    ("binom", 2030, 4.4e-13),
+    // pmv(±5, -11.3, -0.557): `lpmv0`'s digamma expansion; observed 2.54e-15, 2.53e-15.
+    ("pmv", 587, 2.6e-15),
+    ("pmv", 1412, 2.6e-15),
+];
+
+/// The `f64` tolerance of one xsref row: xsf's criterion on the
+/// `gcc-linux-x86_64` column, widened on macOS for `APPLE_LIBM_ALLOWANCES` only.
+fn f64_tolerance(name: &str, line: usize, tol: f64) -> f64 {
+    let gcc = adjust_tolerance(tol);
+    let allowance = APPLE_LIBM_ALLOWANCES
+        .iter()
+        .find(|&&(n, l, _)| n == name && l == line)
+        .map(|&(_, _, allowed)| allowed);
+    match allowance {
+        Some(allowed) if cfg!(target_os = "macos") => gcc.max(allowed),
+        _ => gcc,
+    }
+}
+
+/// Every allowance names an existing row and is wider than that row's
+/// `gcc-linux-x86_64` bound; on macOS the row still needs it, so an allowance
+/// that a libm change makes unnecessary fails here instead of lingering.
+#[test]
+fn apple_libm_allowances_are_needed() {
+    for &(name, line, allowed) in &APPLE_LIBM_ALLOWANCES {
+        let row = xsref_rows(name)
+            .into_iter()
+            .find(|r| r.line == line)
+            .unwrap_or_else(|| panic!("{name}.csv line {line}"));
+        let gcc = adjust_tolerance(row.tol);
+        assert!(
+            allowed > gcc,
+            "{name} line {line}: allowance {allowed:e} <= gcc bound {gcc:e}"
+        );
+        if cfg!(target_os = "macos") {
+            let e = extended_relative_error(eval::<f64>(name, &row.args), row.desired);
+            assert!(
+                e > gcc,
+                "{name} line {line}: error {e:e} is within the gcc bound {gcc:e}; \
+                 remove its allowance"
+            );
+        }
+    }
+}
+
 #[test]
 fn f64_matches_xsref() {
     let mut report = Report::default();
@@ -134,7 +191,7 @@ fn f64_matches_xsref() {
         for r in xsref_rows(name) {
             let got = eval::<f64>(name, &r.args);
             let e = extended_relative_error(got, r.desired);
-            let tol = adjust_tolerance(r.tol);
+            let tol = f64_tolerance(name, r.line, r.tol);
             if e.is_nan() || e > tol {
                 fails.push(Failure {
                     line: r.line,

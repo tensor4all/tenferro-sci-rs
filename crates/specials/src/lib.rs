@@ -144,11 +144,13 @@
 //!   functions) with xsf's error metric and per-point tolerances, plus xsf's
 //!   hand-written regression cases. Rust does not contract `a*b + c` into FMA,
 //!   so the tolerances of xsf built by gcc on x86-64 apply on every platform.
-//!   They are asserted on every platform, with no relaxation. The port calls
-//!   the platform's `ln`/`exp`/`powf`, so a libm that is not correctly rounded
-//!   can exceed them. Linux (glibc, x86-64 and aarch64) passes every row. On
-//!   macOS one `binom` row fails because Apple's `log` is off by 1 ulp, and two
-//!   `pmv` rows because of another libm function; see `docs/upstream-issues.md`.
+//!   They are asserted on every platform. The port calls the platform's
+//!   `ln`/`exp`/`powf`, so a libm that is not correctly rounded can exceed
+//!   them. Linux (glibc, x86-64 and aarch64) passes every row. On macOS three
+//!   rows exceed them, one `binom` row because Apple's `log` is off by 1 ulp
+//!   and two `pmv` rows because of another libm function; those three rows
+//!   alone are checked against a per-row allowance of their observed error
+//!   there (see `docs/upstream-issues.md`).
 //! * **`Df64`** is checked against mpmath double-double values at the same
 //!   xsref points and at points chosen for the double-double algorithms: both
 //!   sides of every switch between algorithms, arguments whose low word

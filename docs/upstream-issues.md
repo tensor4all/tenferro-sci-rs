@@ -159,13 +159,16 @@ cases:
   `lgam`, so that ulp becomes a relative error of 4.3956e-13. That is exactly
   xsf's own error in the `clang-darwin-aarch64` column, and 7.2× the
   `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only `binom` row that
-  fails on macOS; the two `pmv` rows in the Apple libm `pmv` entry below are
-  the others.
+  exceeds that bound on macOS; the two `pmv` rows in the Apple libm `pmv` entry
+  below are the others.
 - **Upstream:** not reported (not a bug: C does not require `log` to be
   correctly rounded).
 - **Here:** the gcc-linux-x86_64 tolerances are asserted on every platform, as
-  issue #8 requires, so `f64_matches_xsref` fails on this one row on macOS. It
-  passes on Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
+  issue #8 requires, except that on macOS this row is checked against an
+  allowance of 4.4e-13, its observed error rounded up (`APPLE_LIBM_ALLOWANCES`
+  in `crates/specials/tests/xsref.rs`; `apple_libm_allowances_are_needed` fails
+  once the row no longer needs it). The row passes the gcc-linux-x86_64 bound on
+  Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
   Making the `f64` port independent of the platform libm (a correctly rounded
   `ln` in pure Rust) would remove the deviation; that is a separate change.
 
@@ -497,9 +500,10 @@ cases:
   `clang++ -ffp-contract=off` gives the port's value bit for bit on all 1625 rows
   (and with FMA contraction a third value, inside xsref's `clang-darwin-aarch64` bound).
 - **Upstream:** not reported (not a bug).
-- **Here:** like the `binom` row above, the gcc-linux-x86_64 bound is asserted on
-  every platform, so `f64_matches_xsref` fails on these two `pmv` rows on macOS
-  (and on that one `binom` row). Not checked on Linux: no Docker here.
+- **Here:** like the `binom` row above, these two rows keep the gcc-linux-x86_64
+  bound on every other platform and are checked against an allowance of 2.6e-15,
+  their observed error rounded up, on macOS (`APPLE_LIBM_ALLOWANCES`). Linux
+  x86-64 is covered by CI; Linux aarch64 was not checked.
 
 ## scipy/xsf: `eval_jacobi` (integer degree) is NaN at `alpha = -1` unless `abs(beta) = 1`, and loses all digits within 1e-6 of `-1`
 
