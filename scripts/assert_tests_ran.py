@@ -24,7 +24,8 @@ def main() -> int:
 
     passed = {}
     current = None
-    for line in pathlib.Path(log).read_text().splitlines():
+    ansi = re.compile(r"\x1b\[[0-9;]*m")  # CARGO_TERM_COLOR=always in CI
+    for line in ansi.sub("", pathlib.Path(log).read_text()).splitlines():
         m = re.search(r"Running (\S+) \(", line)
         if m:
             current = m.group(1)
