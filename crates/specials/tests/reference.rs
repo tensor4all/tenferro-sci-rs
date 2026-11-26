@@ -1,4 +1,3 @@
-#![cfg(feature = "xprec")]
 //! The public API against mpmath (ground truth) and SciPy (parity), for
 //! `f64` and `xprec::Df64`, plus SciPy's non-finite and zero results.
 //!
