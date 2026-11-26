@@ -19,7 +19,9 @@ pub(crate) mod elementary;
 pub(crate) mod ellip;
 pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
+pub(crate) mod legendre;
 pub(crate) mod lgam1p;
+pub(crate) mod orthogonal;
 pub(crate) mod poch;
 pub(crate) mod stirling2;
 #[rustfmt::skip]

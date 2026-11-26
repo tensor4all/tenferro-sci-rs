@@ -1031,6 +1031,913 @@ def write_special_values(only=None):
 
 
 # --------------------------------------------------------------------------
+# Orthogonal polynomials and Legendre functions (#16).
+#
+# Integer degrees: the stored reference is mpmath's own function
+# (`jacobi`, `gegenbauer`, `chebyt`, `chebyu`, `legendre`, `laguerre`,
+# `hermite`) under `stable()`, and every value is checked against the
+# three-term recurrence evaluated by `stable()` as a second formula (DLMF
+# 18.9). The last argument of an integer-degree row is a scale: the largest
+# |p_j| the recurrence takes for j <= n, rounded to double. Near a zero the
+# result has an absolute error of about n eps scale, so the tests use it as
+# the absolute floor.
+# Non-integer degrees (f64 only): mpmath's hypergeometric representations.
+# --------------------------------------------------------------------------
+
+from fractions import Fraction
+
+RNGO = random.Random(20261201)
+
+
+def rndo(lo, hi, log=False):
+    """rnd() with this family's own generator."""
+    if log:
+        u = mp.exp(mp.log(lo) + (mp.log(hi) - mp.log(lo)) * mp.mpf(RNGO.random()))
+    else:
+        u = mp.mpf(lo) + (mp.mpf(hi) - mp.mpf(lo)) * mp.mpf(RNGO.random())
+    return ("dd", u * (1 + mp.mpf(RNGO.random()) * mp.mpf(2) ** -60))
+
+
+def _o_extra(*xs):
+    return min(_extra(1, *[abs(mp.mpf(x)) for x in xs if x != 0]), 3000)
+
+
+def _isint(v):
+    return v == mp.floor(v)
+
+
+# Recurrences (DLMF 18.9, 14.10) at the current precision; each returns
+# [p_0, ..., p_n] or raises ZeroDivisionError at a singular parameter.
+
+
+def seq_jacobi(n, a, b, x):
+    a, b, x = mp.mpf(a), mp.mpf(b), mp.mpf(x)
+    p = [mp.mpf(1), (a + 1) + (a + b + 2) * (x - 1) / 2]
+    for k in range(1, n):
+        t = 2 * k + a + b
+        A = 2 * (k + 1) * (k + a + b + 1) * t
+        B = (t + 1) * ((t + 2) * t * x + a * a - b * b)
+        C = 2 * (k + a) * (k + b) * (t + 2)
+        if A == 0:
+            raise ZeroDivisionError("singular Jacobi recurrence")
+        p.append((B * p[k] - C * p[k - 1]) / A)
+    return p[: n + 1]
+
+
+def jacobi_value(n, a, b, x):
+    """P_n^(a,b)(x), through P_n^(-1,b) = (n+b)/(2n) (x-1) P_(n-1)^(1,b) at a = -1."""
+    a, b, x = mp.mpf(a), mp.mpf(b), mp.mpf(x)
+    if n == 0:
+        return mp.mpf(1)
+    if a == -1:
+        return (n + b) / (2 * n) * (x - 1) * seq_jacobi(n - 1, 1, b, x)[n - 1]
+    if b == -1:
+        return (-1) ** n * jacobi_value(n, b, a, -x)
+    return seq_jacobi(n, a, b, x)[n]
+
+
+def jacobi_scale(n, a, b, x):
+    a, b, x = mp.mpf(a), mp.mpf(b), mp.mpf(x)
+    if a == -1 or b == -1:
+        aa, bb, xx = (1, b, x) if a == -1 else (a, 1, x)
+        s = max(abs(q) for q in seq_jacobi(max(n - 1, 0), aa, bb, xx)) * max(1, abs(x - 1), abs(x + 1)) * max(1, abs(a + b + n))
+    else:
+        s = max(abs(q) for q in seq_jacobi(n, a, b, x))
+    return float(s)
+
+
+def seq_gegenbauer(n, a, x):
+    a, x = mp.mpf(a), mp.mpf(x)
+    p = [mp.mpf(1), 2 * a * x]
+    for k in range(1, n):
+        p.append((2 * (k + a) * x * p[k] - (k + 2 * a - 1) * p[k - 1]) / (k + 1))
+    return p[: n + 1]
+
+
+def seq_chebyt(n, x):
+    x = mp.mpf(x)
+    p = [mp.mpf(1), x]
+    for k in range(1, n):
+        p.append(2 * x * p[k] - p[k - 1])
+    return p[: n + 1]
+
+
+def seq_chebyu(n, x):
+    x = mp.mpf(x)
+    p = [mp.mpf(1), 2 * x]
+    for k in range(1, n):
+        p.append(2 * x * p[k] - p[k - 1])
+    return p[: n + 1]
+
+
+def seq_legendre(n, x):
+    x = mp.mpf(x)
+    p = [mp.mpf(1), x]
+    for k in range(1, n):
+        p.append(((2 * k + 1) * x * p[k] - k * p[k - 1]) / (k + 1))
+    return p[: n + 1]
+
+
+def seq_genlaguerre(n, a, x):
+    a, x = mp.mpf(a), mp.mpf(x)
+    p = [mp.mpf(1), 1 + a - x]
+    for k in range(1, n):
+        p.append(((2 * k + 1 + a - x) * p[k] - (k + a) * p[k - 1]) / (k + 1))
+    return p[: n + 1]
+
+
+def seq_hermite(n, x):
+    x = mp.mpf(x)
+    p = [mp.mpf(1), 2 * x]
+    for k in range(1, n):
+        p.append(2 * x * p[k] - 2 * k * p[k - 1])
+    return p[: n + 1]
+
+
+def seq_hermitenorm(n, x):
+    x = mp.mpf(x)
+    p = [mp.mpf(1), x]
+    for k in range(1, n):
+        p.append(x * p[k] - k * p[k - 1])
+    return p[: n + 1]
+
+
+def _scale(seq):
+    def f(*args):
+        return float(max(abs(q) for q in seq(*args)))
+
+    return f
+
+
+def stable_z(f, scale, *args):
+    """stable() for values that may be exactly zero: two precisions agree to
+    2^-150 relative, or both are rounding noise of the earlier precision
+    relative to `scale` (the reference is then exactly zero)."""
+    prev, prev_prec = None, None
+    for prec in (256, 640, 1600, 4000):
+        with mp.workprec(prec):
+            v = f(*[mp.mpf(a) if not isinstance(a, mp.mpf) else +a for a in args])
+            v = +v if v is not None else None
+        if v is None or isinstance(v, mp.mpc) or not mp.isfinite(v):
+            return v
+        if prev is not None:
+            big = max(abs(v), abs(prev))
+            if v == prev or abs(v - prev) <= big * mp.mpf(2) ** -150:
+                return v
+            if big <= mp.mpf(scale) * mp.mpf(2) ** -(prev_prec - 80):
+                return mp.mpf(0)
+        prev, prev_prec = v, prec
+    raise RuntimeError(f"reference did not converge: {f.__name__}{args}")
+
+
+def _wx(f, n, rest):
+    """f(n, *rest) with the extra bits that make sums of the arguments exact."""
+    with mp.workprec(mp.mp.prec + _o_extra(n, *rest)):
+        return f(n, *rest)
+
+
+def _checked(native, recur):
+    """A reference function: `native` under stable(), validated against `recur`
+    (stable() as well); `native` None means the recurrence is the reference.
+    The last argument is the scale, which neither function sees."""
+
+    def f(*args):
+        n = int(args[0])
+        rest = list(args[1:-1])
+        scale = args[-1]
+        try:
+            w = stable_z(lambda *r: _wx(recur, n, r), scale, *rest)
+        except ZeroDivisionError:
+            return None
+        if native is None:
+            return w
+        try:
+            v = stable_z(lambda *r: _wx(native, n, r), scale, *rest)
+        except (ValueError, ZeroDivisionError, mp.libmp.NoConvergence):
+            return w
+        if v is None or w is None or isinstance(v, mp.mpc):
+            return w
+        if abs(v - w) > mp.mpf(2) ** -120 * max(abs(v), abs(w), mp.mpf(10) ** -300):
+            raise SystemExit(f"native and recurrence disagree: n={n} args={rest}: {v} vs {w}")
+        return v
+
+    return f
+
+
+def _val(seq):
+    return lambda n, *r: seq(n, *r)[n]
+
+
+# ---- reference functions (integer degree) ------------------------------
+
+mp_o_jacobi = _checked(lambda n, a, b, x: mp.jacobi(n, a, b, x) if a != -1 and b != -1 else None, jacobi_value)
+mp_o_gegenbauer = _checked(lambda n, a, x: mp.gegenbauer(n, a, x), _val(seq_gegenbauer))
+mp_o_chebyt = _checked(lambda n, x: mp.chebyt(n, x), _val(seq_chebyt))
+mp_o_chebyu = _checked(lambda n, x: mp.chebyu(n, x), _val(seq_chebyu))
+mp_o_chebyc = _checked(None, lambda n, x: 2 * seq_chebyt(n, mp.mpf(x) / 2)[n])
+mp_o_chebys = _checked(None, lambda n, x: seq_chebyu(n, mp.mpf(x) / 2)[n])
+mp_o_sh_chebyt = _checked(lambda n, x: mp.chebyt(n, 2 * x - 1), lambda n, x: seq_chebyt(n, 2 * mp.mpf(x) - 1)[n])
+mp_o_sh_chebyu = _checked(lambda n, x: mp.chebyu(n, 2 * x - 1), lambda n, x: seq_chebyu(n, 2 * mp.mpf(x) - 1)[n])
+mp_o_legendre = _checked(lambda n, x: mp.legendre(n, x), _val(seq_legendre))
+mp_o_sh_legendre = _checked(lambda n, x: mp.legendre(n, 2 * x - 1), lambda n, x: seq_legendre(n, 2 * mp.mpf(x) - 1)[n])
+mp_o_genlaguerre = _checked(lambda n, a, x: mp.laguerre(n, a, x), _val(seq_genlaguerre))
+mp_o_laguerre = _checked(lambda n, x: mp.laguerre(n, 0, x), lambda n, x: seq_genlaguerre(n, 0, x)[n])
+mp_o_hermite = _checked(lambda n, x: mp.hermite(n, x), _val(seq_hermite))
+mp_o_hermitenorm = _checked(None, _val(seq_hermitenorm))
+
+
+def _sh_jacobi_value(n, p, q, x):
+    p, q, x = mp.mpf(p), mp.mpf(q), mp.mpf(x)
+    den = mp.binomial(2 * n + p - 1, n)
+    if den == 0:
+        raise ZeroDivisionError("sh_jacobi normalization")
+    return jacobi_value(n, p - q, q - 1, 2 * x - 1) / den
+
+
+mp_o_sh_jacobi = _checked(None, _sh_jacobi_value)
+
+
+def _sc_int(f):
+    """SciPy's integer-degree ufunc loop; the last (scale) argument is dropped."""
+    return lambda n, *r: f(int(n), *r[:-1])
+
+
+# ---- scales -------------------------------------------------------------
+
+
+def _with_scale(points, scale):
+    """Append the scale of each point (a double) as the last argument."""
+    out = []
+    for pt in points:
+        args = [arg(a) for a in pt]
+        try:
+            with mp.workprec(mp.mp.prec + _o_extra(*[mpv(a) for a in args])):
+                sc_ = scale(int(args[0][0]), *[mpv(a) for a in args[1:]])
+        except ZeroDivisionError:
+            continue
+        if not math.isfinite(sc_) or sc_ > 1e300 or sc_ == 0:
+            continue
+        out.append(tuple(pt) + (sc_,))
+    return out
+
+
+# ---- points -------------------------------------------------------------
+
+EPS52 = mp.mpf(2) ** -52
+NS_SMALL = [0, 1, 2, 3, 4, 5, 8, 13, 21]
+NS_MED = [30, 50, 100, 200]
+NS_BIG = [400, 1000]
+XSYM = [-1.0, -0.999999, -0.75, -0.3, -1e-6, 0.0, 1e-6, 0.2, 0.5, 0.9, 1.0 - 2.0**-52, 1.0]
+XOUT = [-1.5, -3.0, 1.0 + 2.0**-52, 1.25, 2.5, 10.0, 100.0]
+
+
+def _pick(rows, count):
+    """A deterministic subset of `count` rows (all if fewer)."""
+    rows = list(rows)
+    if len(rows) <= count:
+        return rows
+    return [rows[i] for i in sorted(RNGO.sample(range(len(rows)), count))]
+
+
+def _poly_points(extra_params, xs, ns, count):
+    """All of ns x extra_params x xs, thinned to `count` rows."""
+    combos = [(n,) + tuple(pr) + (x,) for n in ns for pr in extra_params for x in xs]
+    return _pick(combos, count)
+
+
+def _rand_points(nsr, param_ranges, xr, count):
+    out = []
+    for _ in range(count):
+        n = RNGO.choice(nsr)
+        out.append((n,) + tuple(rndo(lo, hi) for lo, hi in param_ranges) + (rndo(*xr),))
+    return out
+
+
+def _near_zero_points(n, zeros_fn, spreads=(mp.mpf(10) ** -20, mp.mpf(10) ** -31)):
+    """Double-double points around the zeros of a polynomial (given its roots)."""
+    out = []
+    for z in zeros_fn(n):
+        for d in spreads:
+            out += [("dd", z + d), ("dd", z - d)]
+    return out
+
+
+def cheb_zero_t(n):
+    return [mp.cos(mp.pi * (2 * j - 1) / (2 * n)) for j in (1, n // 2 + 1)] if n > 0 else []
+
+
+def cheb_zero_u(n):
+    return [mp.cos(mp.pi * j / (n + 1)) for j in (1, (n + 1) // 2)] if n > 0 else []
+
+
+def legendre_zero(n):
+    return [mp.findroot(lambda t: mp.legendre(n, t), mp.cos(mp.pi * (j - 0.25) / (n + 0.5))) for j in (1, max(1, n // 2))] if n > 1 else []
+
+
+JAB = [
+    (0.0, 0.0), (0.5, 0.25), (-0.5, 0.5), (2.5, -0.75), (10.0, -0.99), (-0.99, 10.0),
+    (THIRD, MTHIRD), (PI, TENE), (1000.0, 0.0), (0.0, 700.0),
+    (-1.0, 1.0), (-1.0, -1.0), (-1.0, 0.5), (1.0, -1.0), (0.5, -1.0),
+    (("dd", -1 + EPS52), 0.5), (("dd", -1 + mp.mpf(2) ** -90), 1.0), (-0.5, ("dd", -1 + EPS52)),
+]
+O_JACOBI = _poly_points(JAB, XSYM + XOUT[:2], NS_SMALL + NS_MED, 260)
+O_JACOBI += _poly_points(JAB[:10], XSYM[3:9], NS_BIG, 24)
+O_JACOBI += _rand_points(list(range(0, 60)), [(-0.99, 10), (-0.99, 10)], (-1, 1), 60)
+O_JACOBI += [(5, 0.5, 0.25, z) for z in near(0.0, mp.mpf(10) ** -25)] + [(7, 2.0, 1.0, ("dd", mp.mpf("1e-40")))]
+O_JACOBI += [(12, 0.5, 0.25, ("dd", 1 - mp.mpf(2) ** -k)) for k in (60, 100)]
+# The normalization binom(n + a, n) overflows although the polynomial does not (P_n^(a,0)(-1) = (-1)^n).
+O_JACOBI += [(1000, 1000.0, 0.0, -1.0), (500, 800.0, 0.0, -1.0), (700, 1500.0, 0.5, -1.0)]
+
+O_GEGEN_A = [0.5, 1.0, 2.0, -0.499, -0.25, 7.5, THIRD, ("dd", mp.mpf("1e-20")), 1e-200, -1e-20, 100.0, 1e5]
+O_GEGENBAUER = _poly_points([(a,) for a in O_GEGEN_A], XSYM + XOUT[:3], NS_SMALL + NS_MED, 220)
+O_GEGENBAUER += _poly_points([(a,) for a in O_GEGEN_A[:6]], XSYM[3:9], NS_BIG, 18)
+O_GEGENBAUER += _rand_points(list(range(0, 50)), [(-0.499, 10)], (-1, 1), 60)
+O_GEGENBAUER += [(n_, 0.75, ("dd", s)) for n_ in (2, 3, 6, 7) for s in (mp.mpf("1e-6") * (1 + mp.mpf(2) ** -90), -mp.mpf("1e-6"), mp.mpf("1e-5") * (1 - mp.mpf(2) ** -60), mp.mpf("1e-5") * (1 + mp.mpf(2) ** -60), mp.mpf("1e-5"))]
+
+O_CHEBYT = _poly_points([()], XSYM + XOUT, NS_SMALL + NS_MED + [1000, 2000], 140)
+O_CHEBYT += [(n_, z) for n_ in (3, 8, 20, 101) for z in _near_zero_points(n_, cheb_zero_t)]
+O_CHEBYT += _rand_points(list(range(0, 80)), [], (-1, 1), 40) + _rand_points([5, 40, 300], [], (1, 50), 12)
+O_CHEBYU = _poly_points([()], XSYM + XOUT, NS_SMALL + NS_MED + [1000, 2000], 140)
+O_CHEBYU += [(n_, z) for n_ in (3, 8, 20, 101) for z in _near_zero_points(n_, cheb_zero_u)]
+O_CHEBYU += _rand_points(list(range(0, 80)), [], (-1, 1), 40) + _rand_points([5, 40, 300], [], (1, 50), 12)
+O_CHEBYC = _poly_points([()], [2 * x for x in XSYM] + [3.0, -7.5, 1e3, 1e30], NS_SMALL + NS_MED + [1000], 120) + _rand_points(list(range(0, 60)), [], (-2, 2), 30)
+O_CHEBYS = _poly_points([()], [2 * x for x in XSYM] + [3.0, -7.5, 1e3, 1e30], NS_SMALL + NS_MED + [1000], 120) + _rand_points(list(range(0, 60)), [], (-2, 2), 30)
+O_SH_CHEBYT = _poly_points([()], [0.0, 1.0, 0.5, 0.25, 1e-6, 0.999999, 2.0, -0.5, 1e3, 1e5] + [(x + 1) / 2 for x in XSYM[:6]], NS_SMALL + NS_MED + [1000], 110) + _rand_points(list(range(0, 60)), [], (0, 1), 30)
+O_SH_CHEBYU = _poly_points([()], [0.0, 1.0, 0.5, 0.25, 1e-6, 0.999999, 2.0, -0.5, 1e3, 1e5] + [(x + 1) / 2 for x in XSYM[:6]], NS_SMALL + NS_MED + [1000], 110) + _rand_points(list(range(0, 60)), [], (0, 1), 30)
+O_LEGENDRE = _poly_points([()], XSYM + XOUT, NS_SMALL + NS_MED + [1000, 2000], 150)
+O_LEGENDRE += [(n_, z) for n_ in (3, 8, 20, 101) for z in _near_zero_points(n_, legendre_zero)]
+O_LEGENDRE += [(n_, ("dd", s * mp.mpf(10) ** -k)) for n_ in (6, 7, 30, 31) for k in (5, 6, 20) for s in (1, -1)]
+O_LEGENDRE += _rand_points(list(range(0, 80)), [], (-1, 1), 40) + _rand_points([5, 40, 300], [], (1, 50), 12)
+O_SH_LEGENDRE = _poly_points([()], [0.0, 1.0, 0.5, 0.25, 1e-6, 0.999999, 2.0, -0.5, 1e3] + [(x + 1) / 2 for x in XSYM[:6]], NS_SMALL + NS_MED + [1000], 100) + _rand_points(list(range(0, 60)), [], (0, 1), 30)
+
+O_SH_JACOBI_PQ = [(1.0, 1.0), (1.0, 0.5), (3.5, 0.25), (10.0, 1.0), (2.0, 0.75), (PI, THIRD), (1.0, 0.0), (5.0, 3.0)]
+O_SH_JACOBI = _poly_points(O_SH_JACOBI_PQ, [0.0, 1.0, 0.5, 0.3, 0.9, 1e-6, 0.999999, 1.5, -0.5, 2.0], NS_SMALL + NS_MED, 120) + _rand_points(list(range(0, 40)), [(1, 10), (0, 1)], (0, 1), 30)
+
+O_LAG_A = [0.0, 0.5, 2.0, -0.5, -0.99, ("dd", -1 + EPS52), ("dd", -1 + mp.mpf(2) ** -90), THIRD, 10.0, 100.0, 1000.0, 1e5]
+O_XLAG = [0.0, 1e-6, 0.3, 1.0, 2.5, 10.0, 50.0, 100.0, 400.0, 1000.0, -0.5, -10.0, -100.0]
+O_GENLAGUERRE = _poly_points([(a,) for a in O_LAG_A], O_XLAG, NS_SMALL + NS_MED, 230)
+O_GENLAGUERRE += _poly_points([(a,) for a in O_LAG_A[:5]], [0.0, 1.0, 50.0, 700.0], NS_BIG, 20)
+O_GENLAGUERRE += _rand_points(list(range(0, 60)), [(-0.99, 10)], (0, 100), 60)
+# Intermediates exceed the range of double while the result does not (the
+# recurrence's own values reach ~1e300; the normalization binom(n+a, n) of an
+# `L / binom` recurrence overflows at n = a = 1000).
+O_GENLAGUERRE += [(1000, 1000.0, 1000.0), (1000, 1000.0, 1400.0), (700, 700.0, 700.0), (1500, 0.5, 1500.0), (1000, 1000.0, 3000.0), (300, 2000.0, 100.0)]
+O_LAGUERRE = _poly_points([()], O_XLAG, NS_SMALL + NS_MED + [1000], 100) + _rand_points(list(range(0, 60)), [], (0, 100), 30)
+O_LAGUERRE += [(1000, 1400.0), (200, 700.0), (1500, 1500.0)]
+
+O_XH = [0.0, 1e-3, 0.5, 1.0, -1.0, 2.5, 5.0, 10.0, -10.0, 33.3, 100.0, -100.0, 300.0, 1e-300]
+O_HERMITE = _poly_points([()], O_XH, NS_SMALL + NS_MED + [300, 500], 140) + _rand_points(list(range(0, 60)), [], (-30, 30), 40)
+O_HERMITE += [(70, 1.0), (170, 3.0), (170, 30.0), (150, 150.0), (60, 1e5), (10, 1e30), (1000, 20.0)]
+O_HERMITENORM = _poly_points([()], O_XH, NS_SMALL + NS_MED + [300, 500], 140) + _rand_points(list(range(0, 60)), [], (-30, 30), 40)
+O_HERMITENORM += [(70, 1.0), (170, 3.0), (170, 30.0), (150, 150.0), (60, 1e5), (10, 1e30), (1000, 20.0)]
+
+ORTHO_INT = {
+    "eval_jacobi_int": (O_JACOBI, mp_o_jacobi, jacobi_scale, lambda n, a, b, x: sc.eval_jacobi(n, a, b, x)),
+    "eval_gegenbauer_int": (O_GEGENBAUER, mp_o_gegenbauer, _scale(seq_gegenbauer), lambda n, a, x: sc.eval_gegenbauer(n, a, x)),
+    "eval_chebyt_int": (O_CHEBYT, mp_o_chebyt, _scale(seq_chebyt), lambda n, x: sc.eval_chebyt(n, x)),
+    "eval_chebyu_int": (O_CHEBYU, mp_o_chebyu, _scale(seq_chebyu), lambda n, x: sc.eval_chebyu(n, x)),
+    "eval_chebyc_int": (O_CHEBYC, mp_o_chebyc, lambda n, x: 2 * _scale(seq_chebyt)(n, mp.mpf(x) / 2), lambda n, x: sc.eval_chebyc(n, x)),
+    "eval_chebys_int": (O_CHEBYS, mp_o_chebys, lambda n, x: _scale(seq_chebyu)(n, mp.mpf(x) / 2), lambda n, x: sc.eval_chebys(n, x)),
+    "eval_sh_chebyt_int": (O_SH_CHEBYT, mp_o_sh_chebyt, lambda n, x: _scale(seq_chebyt)(n, 2 * mp.mpf(x) - 1), lambda n, x: sc.eval_sh_chebyt(n, x)),
+    "eval_sh_chebyu_int": (O_SH_CHEBYU, mp_o_sh_chebyu, lambda n, x: _scale(seq_chebyu)(n, 2 * mp.mpf(x) - 1), lambda n, x: sc.eval_sh_chebyu(n, x)),
+    "eval_legendre_int": (O_LEGENDRE, mp_o_legendre, _scale(seq_legendre), lambda n, x: sc.eval_legendre(n, x)),
+    "eval_sh_legendre_int": (O_SH_LEGENDRE, mp_o_sh_legendre, lambda n, x: _scale(seq_legendre)(n, 2 * mp.mpf(x) - 1), lambda n, x: sc.eval_sh_legendre(n, x)),
+    "eval_sh_jacobi_int": (O_SH_JACOBI, mp_o_sh_jacobi, lambda n, p, q, x: jacobi_scale(n, mp.mpf(p) - q, mp.mpf(q) - 1, 2 * mp.mpf(x) - 1) / abs(mp.binomial(2 * n + mp.mpf(p) - 1, n)), lambda n, p, q, x: sc.eval_sh_jacobi(n, p, q, x)),
+    "eval_genlaguerre_int": (O_GENLAGUERRE, mp_o_genlaguerre, _scale(seq_genlaguerre), lambda n, a, x: sc.eval_genlaguerre(n, a, x)),
+    "eval_laguerre_int": (O_LAGUERRE, mp_o_laguerre, lambda n, x: _scale(seq_genlaguerre)(n, 0, x), lambda n, x: sc.eval_laguerre(n, x)),
+    "eval_hermite": (O_HERMITE, mp_o_hermite, _scale(seq_hermite), lambda n, x: sc.eval_hermite(n, x)),
+    "eval_hermitenorm": (O_HERMITENORM, mp_o_hermitenorm, _scale(seq_hermitenorm), lambda n, x: sc.eval_hermitenorm(n, x)),
+}
+
+ORTHO = {}
+for _name, (_pts, _mpf, _scl, _scf) in ORTHO_INT.items():
+    _pts = _with_scale(_pts, _scl)
+    ORTHO[_name] = (len(_pts[0]), _pts, _mpf, _sc_int(_scf))
+FUNCS.update(ORTHO)
+
+# ---- real (non-integer) degree: f64 rows, mpmath's hypergeometric forms ----
+
+
+def _hyp_real(f):
+    """Wrap f so that a complex or undefined result gives None."""
+
+    def g(*args):
+        try:
+            with mp.workprec(mp.mp.prec + _o_extra(*args)):
+                v = f(*args)
+        except (ValueError, ZeroDivisionError, mp.libmp.NoConvergence):
+            return None
+        if v is None or isinstance(v, mp.mpc):
+            return None
+        return v
+
+    return g
+
+
+def _poly_x_ok(y):
+    """(1 - y)/2 < 1, i.e. y > -1: where the hypergeometric forms are real."""
+    return mp.mpf(y) > -1
+
+
+mp_r_jacobi = _hyp_real(lambda n, a, b, x: mp.binomial(n + a, n) * mp.hyp2f1(-n, n + a + b + 1, a + 1, (1 - x) / 2) if _poly_x_ok(x) else None)
+mp_r_sh_jacobi = _hyp_real(
+    lambda n, p, q, x: mp.binomial(n + (p - q), n) * mp.hyp2f1(-n, n + p, p - q + 1, 1 - x) / mp.binomial(2 * n + p - 1, n) if _poly_x_ok(2 * x - 1) else None
+)
+mp_r_gegenbauer = _hyp_real(lambda n, a, x: mp.rf(2 * a, n) / mp.factorial(n) * mp.hyp2f1(-n, n + 2 * a, a + mp.mpf(1) / 2, (1 - x) / 2) if _poly_x_ok(x) else None)
+mp_r_chebyt = _hyp_real(lambda n, x: mp.hyp2f1(-n, n, mp.mpf(1) / 2, (1 - x) / 2) if _poly_x_ok(x) else None)
+mp_r_chebyu = _hyp_real(lambda n, x: (n + 1) * mp.hyp2f1(-n, n + 2, mp.mpf(3) / 2, (1 - x) / 2) if _poly_x_ok(x) else None)
+mp_r_chebyc = _hyp_real(lambda n, x: 2 * mp.hyp2f1(-n, n, mp.mpf(1) / 2, (1 - x / 2) / 2) if _poly_x_ok(x / 2) else None)
+mp_r_chebys = _hyp_real(lambda n, x: (n + 1) * mp.hyp2f1(-n, n + 2, mp.mpf(3) / 2, (1 - x / 2) / 2) if _poly_x_ok(x / 2) else None)
+mp_r_sh_chebyt = _hyp_real(lambda n, x: mp.hyp2f1(-n, n, mp.mpf(1) / 2, 1 - x) if _poly_x_ok(2 * x - 1) else None)
+mp_r_sh_chebyu = _hyp_real(lambda n, x: (n + 1) * mp.hyp2f1(-n, n + 2, mp.mpf(3) / 2, 1 - x) if _poly_x_ok(2 * x - 1) else None)
+mp_r_legendre = _hyp_real(lambda n, x: mp.hyp2f1(-n, n + 1, 1, (1 - x) / 2) if _poly_x_ok(x) else None)
+mp_r_sh_legendre = _hyp_real(lambda n, x: mp.hyp2f1(-n, n + 1, 1, 1 - x) if _poly_x_ok(2 * x - 1) else None)
+mp_r_genlaguerre = _hyp_real(lambda n, a, x: mp.binomial(n + a, n) * mp.hyp1f1(-n, a + 1, x))
+mp_r_laguerre = _hyp_real(lambda n, x: mp.hyp1f1(-n, 1, x))
+
+R_N = [0.5, 1.3, 2.5, 3.0, 4.7, 7.25, 12.3, -0.5, 0.0, 1.0, 20.2]
+R_N_LAG = R_N + [35.5, 60.25]
+R_X = [-0.9, -0.3, 0.0, 1e-6, 0.4, 0.95, 1.0, 1.5, 3.0]
+R_X01 = [0.0, 1e-3, 0.1, 0.5, 0.9, 1.0, 1.5]
+R_XLAG = [0.0, 0.1, 1.0, 2.5, 10.0, 30.0, -1.0, -5.0]
+
+
+def _real_pts(ns, params, xs, count):
+    return [tuple(p) for p in _pick([(n,) + tuple(pr) + (x,) for n in ns for pr in params for x in xs], count)]
+
+
+O_R_JACOBI = _real_pts(R_N, [(-0.5, 0.5), (0.25, 1.5), (2.5, -0.4), (5.0, 3.0)], R_X, 90)
+O_R_SH_JACOBI = _real_pts(R_N, [(1.25, 0.5), (3.5, 0.25), (2.0, 0.75)], R_X01, 60)
+O_R_GEGENBAUER = _real_pts(R_N, [(-0.4,), (0.5,), (1.7,), (4.0,)], R_X, 80)
+O_R_CHEBY = _real_pts(R_N, [()], R_X, 60)
+O_R_CHEBYCS = _real_pts(R_N, [()], [2 * x for x in R_X], 60)
+O_R_SH = _real_pts(R_N, [()], R_X01, 50)
+O_R_LAGUERRE = _real_pts(R_N_LAG, [()], R_XLAG, 60)
+O_R_GENLAGUERRE = _real_pts(R_N_LAG, [(-0.43,), (0.5,), (1.7,), (-0.99,)], R_XLAG, 70)
+# Parameters near the singular combinations of the hypergeometric forms.
+O_R_GENLAGUERRE += [(2.5, -1 + 1e-14, 0.5), (3.5, -1 + 2.0**-52, 2.0)]
+
+REAL = {
+    "eval_jacobi": (O_R_JACOBI, mp_r_jacobi, sc.eval_jacobi),
+    "eval_sh_jacobi": (O_R_SH_JACOBI, mp_r_sh_jacobi, sc.eval_sh_jacobi),
+    "eval_gegenbauer": (O_R_GEGENBAUER, mp_r_gegenbauer, sc.eval_gegenbauer),
+    "eval_chebyt": (O_R_CHEBY, mp_r_chebyt, sc.eval_chebyt),
+    "eval_chebyu": (O_R_CHEBY, mp_r_chebyu, sc.eval_chebyu),
+    "eval_chebyc": (O_R_CHEBYCS, mp_r_chebyc, sc.eval_chebyc),
+    "eval_chebys": (O_R_CHEBYCS, mp_r_chebys, sc.eval_chebys),
+    "eval_sh_chebyt": (O_R_SH, mp_r_sh_chebyt, sc.eval_sh_chebyt),
+    "eval_sh_chebyu": (O_R_SH, mp_r_sh_chebyu, sc.eval_sh_chebyu),
+    "eval_legendre": (O_R_CHEBY, mp_r_legendre, sc.eval_legendre),
+    "eval_sh_legendre": (O_R_SH, mp_r_sh_legendre, sc.eval_sh_legendre),
+    "eval_laguerre": (O_R_LAGUERRE, mp_r_laguerre, sc.eval_laguerre),
+    "eval_genlaguerre": (O_R_GENLAGUERRE, mp_r_genlaguerre, sc.eval_genlaguerre),
+}
+for _name, (_pts, _mpf, _scf) in REAL.items():
+    ORTHO[_name] = (len(_pts[0]), _pts, _mpf, _scf)
+FUNCS.update({k: ORTHO[k] for k in REAL})
+
+
+# ---- Legendre functions of integer degree and order ----------------------
+
+
+def _frac_o(v):
+    p_, q_ = mp.libmp.to_rational(mp.mpf(v)._mpf_)
+    return Fraction(p_, q_)
+
+
+def _legendre_derivative(n, m, x):
+    """d^m P_n / dx^m at the exact rational x (explicit sum, DLMF 18.5.?:
+    P_n(x) = sum_k (-1)^k (2n-2k)! / (2^n k! (n-k)! (n-2k)!) x^(n-2k))."""
+    f = math.factorial
+    total = Fraction(0)
+    for k in range(n // 2 + 1):
+        pw = n - 2 * k
+        if pw < m:
+            break
+        c = Fraction((-1) ** k * f(2 * n - 2 * k), 2**n * f(k) * f(n - k) * f(pw))
+        total += c * Fraction(f(pw), f(pw - m)) * x ** (pw - m)
+    return total
+
+
+def assoc_legendre_ref(n, m, x, kind, s=None):
+    """P_n^m(x) of integer degree n >= 0 and order m, exact apart from one
+    square root: kind 2 (Ferrers, |x| < 1): (-1)^m (1-x^2)^(m/2) d^m P_n / dx^m;
+    kind 3 (x > 1): (x^2-1)^(m/2) d^m P_n / dx^m (DLMF 14.6.1, 14.6.5);
+    P_n^(-m) = (-1)^m (n-m)!/(n+m)! P_n^m (kind 2), (n-m)!/(n+m)! P_n^m (kind 3)
+    (DLMF 14.9.3, 14.9.13). `s` overrides sqrt(1-x^2) (or sqrt(x^2-1))."""
+    n, m = int(n), int(m)
+    mm = abs(m)
+    if mm > n:
+        return mp.mpf(0) if m > 0 else None
+    xf = _frac_o(x)
+    d = _legendre_derivative(n, mm, xf)
+    dv = mp.mpf(d.numerator) / mp.mpf(d.denominator)
+    x = mp.mpf(x)
+    if s is None:
+        s = mp.sqrt(1 - x * x) if kind == 2 else mp.sqrt(x * x - 1)
+    val = s**mm * dv
+    if kind == 2:
+        val *= (-1) ** mm
+    if m < 0:
+        val *= mp.factorial(n - mm) / mp.factorial(n + mm) * ((-1) ** mm if kind == 2 else 1)
+    return val
+
+
+def seq_assoc(n, m, x, kind, s=None):
+    """[P_j^m(x)] for j = |m| .. n by the recurrence of DLMF 14.10.3 (second formula
+    and scale); the seed P_m^m is the explicit formula (DLMF 14.7.15, 14.7.16)."""
+    x = mp.mpf(x)
+    mm = abs(m)
+    if s is None:
+        s = mp.sqrt(1 - x * x) if kind == 2 else mp.sqrt(x * x - 1)
+    dfact = mp.mpf(1)
+    for j in range(1, 2 * mm, 2):
+        dfact *= j
+    pmm = (-1) ** mm * dfact * s**mm if kind == 2 else dfact * s**mm
+    p = [pmm, x * (2 * mm + 1) * pmm]
+    for j in range(mm + 1, n):
+        p.append(((2 * j + 1) * x * p[-1] - (j + mm) * p[-2]) / (j - mm + 1))
+    return p[: n - mm + 1]
+
+
+def assoc_value(n, m, x, kind, s=None):
+    """P_n^m through the recurrence (any sign of m), the second formula."""
+    n, m = int(n), int(m)
+    mm = abs(m)
+    if mm > n:
+        return mp.mpf(0) if m > 0 else None
+    v = seq_assoc(n, mm, x, kind, s)[n - mm]
+    if m < 0:
+        v *= mp.factorial(n - mm) / mp.factorial(n + mm) * ((-1) ** mm if kind == 2 else 1)
+    return v
+
+
+def _assoc_norm(n, m):
+    return mp.sqrt((2 * n + 1) * mp.factorial(n - m) / (2 * mp.factorial(n + m)))
+
+
+def _sph_norm(n, m):
+    return mp.sqrt((2 * n + 1) * mp.factorial(n - m) / (4 * mp.pi * mp.factorial(n + m)))
+
+
+def _assoc_scale(n, m, x, kind, s=None):
+    mm = abs(int(m))
+    if mm > n:
+        return 1.0
+    seq = seq_assoc(int(n), int(m), x, kind, s)
+    if m < 0:
+        # P_j^(-m) = (-1)^m (j-m)!/(j+m)! P_j^m
+        seq = [q * mp.factorial(j - mm) / mp.factorial(j + mm) for q, j in zip(seq, range(mm, int(n) + 1))]
+    return float(max(abs(q) for q in seq))
+
+
+def _both(ref_exact, ref_rec):
+    """Reference = the exact formula, validated against the recurrence."""
+
+    def f(*args):
+        n, m = int(args[0]), int(args[1])
+        rest = list(args[2:-1])
+        scale = args[-1]
+        try:
+            w = stable_z(lambda *r: _wx(lambda nn, *rr: ref_rec(nn, m, *rr), n, r), scale, *rest)
+            if n > 400:
+                # The exact derivative formula is too slow here; the forward recurrence of the
+                # Ferrers function is stable and is checked at two precisions by stable_z.
+                return w
+            v = stable_z(lambda *r: _wx(lambda nn, *rr: ref_exact(nn, m, *rr), n, r), scale, *rest)
+        except ZeroDivisionError:
+            return None
+        if v is None or w is None:
+            return None
+        if abs(v - w) > mp.mpf(2) ** -120 * max(abs(v), abs(w), mp.mpf(scale) * mp.mpf(2) ** -100):
+            raise SystemExit(f"exact formula and recurrence disagree: n={n} m={m} args={rest}: {v} vs {w}")
+        return v
+
+    return f
+
+
+def _assoc_p_ref(kind, norm):
+    def exact(n, m, z):
+        v = assoc_legendre_ref(n, m, z, kind)
+        return v * _assoc_norm(n, m) if norm and v is not None and abs(m) <= n else v
+
+    def rec(n, m, z):
+        v = assoc_value(n, m, z, kind)
+        return v * _assoc_norm(n, m) if norm and v is not None and abs(m) <= n else v
+
+    return _both(exact, rec)
+
+
+def _sph_ref():
+    # sin(theta) enters as |sin theta| = sqrt(1 - cos^2) computed from theta itself
+    def exact(n, m, th):
+        th = mp.mpf(th)
+        v = assoc_legendre_ref(n, m, mp.cos(th), 2, abs(mp.sin(th)))
+        return v * _sph_norm(n, m) if v is not None and abs(m) <= n else v
+
+    def rec(n, m, th):
+        th = mp.mpf(th)
+        v = assoc_value(n, m, mp.cos(th), 2, abs(mp.sin(th)))
+        return v * _sph_norm(n, m) if v is not None and abs(m) <= n else v
+
+    return _both(exact, rec)
+
+
+def _legendre_p_scale(kind, norm):
+    def f(n, m, z):
+        sc_ = _assoc_scale(n, m, z, kind)
+        return sc_ * float(_assoc_norm(n, m)) if norm and abs(m) <= n else sc_
+
+    return f
+
+
+def _sph_scale(n, m, th):
+    th = mp.mpf(th)
+    sc_ = _assoc_scale(n, m, mp.cos(th), 2, abs(mp.sin(th)))
+    return sc_ * float(_sph_norm(n, m)) if abs(m) <= n else sc_
+
+
+XA = [-0.999999, -0.9, -0.5, -0.1, 0.0, 1e-6, 0.3, 0.7, 0.95, 1.0 - 2.0**-40]
+XA3 = [1.0 + 2.0**-40, 1.001, 1.5, 3.0, 10.0, 100.0]
+NM = [(0, 0), (1, 0), (1, 1), (1, -1), (2, 1), (2, -2), (3, 2), (3, -2), (4, 0), (5, 3), (7, -4), (8, 8), (10, 5), (10, -9), (20, 7), (30, 30), (30, -17), (50, 12), (100, 60), (100, -3), (170, 40), (3, 5), (2, -3)]
+
+
+def _nm_points(xs, count):
+    return _pick([(n, m, x) for (n, m) in NM for x in xs], count)
+
+
+def _rand_nm(count, xr, nmax=80):
+    out = []
+    for _ in range(count):
+        n = RNGO.randint(0, nmax)
+        m = RNGO.randint(-n, n)
+        out.append((n, m, rndo(*xr)))
+    return out
+
+
+O_ASSOC2 = _nm_points(XA, 130) + _rand_nm(50, (-1, 1))
+# Degrees from 646 on (the normalized recurrence of xsf forms int products that overflow there).
+O_ASSOC2 += [(n_, m_, z_) for n_ in (645, 646, 1500) for (m_, z_) in ((0, 0.3), (7, -0.2), (-4, 0.9))]
+# Near the poles of the Ferrers functions' phases: sqrt(1 - z^2) tiny.
+O_ASSOC2 += [(n_, m_, ("dd", s_ * (1 - mp.mpf(10) ** -k))) for (n_, m_) in ((5, 2), (20, 7), (40, -9)) for k in (10, 25) for s_ in (1, -1)]
+O_ASSOC3 = _nm_points(XA3, 70) + [(n_, m_, rndo(1.001, 20)) for (n_, m_) in ((4, 2), (12, 5), (25, -7), (60, 20))] + [(n_, 0, rndo(-20, -1.001)) for n_ in (3, 8, 31)] + [(n_, m_, rndo(-20, -1.001)) for (n_, m_) in ((4, 2), (12, 4), (25, -6))]
+# The scale: the largest |P_j^m| of the recurrence.
+O_ASSOC2 = _with_scale(O_ASSOC2, lambda n, m, z: _assoc_scale(n, m, z, 2))
+O_ASSOC3 = _with_scale([pt for pt in O_ASSOC3 if not (pt[1] != 0 and mp.mpf(arg(pt[2])[0]) < -1)], lambda n, m, z: _assoc_scale(n, m, z, 3))
+# theta = pi is left out: sin(theta) there is 1.2e-16, below the accuracy of a double-double sine of a double-double argument.
+O_SPH = _nm_points([0.0, 0.3, 1.0, 1.5707963267948966, 2.0, 3.0, 1e-6, -0.7, 4.0], 100) + _rand_nm(40, (-6.3, 6.3))
+# Degrees from 646 on, where xsf's int products under the square roots overflow.
+O_SPH += [(n_, m_, th_) for n_ in (645, 646, 1025, 1200, 2000) for (m_, th_) in ((0, 0.3), (3, 1.0), (-2, 2.0))]
+O_SPH = _with_scale(O_SPH, _sph_scale)
+
+ASSOC = {
+    "assoc_legendre_p": (O_ASSOC2, _assoc_p_ref(2, False), lambda n, m, z, sc_: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=2)),
+    "assoc_legendre_p_t3": (O_ASSOC3, _assoc_p_ref(3, False), lambda n, m, z, sc_: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=3)),
+    "assoc_legendre_p_norm": (O_ASSOC2, _assoc_p_ref(2, True), lambda n, m, z, sc_: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=2, norm=True)),
+    "assoc_legendre_p_norm_t3": (O_ASSOC3, _assoc_p_ref(3, True), lambda n, m, z, sc_: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=3, norm=True)),
+    "sph_legendre_p": (O_SPH, _sph_ref(), lambda n, m, th, sc_: sc.sph_legendre_p(int(n), int(m), th)),
+}
+# The scale of a normalized function carries the normalization.
+for _name in ("assoc_legendre_p_norm", "assoc_legendre_p_norm_t3"):
+    _pts, _mpf, _scf = ASSOC[_name]
+    ASSOC[_name] = ([pt[:-1] + (pt[-1] * float(_assoc_norm(pt[0], pt[1])),) if abs(pt[1]) <= pt[0] else pt for pt in _pts], _mpf, _scf)
+for _name, (_pts, _mpf, _scf) in ASSOC.items():
+    ORTHO[_name] = (len(_pts[0]), _pts, _mpf, _scf)
+FUNCS.update({k: ORTHO[k] for k in ASSOC})
+
+
+# ---- pmv(m, v, x): integer order, real degree ------------------------------
+
+
+def mp_pmv_ref(m, v, x):
+    """Ferrers function P_v^m(x), -1 < x < 1 (scripts/import_xsref.py has the
+    same definition); None where xsf documents no result."""
+    if m != mp.floor(m) or not abs(x) < 1:
+        return None
+    vx = -v - 1 if v < 0 else v
+    if m < 0 and not (vx + m + 1 > 0 or vx != mp.floor(vx)):
+        return None
+    if vx == mp.floor(vx):
+        return assoc_legendre_ref(int(vx), int(m), x, 2)
+    try:
+        v_ = mp.legenp(v, int(m), x, type=2)
+    except (ValueError, ZeroDivisionError, mp.libmp.NoConvergence):
+        return None
+    return None if isinstance(v_, mp.mpc) else v_
+
+
+def mp_pmv_int(m, v, x, scale):
+    n = int(-v - 1 if v < 0 else v)
+    mi = int(m)
+    if mi < 0 and not (n + mi + 1 > 0):
+        return None
+    try:
+        b_ = stable_z(lambda xx: assoc_value(n, mi, xx, 2), scale, x)
+        if n > 400:
+            return b_
+        a_ = stable_z(lambda xx: assoc_legendre_ref(n, mi, xx, 2), scale, x)
+    except ZeroDivisionError:
+        return None
+    if a_ is None or b_ is None:
+        return None
+    if abs(a_ - b_) > mp.mpf(2) ** -120 * max(abs(a_), abs(b_), mp.mpf(scale) * mp.mpf(2) ** -100):
+        raise SystemExit(f"pmv exact formula and recurrence disagree: m={m} v={v} x={x}")
+    return a_
+
+
+def pmv_scale(m, v, x):
+    vx = -v - 1 if v < 0 else v
+    return _assoc_scale(int(vx), int(m), x, 2)
+
+
+PMV_V = [0, 1, 2, 3, 4, 5, 8, 13, 30, 60, 120, -1, -2, -4, -11]
+PMV_M = [0, 1, 2, 3, 5, 9, -1, -2, -4, -7, 20, -20]
+PMV_X = [-0.999999, -0.75, -0.35, -0.3499999999999, -0.1, 0.0, 1e-9, 0.3, 0.6, 0.9, 0.99999]
+O_PMV_INT = _pick([(m_, v_, x_) for v_ in PMV_V for m_ in PMV_M for x_ in PMV_X], 240)
+O_PMV_INT = [(float(m_), float(v_), x_) for (m_, v_, x_) in O_PMV_INT]
+O_PMV_INT += [(m_, v_, rndo(-1, 1)) for (m_, v_) in ((0.0, 7.0), (2.0, 7.0), (-3.0, 9.0), (4.0, 31.0), (-5.0, -20.0), (1.0, 100.0), (0.0, 1000.0))]
+O_PMV_INT += [(2.0, 5.0, ("dd", mp.mpf(1) / 3)), (0.0, 4.0, ("dd", mp.mpf(10) ** -20)), (1.0, 5.0, ("dd", mp.mpf(10) ** -30)), (0.0, 1.0, ("dd", -mp.mpf(10) ** -30))]
+O_PMV_INT = _with_scale(O_PMV_INT, pmv_scale)
+ORTHO["pmv_int"] = (4, O_PMV_INT, mp_pmv_int, lambda m, v, x, sc_: sc.lpmv(int(m), v, x))
+# Non-integer degree (f64 rows; the Df64 fallback evaluates the f64 kernel).
+PMV_VR = [0.5, 1.5, 2.7, -0.3, -2.5, 7.25, 10.9, 20.4, 1e-6, -1e-6, 33.3]
+O_PMV_REAL = _pick([(float(m_), v_, x_) for v_ in PMV_VR for m_ in (0, 1, 2, 4, -1, -3) for x_ in (-0.9, -0.5, -0.35, -0.34, -0.1, 0.0, 0.3, 0.8, 0.99)], 120)
+ORTHO["pmv"] = (3, O_PMV_REAL, mp_pmv_ref, lambda m, v, x: sc.lpmv(int(m), v, x))
+FUNCS.update({"pmv_int": ORTHO["pmv_int"], "pmv": ORTHO["pmv"]})
+
+
+# ---- Legendre functions of the second kind ---------------------------------
+
+
+def _qn(n, x):
+    """Q_n(x) for real x != +-1: Ferrers' function for |x| < 1 and the real
+    function Q_n(x) = P_n(x) ln((x+1)/(x-1))/2 - W_(n-1)(x) for |x| > 1, odd or even
+    by Q_n(-x) = (-1)^(n+1) Q_n(x) (DLMF 14.5.?, Christoffel: W_(n-1) = sum_k P_(k-1) P_(n-k) / k)."""
+    x = mp.mpf(x)
+    if x < -1:
+        return (-1) ** (n + 1) * _qn(n, -x)
+    pl = seq_legendre(max(n, 1), x)
+    lg = mp.log((1 + x) / (1 - x)) / 2 if abs(x) < 1 else mp.log((x + 1) / (x - 1)) / 2
+    w = sum(pl[k - 1] * pl[n - k] / k for k in range(1, n + 1))
+    return pl[n] * lg - w
+
+
+def _qnm(n, m, x):
+    """Q_n^m(x) = (-1)^m (1-x^2)^(m/2) d^m Q_n/dx^m (|x| < 1), (x^2-1)^(m/2) d^m Q_n/dx^m (|x| > 1)."""
+    x = mp.mpf(x)
+    d = _qn(n, x) if m == 0 else mp.diff(lambda t: _qn(n, t), x, m)
+    if abs(x) < 1:
+        return (-1) ** m * mp.sqrt(1 - x * x) ** m * d
+    return mp.sqrt(x * x - 1) ** m * d
+
+
+def _qnm_d(n, m, x):
+    x = mp.mpf(x)
+    return mp.diff(lambda t: _qnm(n, m, t), x, 1)
+
+
+def _wq(f, extra_bits):
+    def g(*args):
+        with mp.workprec(mp.mp.prec + extra_bits):
+            return f(*args)
+
+    return g
+
+
+def _q_bits(n, x):
+    """Bits lost by the recurrences of Q_n for |x| > 1: about 2 n acosh|x| / ln 2."""
+    ax = abs(float(x))
+    return 0 if ax < 1 else int(2 * n * math.acosh(max(ax, 1.0)) / math.log(2)) + 40
+
+
+def mp_lqn(n, x, d):
+    n = int(n)
+    if abs(x) == 1:
+        return None
+    with mp.workprec(mp.mp.prec + _q_bits(n, x) + 4 * n):
+        return _qnm_d(n, 0, x) if d else _qn(n, x)
+
+
+def mp_lqmn(m, n, x, d):
+    n, m = int(n), int(m)
+    if abs(x) == 1:
+        return None
+    with mp.workprec(mp.mp.prec + _q_bits(n, x) + 4 * (n + m)):
+        return _qnm_d(n, m, x) if d else _qnm(n, m, x)
+
+
+def _sc_lqn(n, x, d):
+    q = sc.lqn(int(n), x)
+    return q[d][int(n)]
+
+
+def _sc_lqmn(m, n, x, d):
+    q = sc.lqmn(int(m), int(n), x)
+    return q[d][int(m), int(n)]
+
+
+QN_N = [0, 1, 2, 3, 5, 8, 13, 21, 40, 80]
+QN_X = [-3.0, -1.5, -1.0001, -0.9, -0.5, -1e-6, 0.0, 1e-6, 0.3, 0.8, 0.99999, 1.0001, 1.021, 1.0210000001, 1.05, 1.5, 3.0, 20.0, 1e3]
+O_LQN = _pick([(n_, x_) for n_ in QN_N for x_ in QN_X], 150) + [(n_, rndo(-1, 1)) for n_ in (0, 4, 17, 60)] + [(n_, rndo(1.0001, 30)) for n_ in (0, 4, 17, 60)] + [(n_, rndo(-30, -1.0001)) for n_ in (3, 20)]
+O_LQN += [(300, 1.001), (300, 3.0), (500, 1.0001), (500, -1.5), (1000, 1.05), (150, 1.021), (150, 1.0211)]
+O_LQN += [(n_, ("dd", 1 + mp.mpf(10) ** -k)) for n_ in (3, 25) for k in (8, 20)] + [(n_, ("dd", -1 + mp.mpf(10) ** -k)) for n_ in (3, 25) for k in (8, 20)]
+QM_MN = [(0, 0), (1, 0), (0, 3), (1, 1), (2, 2), (2, 5), (3, 3), (5, 2), (4, 10), (8, 8), (6, 20), (10, 15)]
+O_LQMN = _pick([(m_, n_, x_) for (m_, n_) in QM_MN for x_ in QN_X], 150) + [(m_, n_, rndo(-1, 1)) for (m_, n_) in ((3, 5), (2, 12), (6, 9))] + [(m_, n_, rndo(1.0001, 30)) for (m_, n_) in ((3, 5), (2, 12), (6, 9))]
+for _nm, _pts, _f, _g in (("lqn", O_LQN, mp_lqn, _sc_lqn), ("lqmn", O_LQMN, mp_lqmn, _sc_lqmn)):
+    for _d, _suffix in ((0, ""), (1, "_d")):
+        ORTHO[_nm + _suffix] = (
+            len(_pts[0]),
+            _pts,
+            (lambda f, d: lambda *a: stable_z(lambda *r: f(*r, d), 1.0, *a))(_f, _d),
+            (lambda g, d: lambda *a: g(*a, d))(_g, _d),
+        )
+        FUNCS[_nm + _suffix] = ORTHO[_nm + _suffix]
+
+# ---- exact results: non-finite, zero or +-1 ------------------------------
+
+ORTHO_SPECIAL = [
+    ("eval_hermite", sc.eval_hermite, [(-1, 1.0), (0, NAN), (1, NAN), (2, NAN), (0, 0.0), (3, INF), (3, -INF), (2, INF), (1, -INF), (1, 0.0)]),
+    ("eval_hermitenorm", sc.eval_hermitenorm, [(-1, 1.0), (0, NAN), (1, NAN), (2, NAN), (0, 0.0), (3, INF), (3, -INF), (2, INF), (1, -INF), (1, 0.0), (2, 0.0)]),
+    ("eval_legendre_int", sc.eval_legendre, [(-1, NAN), (0, NAN), (3, NAN), (-1, 0.3), (0, 1.0), (5, 1.0), (4, -1.0), (5, -1.0), (3, INF), (4, -INF), (2, INF)]),
+    ("eval_sh_legendre_int", sc.eval_sh_legendre, [(0, NAN), (2, NAN), (0, 0.5), (3, 1.0), (4, 0.0)]),
+    ("eval_chebyt_int", sc.eval_chebyt, [(-3, 0.5), (3, NAN), (0, NAN), (4, 1.0), (3, -1.0), (5, INF), (5, -INF), (4, INF)]),
+    ("eval_chebyu_int", sc.eval_chebyu, [(-1, 0.5), (-2, 0.5), (-3, 0.5), (-4, 0.5), (3, NAN), (0, NAN), (1, INF), (1, -INF)]),
+    ("eval_chebyc_int", sc.eval_chebyc, [(3, NAN), (0, NAN), (2, INF)]),
+    ("eval_chebys_int", sc.eval_chebys, [(3, NAN), (0, NAN), (2, INF)]),
+    ("eval_sh_chebyt_int", sc.eval_sh_chebyt, [(3, NAN), (0, NAN), (3, 1.0)]),
+    ("eval_sh_chebyu_int", sc.eval_sh_chebyu, [(3, NAN), (0, NAN)]),
+    ("eval_laguerre_int", sc.eval_laguerre, [(-1, 2.0), (-1, NAN), (0, NAN), (1, NAN), (2, NAN), (1, 1.0), (0, 3.0)]),
+    ("eval_genlaguerre_int", sc.eval_genlaguerre, [(-1, 0.5, 2.0), (0, -2.0, 0.0), (0, -1.0, 0.0), (1, -1.0, 0.0), (2, NAN, 1.0), (2, 1.0, NAN), (-1, NAN, 2.0), (1, 0.5, 1.5), (0, 0.5, 2.0)]),
+    ("eval_gegenbauer_int", sc.eval_gegenbauer, [(0, 0.0, 0.3), (1, 0.0, 0.3), (-1, 0.5, 0.3), (-4, 1.0, 0.3), (2, NAN, 0.3), (2, 1.0, NAN), (0, 1.0, NAN), (0, 0.5, 2.0), (3, 0.25, INF), (3, 0.25, -INF), (4, -0.25, INF), (3, -0.25, -INF), (0, 1.0, INF), (4, 0.0, INF)]),
+    ("eval_jacobi_int", sc.eval_jacobi, [(0, 1.0, 1.0, NAN), (2, NAN, 1.0, 0.5), (2, 1.0, NAN, 0.5), (1, -1.0, -1.0, 0.3), (1, -1.0, -1.0, -0.7), (0, -1.0, 1.0, 0.3), (2, 1.0, 1.0, INF), (3, 1.0, 1.0, -INF)]),
+    ("eval_sh_jacobi_int", sc.eval_sh_jacobi, [(0, 1.0, 0.5, NAN), (2, NAN, 0.5, 0.3)]),
+    ("eval_legendre", sc.eval_legendre, [(0.5, NAN), (2.5, NAN), (3.0, NAN)]),
+    ("eval_chebyt", sc.eval_chebyt, [(0.5, NAN), (3.5, NAN)]),
+    ("eval_chebyu", sc.eval_chebyu, [(0.5, NAN), (3.5, NAN)]),
+    ("eval_genlaguerre", sc.eval_genlaguerre, [(0.1, -2.0, 0.0), (0.1, -1.0, 0.0), (0.1, 1.0, NAN), (3.2, NAN, 2.0), (0.0, NAN, 2.0), (2.0, 1.0, NAN)]),
+    ("eval_laguerre", sc.eval_laguerre, [(0.5, NAN), (3.2, NAN), (2.0, NAN)]),
+    ("eval_gegenbauer", sc.eval_gegenbauer, [(3.2, 1.0, NAN), (NAN, 1.0, 0.3), (3.2, NAN, 0.3), (0.5, 1.0, NAN)]),
+    ("eval_jacobi", sc.eval_jacobi, [(0.5, 1.0, 1.0, NAN), (NAN, 1.0, 1.0, 0.5)]),
+    ("pmv", lambda m, v, x: sc.lpmv(int(m), v, x), [(0.0, 0.5, -1.0), (0.0, 1.5, -1.0), (1.0, 0.5, -1.0), (2.0, 1.5, -1.0), (0.0, 2.0, NAN), (0.0, NAN, 0.3), (-4.0, 3.0, 0.3), (0.0, 0.0, 1.0), (0.0, 3.0, 1.0), (1.0, 3.0, 1.0), (1.0, 3.0, -1.0), (0.0, 2.0, -1.0), (0.0, 3.0, -1.0), (5.0, 2.0, 0.5)]),
+    ("assoc_legendre_p", lambda n, m, z: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=2), [(2, 3, 0.3), (2, 1, 1.5), (3, 1, -1.5), (2, 1, NAN), (3, 1, 1.0), (3, 1, -1.0), (3, 0, 1.0), (3, 0, -1.0), (4, 0, -1.0), (3, -2, 1.0), (0, 0, NAN), (4, 1, 0.0)]),
+    ("assoc_legendre_p_t3", lambda n, m, z: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=3), [(2, 1, 0.3), (2, 1, NAN), (3, 1, -2.0), (3, 2, -2.0), (3, 1, 1.0), (3, 0, -1.0), (3, 2, 1.0)]),
+    ("assoc_legendre_p_norm", lambda n, m, z: sc.assoc_legendre_p(int(n), int(m), z, branch_cut=2, norm=True), [(2, 3, 0.3), (2, 1, 1.5), (3, 1, NAN), (3, 1, 1.0), (4, 1, -1.0)]),
+    ("sph_legendre_p", lambda n, m, th: sc.sph_legendre_p(int(n), int(m), th), [(2, 3, 0.3), (3, 1, NAN), (3, 1, INF), (3, 1, 0.0), (3, 2, 0.0)]),
+    ("lqn", lambda n, x: sc.lqn(int(n), x)[0][int(n)], [(2, 1.0), (2, -1.0), (0, 1.0), (0, NAN), (3, NAN)]),
+    ("lqn_d", lambda n, x: sc.lqn(int(n), x)[1][int(n)], [(2, 1.0), (2, -1.0), (0, NAN)]),
+    ("lqmn", lambda m, n, x: sc.lqmn(int(m), int(n), x)[0][int(m), int(n)], [(1, 2, 1.0), (1, 2, -1.0), (0, 0, 1.0), (2, 1, NAN)]),
+    ("lqmn_d", lambda m, n, x: sc.lqmn(int(m), int(n), x)[1][int(m), int(n)], [(1, 2, 1.0), (1, 2, -1.0)]),
+]
+
+
+# Where the pinned xsf differs from SciPy 1.16.3 (an older copy): xsf's own tests
+# fix these values (tests/xsf_tests/test_orthogonal_eval.cpp, test_assoc_legendre_p.cpp,
+# test_lpmv.cpp). Everything else is SciPy's value.
+XSF_EXPECTED = {
+    ("eval_legendre_int", (-1, NAN)): NAN,  # NaN propagates for every degree
+    ("eval_legendre_int", (0, NAN)): NAN,
+    ("eval_sh_legendre_int", (0, NAN)): NAN,
+    ("eval_gegenbauer_int", (0, 0.0, 0.3)): 0.0,  # alpha == 0 is 0 for every n
+    ("eval_gegenbauer_int", (3, 0.25, -INF)): -INF,  # sign of the leading coefficient
+    ("eval_gegenbauer_int", (3, -0.25, -INF)): INF,
+    ("eval_gegenbauer_int", (4, 0.0, INF)): 0.0,
+    ("pmv", (0.0, 1.5, -1.0)): INF,  # sin(pi nu) < 0 gives +inf at x = -1
+    ("assoc_legendre_p", (3, 0, -1.0)): -1.0,  # P_n(-1) = (-1)^n, scipy/gh-23101
+    ("assoc_legendre_p_t3", (3, 0, -1.0)): -1.0,
+    # Deliberate deviation: the infinities of Q_n at x = +-1 (xsf and SciPy store 1e300), NaN derivatives.
+    ("lqn", (2, 1.0)): INF,
+    ("lqn", (2, -1.0)): -INF,
+    ("lqn", (0, 1.0)): INF,
+    ("lqn_d", (2, 1.0)): NAN,
+    ("lqn_d", (2, -1.0)): NAN,
+    ("lqmn", (1, 2, 1.0)): -INF,
+    ("lqmn", (1, 2, -1.0)): -INF,
+    ("lqmn", (0, 0, 1.0)): INF,
+    ("lqmn_d", (1, 2, 1.0)): NAN,
+    ("lqmn_d", (1, 2, -1.0)): NAN,
+}
+
+
+def write_ortho_special_values():
+    lines = [
+        HEADER,
+        "# columns: function,a0,a1,a2,a3,expected,scipy  (exact results: non-finite, zero or +-1)\n",
+        "# expected = the value of xsf at the pinned commit (SciPy's value, except where its own tests fix another: XSF_EXPECTED);\n",
+        "# lqn and lqmn: xsf and SciPy store the stand-in 1e300 at x = +-1; the crate returns the infinities and NaN derivatives (the scipy column keeps 1e300).\n",
+    ]
+    for name, f, cases in ORTHO_SPECIAL:
+        for args in cases:
+            with np.errstate(all="ignore"):
+                v = float(f(*args))
+            if math.isfinite(v) and v not in (0.0, 1.0, -1.0, 1e300):
+                raise SystemExit(f"{name}{args} = {v} is not a special value")
+            a = list(args) + [""] * (4 - len(args))
+            expected = XSF_EXPECTED.get((name, tuple(args)), v)
+            lines.append(",".join([name] + [fmt(x) if x != "" else "" for x in a] + [fmt(expected), fmt(v)]) + "\n")
+    (DATA / "orthogonal_special_values.csv").write_text("".join(lines))
+
+
+# --------------------------------------------------------------------------
 # Constant tables for the precision-adaptive (generic) algorithms.
 # --------------------------------------------------------------------------
 
@@ -1145,12 +2052,20 @@ if __name__ == "__main__":
         write_reference(list(ELEMENTARY))
         write_elementary_special_values()
         raise SystemExit(0)
+    if only == ["orthogonal_special"]:
+        write_ortho_special_values()
+        raise SystemExit(0)
+    if only == ["orthogonal"]:
+        write_reference(list(ORTHO))
+        write_ortho_special_values()
+        raise SystemExit(0)
     if only == ["tables"]:
         write_tables()
         raise SystemExit(0)
     write_reference(only)
-    write_special_values([n for n in only if n not in ELEMENTARY] if only else None)
+    write_special_values([n for n in only if n not in ELEMENTARY and n not in ORTHO] if only else None)
     if not only:
         write_elementary_special_values()
+        write_ortho_special_values()
         write_tables()
     print("wrote", DATA, "" if only else "and " + str(CRATE / "src" / "generic" / "tables.rs"))

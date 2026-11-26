@@ -158,13 +158,17 @@ cases:
   evaluates `exp` of a difference of ln Γ values of size 2e3 through xsf's
   `lgam`, so that ulp becomes a relative error of 4.3956e-13. That is exactly
   xsf's own error in the `clang-darwin-aarch64` column, and 7.2× the
-  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only xsref row of the
-  twelve tables that fails on macOS.
+  `gcc-linux-x86_64` bound (4 · 1.523e-14). It is the only `binom` row that
+  exceeds that bound on macOS; the two `pmv` rows in the Apple libm `pmv` entry
+  below are the others.
 - **Upstream:** not reported (not a bug: C does not require `log` to be
   correctly rounded).
 - **Here:** the gcc-linux-x86_64 tolerances are asserted on every platform, as
-  issue #8 requires, so `f64_matches_xsref` fails on this one row on macOS. It
-  passes on Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
+  issue #8 requires, except that on macOS this row is checked against an
+  allowance of 4.4e-13, its observed error rounded up (`APPLE_LIBM_ALLOWANCES`
+  in `crates/specials/tests/xsref.rs`; `apple_libm_allowances_are_needed` fails
+  once the row no longer needs it). The row passes the gcc-linux-x86_64 bound on
+  Linux x86-64 (CI) and Linux aarch64 (glibc, checked in Docker).
   Making the `f64` port independent of the platform libm (a correctly rounded
   `ln` in pure Rust) would remove the deviation; that is a separate change.
 
@@ -480,3 +484,200 @@ cases:
   with an `f64` tolerance of 1e-12 above the switch and the ordinary 2e-14 at
   and below it, and against SciPy for parity. The `Df64` path is accurate
   there (6.4e-32).
+
+## Apple libm: two xsref `pmv` rows differ from the `gcc-linux-x86_64` bound
+
+- **Affects:** macOS (aarch64) libm `sin`, `cos`, `tan` or `log` (the one that
+  differs was not isolated), through the digamma expansion of xsf's `lpmv0`
+  (`x < -0.35`, non-integer degree).
+- **Evidence:** xsref `pmv.csv` lines 587 and 1412, `pmv(±5, -11.3, -0.557)`:
+  the `f64` port gives `5.844786490795273e-7` and `-8643.566755327178`, and
+  xsref (and xsf built with gcc on x86-64, tolerance 0) has `5.844786490795288e-7` and
+  `-8643.5667553272`. Errors 2.5e-15 against the bound 8.9e-16. Replacing every
+  `sin`, `cos`, `tan` and `log` of a Python transcription of `lpmv0` by the correctly
+  rounded value (mpmath) gives `-8643.5667553272` exactly; the platform `math`
+  functions give `-8643.566755327178`, the port's value. xsf compiled here with
+  `clang++ -ffp-contract=off` gives the port's value bit for bit on all 1625 rows
+  (and with FMA contraction a third value, inside xsref's `clang-darwin-aarch64` bound).
+- **Upstream:** not reported (not a bug).
+- **Here:** like the `binom` row above, these two rows keep the gcc-linux-x86_64
+  bound on every other platform and are checked against an allowance of 2.6e-15,
+  their observed error rounded up, on macOS (`APPLE_LIBM_ALLOWANCES`). Linux
+  x86-64 is covered by CI; Linux aarch64 was not checked.
+
+## scipy/xsf: `eval_jacobi` (integer degree) is NaN at `alpha = -1` unless `abs(beta) = 1`, and loses all digits within 1e-6 of `-1`
+
+- **Affects:** xsf `31177fd9` (`include/xsf/orthogonal_eval.h`, `eval_jacobi_l`),
+  `eval_jacobi` and `eval_sh_jacobi` of an integer degree, and SciPy 1.16.3.
+- **Evidence** (xsf built locally, mpmath 1.3.0): `eval_jacobi(2, -1, 0.5, -0.75)` is
+  NaN and `eval_jacobi(2, -1 + 2^-52, 0.5, -0.75)` is `0`; the values are
+  `1.162109375` in both cases (mpmath, and `P_n^(-1,b) = (n + b)/(2n) (x - 1) P_(n-1)^(1,b)`).
+- **Cause:** the recurrence is written in differences `d_k` normalized by
+  `binom(k + alpha, k)` and starts from `d = (alpha + beta + 2)(x - 1) / (2 (alpha + 1))`.
+  At `alpha = -1` that is `0/0` or `inf`; for `alpha + 1` of order 1e-16 the
+  normalized values are 1e16 times the result and `p` cancels. Only `alpha = -1`,
+  `abs(beta) = 1` has a special case.
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the faithful port and `f64_limit` of
+  `tests/orthogonal.rs` skips those rows; the `Df64` recurrence is the one of DLMF
+  18.9.2, which does not divide by `alpha + 1`, with the relation above at `alpha = -1`
+  and its mirror at `beta = -1`, and passes them.
+
+## scipy/xsf: `eval_jacobi` and `eval_genlaguerre` (integer degree) are not finite where `binom(n + alpha, n)` overflows
+
+- **Affects:** xsf `31177fd9` (`eval_jacobi_l`, `eval_genlaguerre_l`) and SciPy 1.16.3.
+- **Evidence** (xsf built locally, mpmath 1.3.0): `eval_genlaguerre(1000, 1000, 1000)`
+  is `inf` and `eval_jacobi(1000, 1000, 0, -1)` is NaN; the values are
+  `1.9004077401575e299` and `1` (`P_n^(a,0)(-1) = (-1)^n`).
+- **Cause:** both return `binom(n + alpha, n) * p` with `p` the recurrence normalized
+  by that binomial coefficient; `binom(2000, 1000) = 2.05e600` overflows while
+  `p` is 1e-383 (underflow to 0, or `inf * 0 = NaN`), although the result is representable.
+- **Upstream:** not reported.
+- **Here:** `f64` keeps the behavior (never a wrong finite value: the result is not
+  finite there); `tests/orthogonal.rs` requires exactly that of rows where the binomial
+  coefficient overflows. `Df64` runs the unnormalized recurrence with a binary exponent,
+  and returns the value.
+
+## scipy/xsf: `sph_legendre_p` and the normalized `assoc_legendre_p` are NaN from degree 646
+
+- **Affects:** xsf `31177fd9` (`include/xsf/cpu/legendre.h`, `sph_legendre_p_recurrence_n`,
+  `assoc_legendre_p_recurrence_n` with the normalized policy) and SciPy 1.16.3.
+- **Evidence** (xsf built locally; mpmath 1.3.0): `sph_legendre_p(n, 0, 0.3)` is finite
+  up to `n = 645` and NaN from `n = 646` (`sph_legendre_p(1200, 0, 0.3)`: NaN, true
+  `0.19973130740583738`); the same for the normalized `assoc_legendre_p`
+  (`n = 1500`, `m = 0`, `z = 0.3`: NaN, true `0.073116429152240806`).
+- **Cause:** the coefficients are `sqrt(value_type((2n + 1) * (4 (n - 1)^2 - 1)) / ...)`,
+  with the product formed in `int`: `2 (2n + 1) (n - 1)^2 * 2 > 2^31` from `n = 646`
+  (signed overflow, undefined behavior; a negative value under the square root).
+- **Upstream:** not reported.
+- **Here:** the `f64` port forms these products in `f64` (a documented deviation in
+  `src/xsf/legendre.rs`); `tests/data/sph_legendre_p.csv` and `assoc_legendre_p*.csv`
+  have rows at `n = 645`, `646`, `1025`, `1200`, `1500` and `2000`.
+
+## scipy/xsf: `lqmn` returns zeros for `-1.1 <= x <= -1.0001` and is accurate to only 1e-8 for `1.0001 <= abs(x) <= 1.1`
+
+- **Affects:** xsf `31177fd9` (`include/xsf/cpu/legendre.h`, `lqmn`, real argument)
+  and SciPy 1.16.3 (`lqmn(1, 2, -1.05)` has zeros for `n >= 1`).
+- **Evidence** (xsf built locally; mpmath 1.3.0): `lqmn(1, 3, -1.0001)` has `Q_1^0 = Q_3^0 = Q_3^1 = 0`;
+  the values are `3.9522639525`, `3.1209068500` and `70.4017735162`. For `x = +1.0001` the
+  result is `Q_3^0 = 3.1209068417` against `3.1209068500`, a relative error of 2.6e-9.
+- **Cause:** the start index of the backward recurrence is `(40 + m + n) * (int)(-1 - 1.8 log(x - 1))`:
+  for negative `x` the logarithm is NaN and the cast is undefined behavior (a huge negative
+  index, so no iteration runs). For positive `x` the start index leaves a truncation error
+  `exp(-2 k acosh x)` of 1e-9 at `x = 1.0001`.
+- **Upstream:** not reported.
+- **Here:** the port uses `log(abs(x) - 1)` (so the negative arguments agree with the
+  positive ones, up to the odd/even symmetry) and keeps the start index; the tolerance
+  of the `f64` rows in this range follows that error (`q_f64_tolerance` in `tests/orthogonal.rs`).
+  The `Df64` path uses Miller's algorithm from `n + 40 / acosh abs(x)`.
+
+## scipy/xsf: `lqn` loses accuracy for large `n` just above `abs(x) = 1`
+
+- **Affects:** xsf `31177fd9` (`lqn`): for `1 < abs(x) <= 1.021` it takes the forward
+  recurrence, whose error grows like `exp(2 n acosh abs(x))`.
+- **Evidence** (mpmath 1.3.0): `lqn(80, 1.021)` derivative `Q_80'` has a relative error
+  of 1.9e-8 (`-8.659303999403373e-6` against `-8.660096298438902e-6`).
+- **Upstream:** not reported.
+- **Here:** the port is unchanged; the test tolerance grows like that factor.
+  `Df64` takes the backward recurrence when `n acosh abs(x) > 2`.
+
+## scipy/xsf: `pmv` loses its digits next to a zero of an integer-degree function
+
+- **Affects:** xsf `31177fd9` (`lpmv0`, integer degree) and SciPy 1.16.3.
+- **Evidence** (mpmath 1.3.0, xsf built locally): `pmv(0, 1, 1e-15)` is `1.1102230246251565e-15`
+  (true `1e-15`, relative error 11%), `pmv(0, 1, 1e-30)` is `-0` (true `1e-30`); the xsref
+  table has these rows (`pmv.csv` lines with `x = ±1e-30`, `desired = -0.0`).
+- **Cause:** `P_1(x)` is formed as `1 + r` with `r = -(1 + x)`, which is `-1` for tiny `x`; the sum of
+  the series for an integer degree has an absolute error of `eps` where the polynomial is near
+  zero.
+- **Upstream:** not reported.
+- **Here:** `f64` is the port (xsref's own tolerances accept it, since the references are
+  SciPy's values); `Df64` evaluates `P_n^m` by its recurrence, which is exact at such `x`, and
+  is compared with mpmath on those rows (`xsref.rs`, `pmv_int`).
+
+## scipy/xsf: the hypergeometric kernels of the real-degree polynomials are inaccurate at large degree
+
+- **Affects:** xsf `31177fd9`: `hyp2f1` (Cephes) behind the real-degree `eval_jacobi`,
+  `eval_gegenbauer`, `eval_chebyt`, `eval_chebyu`, `eval_chebyc`, `eval_chebys`, `eval_legendre` and their shifted
+  forms, and `hyp1f1` (`chgm`) behind `eval_laguerre` and `eval_genlaguerre`; SciPy 1.16.3 has similar errors.
+- **Evidence** (xsf built locally; mpmath 1.3.0): `eval_jacobi(1.3, 5, 3, -0.9)` is `13.510458555221577`
+  (true `14.807967691314438`); `eval_chebyt(12.3, -0.9)` is `-0.10705593185349507`
+  (true `-0.10703157601721262`); `eval_chebyc(20.2, -1.8)` is `923217.27698217402` (true `-1.1757693567334924`);
+  `eval_laguerre(60.25, 10)` is `-21.757075325080386` (true `-8.579814496933425`). Only the Jacobi value was compared with SciPy 1.16.3 (`13.25`).
+- **Cause:** not investigated further. The failures are at `z = (1 - x)/2 > 0.9` with `abs(n) > 5`
+  (the transformations for `x` near 1 of `hyt2f1`, including the digamma expansion for an integer
+  `c - a - b`, which is `-beta` for the Jacobi polynomial), and the power series of `chgm` for large `n` and `x`
+  (cancellation of terms up to 1e17).
+- **Upstream:** not reported.
+- **Here:** the `f64` path is the port; `real_limit` in `tests/orthogonal.rs` lists the rows
+  excluded from the comparison with mpmath (they are the regimes above), and the other rows of
+  the 13 real-degree files agree to 1e-9. `Df64` takes the recurrence for a non-negative
+  integer-valued degree, so it is exact there; any other degree has `f64` accuracy.
+
+## scipy/xsf: `legendre_p(n < 0, z)` returns `z`, and `assoc_legendre_p(n < 0, ...)` returns `0`
+
+- **Affects:** xsf `31177fd9` (`legendre_p`, `assoc_legendre_p`) and SciPy 1.16.3
+  (`scipy.special.legendre_p(-1, 0.3)` is `0.3`); the SciPy docstring requires `n >= 0`.
+- **Cause:** the recurrence has no iteration for a negative degree and returns its first state.
+- **Upstream:** not reported.
+- **Here:** both return NaN for `n < 0` (fail fast); `eval_legendre_int` keeps the
+  `P_(-n-1) = P_n` convention of `eval_legendre`.
+
+## scipy/xsf: `lqn` and `lqmn` return `1e300` at `x = ±1`
+
+- **Affects:** xsf `31177fd9` (`lqn`, `lqmn`) and SciPy 1.16.3 (`scipy.special.lqn(2, 1.0)` is `1e300` for every
+  entry, derivatives included). `pmv` converts the same stand-in to `±inf` (`SPECFUN_CONVINF`); these routines do not.
+- **Correct values:** `Q_k(1) = +∞` and `Q_k(-1) = (-1)^(k+1) ∞` (from `Q_k = P_k ln((1+x)/(1-x))/2 - W_(k-1)` and
+  `Q_k(-x) = (-1)^(k+1) Q_k(x)`); `Q_k^i(1) = (-1)^i ∞` and `Q_k^i(-1) = (-1)^(k+1) ∞` (DLMF 14.6.2 and 14.6.4: `Q_k^i`
+  behaves like `(-1)^i (1 - x)^(-i/2)` on both sides of 1, and `Q_k^i(-x) = (-1)^(k+i+1) Q_k^i(x)` for both branches).
+  The derivatives tend to opposite infinities from `|x| < 1` and `|x| > 1`, so they have no value: NaN.
+- **Upstream:** not reported.
+- **Here:** a deliberate deviation of the `f64` port: both strategies return those infinities and NaN
+  derivatives (`second_kind_at_the_endpoints`, and the `lqn`/`lqmn` rows of `orthogonal_special_values.csv`, whose
+  `scipy` column keeps `1e300`).
+
+## scipy/xsf: Chebyshev, Hermite, Laguerre and other recurrences return NaN instead of `±inf` when they overflow
+
+- **Affects:** xsf `31177fd9` (`include/xsf/orthogonal_eval.h`) and SciPy 1.16.3.
+- **Evidence** (mpmath 1.3.0; xsf built locally and SciPy 1.16.3 give NaN for the first four):
+  `eval_hermite(660, -14.568126673025812)` (true `+5.1e932`), `eval_hermite(284, -16.46689288168518)` (`+2.7e388`),
+  `eval_hermitenorm(995, 48.980587028696874)` (`-1.1e1536`), `eval_laguerre(2000, 1e5)` (`+5.6e4246`).
+  A sweep of integer degrees 50 to 4000 and `x` from `-300` to `1e5` where the true result overflows gives NaN
+  from the port (which is bit-identical to xsf there) for every overflowing Chebyshev `T` and `U`, Hermite `H` and `He` point
+  (39 to 41 points of each) and 5 of 9 generalized Laguerre points; Legendre and Jacobi at 17 of 39,
+  `eval_gegenbauer_int` in none (it returns the infinity).
+- **Cause:** a recurrence value becomes `inf` and the next step forms `inf - inf` (or `0 * inf`). Threshold
+  (xsf built locally): the first overflowing degree is the correct infinity, `T_112(-300)` and
+  `H_235(-14.568126673025812)` are `inf`, and the degrees above it are NaN (`H_656` to `H_669` checked).
+- **Upstream:** not reported.
+- **Here:** `f64` keeps xsf's NaN (faithful port). `Df64` returns the infinity with the sign of the
+  polynomial: the recurrence carries a binary exponent, so the overflow occurs only in the final scaling; for
+  `abs(x) > 2^30` where a step itself overflows, the sign and the growth are read from the same recurrence at
+  `x = ±2^30` (`resolve` in `src/generic/orthogonal.rs`). A NaN of finite arguments (the singular Jacobi
+  recurrence, `alpha <= -1`, `n < 0` for Hermite) stays NaN. A non-finite argument takes xsf's value.
+  `overflow_is_a_signed_infinity_in_df64_and_xsfs_nan_in_f64` pins both.
+
+## scipy/xsf: integer-degree Chebyshev `T` overflows when the result is above about half of `f64::MAX`
+
+- **Affects:** xsf `31177fd9` (`eval_chebyt(long, double)` in `include/xsf/orthogonal_eval.h`) and SciPy 1.16.3,
+  and `eval_sh_chebyt`, which calls it.
+- **Evidence:** `eval_chebyt(2, 9.4e153)` is `inf` (true `1.7672e308`) and `eval_chebyt(3, 3.107e102)` is `inf`
+  (true `1.1997e308`); SciPy 1.16.3 gives `inf` for `eval_chebyt(2, 9e153)` (true `1.62e308`);
+  `eval_sh_chebyt(2, 4.6e153)` is `inf` (true `1.6928e308`). `eval_chebyt(2, 6.5e153)` (`8.45e307`) is exact.
+- **Cause:** the kernel runs the recurrence of `U_n` and returns `T_n = (U_n - U_(n-2)) / 2`. For `abs(x) > 1`,
+  `abs(U_n)` is about twice `abs(T_n)`, so `U_n` overflows while `T_n` is still representable: every `T_n` with
+  `f64::MAX / 2 <~ abs(T_n) < f64::MAX` is `inf`. `eval_chebyu` and `eval_chebyc` return their recurrence
+  value directly and do not have this band.
+- **Upstream:** not reported.
+- **Here:** `f64` keeps xsf's value (faithful port). `Df64` returns the finite value
+  (`eval_chebyt_int(2, 9.4e153)` = `1.7672e308`).
+
+## scipy/xsf and SciPy 1.16.3: values the pinned xsf fixed
+
+SciPy 1.16.3 bundles an older copy of this code. At the pinned xsf commit these differ, and the
+special-value file (`tests/data/orthogonal_special_values.csv`, `expected`) follows xsf's own tests:
+`eval_legendre(n, NaN)` is NaN for every `n` (SciPy: `1` for `n <= 0`); `eval_gegenbauer(0, 0, x)` is `0`
+(SciPy: `1`); `eval_gegenbauer(n, alpha, ±inf)` is `±inf` (SciPy: NaN); `pmv(0, 1.5, -1)` is `+inf`
+(SciPy: `-inf`); `assoc_legendre_p(3, 0, -1)` is `-1` (SciPy: `1`, scipy/gh-23101);
+`eval_genlaguerre(n, alpha, x)` for `alpha` within 1e-14 of `-1` is accurate (SciPy: 0, gh-457).
+The `scipy` column of the reference files is SciPy's value, and the parity comparisons skip those rows.

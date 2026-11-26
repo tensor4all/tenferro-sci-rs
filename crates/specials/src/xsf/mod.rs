@@ -7,6 +7,9 @@
 //! `LICENSE-BSD-3-Clause-cephes`); `trigamma` is the MIT-licensed code of
 //! JuliaMath/SpecialFunctions.jl that xsf took (`LICENSE-MIT-julia-specialfunctions`).
 //!
+//! `specfun.rs` and the `lqn` and `lqmn` routines of `legendre.rs` derive from the
+//! Fortran code of Zhang and Jin, through xsf's `specfun.h` (`LICENSE-NOTICE-zhang-jin-specfun`).
+//!
 //! The Carlson code (`include/xsf/ellint_carlson/`) has no license header or
 //! file of its own in xsf; it is part of xsf and covered by xsf's license.
 //!
@@ -22,14 +25,18 @@ pub(crate) mod digammainv;
 pub(crate) mod ellip;
 pub(crate) mod gamma;
 pub(crate) mod gen_harmonic;
+pub(crate) mod hyp2f1;
 pub(crate) mod lambertw;
 pub(crate) mod lanczos;
+pub(crate) mod legendre;
 pub(crate) mod log;
 pub(crate) mod log_exp;
+pub(crate) mod orthogonal_eval;
 pub(crate) mod poch;
 pub(crate) mod polevl;
 pub(crate) mod psi;
 pub(crate) mod sindg;
+pub(crate) mod specfun;
 pub(crate) mod stirling2;
 pub(crate) mod tandg;
 pub(crate) mod trigamma;

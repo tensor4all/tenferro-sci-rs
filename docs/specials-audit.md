@@ -76,6 +76,8 @@ where they pin a boundary. A random sweep complements this set.
   | `review_regressions.rs` | `n4_digammainv_df64_holds_1e_30_below_minus_1e154`, `n7_stirling2_df64_keeps_the_low_word_of_large_arguments`, `n8_poch_df64_subnormal_a`, `strategies_agree_on_extreme_arguments` | `n4`, `n7` and `n8` are `Df64`-only findings with 1e-29/1e-30 tolerances; the agreement grid compares `f64` with `Df64`. The other seven tests run their `f64` assertions. |
   | `carlson_scaling.rs` | none | Every test checks `f64`; the `Df64` half of each needs the feature. |
   | `carlson_ratchet.rs` | `df64_homogeneity`, `df64_homogeneity_beyond_spread_600`, `df64_reference_table` | `Df64` only, as before #30. |
+  | `orthogonal.rs` | `integer_degree_df64_matches_mpmath`, `real_degree_df64_is_as_accurate_as_the_f64_kernel`, `legendre_functions_df64_match_mpmath`, `pmv_real_degree_df64_is_as_accurate_as_the_f64_kernel`, `second_kind_df64_matches_mpmath`, `df64_second_kind_backward_recurrence_is_consistent` | Their tolerances (1e-29 to 2e-29) and checks are statements about `Df64`. The other tests run their `f64` halves; `special_values_match_scipy`, `f64_limits_are_the_documented_ones` and `legendre_p_matches_the_legendre_polynomial_rows` gate only their `Df64` blocks. |
+  | `xsf_orthogonal.rs` | none | Every test runs its `f64` case; `for_both!` adds the `Df64` case. |
 
   A test name that says `df64` but runs without `xprec` (for example
   `n1_zetac_df64_is_minus_infinity_where_f64_is`) checks only its `f64`
