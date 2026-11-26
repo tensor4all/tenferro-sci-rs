@@ -14,16 +14,22 @@ few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
 xprec = "0.2.3"
 
-# CI builds and tests with this profile (tensor4all-agent-rules, rules/common/repository.md,
-# "Build Profiles"). It inherits `release`, as `tensor4all-rs` does, so CI tests the optimised code
-# that ships: `specials` has no `unsafe` and no `debug_assert!`, so `debug-assertions` would check
-# nothing of this crate's own and is left off on purpose (stated, not inherited by accident).
-# `overflow-checks` stays on: the public API takes integer orders (`n: i64` in `eval_*_int`,
-# `eval_hermite`, binomials, Stirling numbers), and an index expression that overflows there
-# should fail a test rather than wrap silently as it would in a plain release build.
+# No default profile carries debug info (tensor4all-agent-rules, rules/rust/performance.md,
+# "Build Profiles And Target Hygiene"); `debug-assertions` and `overflow-checks` stay on.
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
+
+# CI builds and tests with this profile (rules/common/repository.md, "Build Profiles"). It inherits
+# `test`, not `release`: `specials` has no `debug_assert!` of its own, but the code it runs does.
+# Every double-double table value goes through `xprec::Df64::new_full` (`src/real.rs`), whose only
+# validation is `debug_assert!(hi + lo == hi || !hi.is_finite())`, and `few_special_functions` states
+# its domain preconditions the same way. Inheriting `release` would turn a bad table entry from a
+# failing test into a silent wrong number. `overflow-checks` also stays on, for the integer orders
+# (`n: i64`) the public API takes.
 [profile.ci]
-inherits = "release"
-debug-assertions = false
-overflow-checks = true
+inherits = "test"
 incremental = false
 strip = "symbols"
