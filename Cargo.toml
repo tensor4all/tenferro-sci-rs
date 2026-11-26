@@ -13,3 +13,17 @@ repository = "https://github.com/tensor4all/tenferro-sci-rs"
 few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
 xprec = "0.2.3"
+
+# CI builds and tests with this profile (tensor4all-agent-rules, rules/common/repository.md,
+# "Build Profiles"). It inherits `release`, as `tensor4all-rs` does, so CI tests the optimised code
+# that ships: `specials` has no `unsafe` and no `debug_assert!`, so `debug-assertions` would check
+# nothing of this crate's own and is left off on purpose (stated, not inherited by accident).
+# `overflow-checks` stays on: the public API takes integer orders (`n: i64` in `eval_*_int`,
+# `eval_hermite`, binomials, Stirling numbers), and an index expression that overflows there
+# should fail a test rather than wrap silently as it would in a plain release build.
+[profile.ci]
+inherits = "release"
+debug-assertions = false
+overflow-checks = true
+incremental = false
+strip = "symbols"

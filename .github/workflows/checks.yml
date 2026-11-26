@@ -58,7 +58,7 @@ jobs:
 
       - name: cargo test
         if: steps.ws.outputs.present == 'true'
-        run: cargo test $LOCKED --workspace
+        run: cargo test --profile ci $LOCKED --workspace
 
       - name: cargo doc
         if: steps.ws.outputs.present == 'true'
@@ -90,4 +90,4 @@ jobs:
 
       - name: cargo build at the MSRV
         if: steps.msrv.outputs.version != ''
-        run: cargo build --locked --workspace
+        run: cargo build --profile ci --locked --workspace
