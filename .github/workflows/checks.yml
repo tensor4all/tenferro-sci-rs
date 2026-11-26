@@ -66,6 +66,31 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc $LOCKED --workspace --no-deps
 
+  specials-no-default:
+    name: specials without default features
+    if: inputs.tenferro == 'release'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tenferro-${{ inputs.tenferro }}-no-default
+
+      # `xprec` is a default feature. A suite gated as a whole file behind it
+      # compiles to an empty binary and passes with `0 tests`, so the log is
+      # checked: every suite under crates/specials/tests must run >= 1 test.
+      - name: cargo test --no-default-features
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --profile ci --locked -p specials --no-default-features 2>&1 | tee test.log
+
+      - name: Require that every suite ran tests
+        run: python3 scripts/assert_tests_ran.py test.log crates/specials/tests
+
   msrv:
     name: msrv
     if: inputs.tenferro == 'release'
