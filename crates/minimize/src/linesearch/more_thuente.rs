@@ -13,6 +13,7 @@
 //!   stpmax, xtol, rounding errors. The result is the same without mutable overwrites.
 //! - `start` additionally rejects a non-finite `alpha0`, φ(0) or φ'(0) ([`StartError::NonFiniteStart`]).
 //!   SciPy has no such check.
+//! - A non-finite φ or φ' at a trial ends the search with [`Reason::NonFiniteValue`].
 //! - A non-finite next step ends the search with [`Reason::NonFiniteStep`] inside `tell`
 //!   (SciPy's driver tests `isfinite(stp)` after `_iterate`).
 //! - NaN propagates ([`crate::real`]); the final clip into `[stpmin, stpmax]` lets NaN through so
@@ -100,6 +101,10 @@ pub enum Reason {
     /// q = 0. The `alpha`/`phi`/`dphi` of the [`Termination`] are the last evaluated (finite)
     /// trial; the non-finite next step is not reported.
     NonFiniteStep,
+    /// φ or φ' at the last trial is NaN or infinite. Detected in `tell` before the trial is used,
+    /// so `best` is untouched and still satisfies (1.1). `alpha`/`phi`/`dphi` are that trial.
+    /// SciPy does not check this (a NaN φ burns the remaining iterations).
+    NonFiniteValue,
 }
 
 impl Reason {
@@ -416,6 +421,11 @@ impl<T: Real> State<T> {
         }
         self.evaluations += 1;
         let t = Pt { a: self.stp, f, g };
+        // Deviation from SciPy: a non-finite φ or φ' ends the search before it can enter the
+        // interval; `x` stays the last point satisfying (1.1).
+        if !(f.is_finite() && g.is_finite()) {
+            return self.finish(Reason::NonFiniteValue, t);
+        }
         let ftest = self.finit + t.a * self.gtest(cfg);
         // If psi(stp) <= 0 and f'(stp) >= 0 for some step, the algorithm enters the second stage
         // (§4, p. 298: f <= ftest and g >= 0).
@@ -569,5 +579,43 @@ impl MoreThuente {
     /// ```
     pub fn stage(&self) -> Stage {
         self.s.stage
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_values_stop_the_search_with_a_valid_best() {
+        let cfg = MoreThuenteConfig::new(1e-4, 0.9, 1e-14, 1e-8, 50.0).unwrap();
+        for (f, g) in [
+            (f64::NAN, -1.0),
+            (f64::INFINITY, 1.0),
+            (0.5, f64::NAN),
+            (0.5, f64::NEG_INFINITY),
+        ] {
+            let (mut ls, _) = MoreThuente::start(&cfg, 1.0, -1.0, 1.0).unwrap();
+            let Step::Done(t) = ls.tell(&cfg, f, g) else {
+                panic!("expected Done for ({f}, {g})")
+            };
+            assert_eq!(t.reason, Reason::NonFiniteValue);
+            assert_eq!(t.evaluations, 1);
+            assert_eq!(t.alpha, 1.0);
+            assert_eq!(
+                t.best,
+                Point {
+                    alpha: 0.0,
+                    phi: 1.0,
+                    dphi: -1.0
+                }
+            );
+            assert_eq!(ls.stage(), Stage::Auxiliary);
+            // sticky (compared field-wise: the NaN trial value is not equal to itself)
+            let Step::Done(u) = ls.tell(&cfg, 0.0, 0.0) else {
+                panic!("not sticky")
+            };
+            assert_eq!((u.reason, u.evaluations, u.best), (t.reason, 1, t.best));
+        }
     }
 }

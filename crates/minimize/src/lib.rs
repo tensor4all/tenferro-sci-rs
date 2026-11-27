@@ -23,6 +23,8 @@
 //!   tie, which no recorded run hits.
 //! - NaN and infinite inputs are rejected up front ([`linesearch::ConfigError::NonFinite`],
 //!   [`linesearch::StartError::NonFiniteStart`]) instead of being compared as "not negative".
+//! - A non-finite φ or φ' at a trial ends the search with [`linesearch::Reason::NonFiniteValue`]
+//!   (SciPy keeps iterating on NaN until `maxiter`), which changes the counts on those paths only.
 //! - A non-finite next step ends the search with [`linesearch::Reason::NonFiniteStep`], and every
 //!   termination reports a `best` point that satisfies the sufficient decrease condition.
 //!

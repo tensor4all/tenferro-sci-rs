@@ -390,6 +390,7 @@ pub fn reason_name(r: &Reason) -> &'static str {
         Reason::StpMax => "stpmax",
         Reason::StpMin => "stpmin",
         Reason::NonFiniteStep => "nonfinite_step",
+        Reason::NonFiniteValue => "nonfinite_value",
     }
 }
 
