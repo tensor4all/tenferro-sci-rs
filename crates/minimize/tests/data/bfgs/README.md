@@ -9,9 +9,9 @@ SciPy 1.16.3 runs of `scipy.optimize.minimize(fun, x0, jac=True, method="BFGS", 
 | File | Contents |
 |---|---|
 | `problems.csv` | the test functions: dimension, quadratic data `A`, `b` (numpy's generator is not mirrored in Rust), minimizer, a strong-convexity bound `mu` |
-| `runs.csv` | one row per run: the exact SciPy call and every option, `status`, `message`, `nit`, `nfev`, `njev`, `wolfe2_calls`, where the fallback began and why `wolfe1` failed, the expected Rust termination, `parity` |
+| `runs.csv` | one row per run: the exact SciPy call and every option, `status`, `message`, `nit`, `nfev`, `njev`, `wolfe2_calls`, where the fallback began, whether it returned a step and whether it warned, why `wolfe1` failed, `cache_hits`, the number of updates with `yᵀs == 0` and `<= 0`, the expected Rust termination, `parity` |
 | `evals.csv` | every `(x, f, g)` SciPy asked for, in order, with the rounding scale `x_scale` of the requested point |
-| `iters.csv` | every line search: `x_k`, `f_k`, `g_k`, SciPy's direction `p_k`, the exact (mpmath) direction `d_exact` and its scale, the step, the evaluation range |
+| `iters.csv` | every line search: `x_k`, `f_k`, `g_k`, SciPy's direction `p_k`, the exact (mpmath) direction `d_exact` and its scale, the step, `yᵀs` of the pair and whether the update was applied, the evaluation range |
 | `hess_final.csv` | SciPy's final `hess_inv`, the exact (mpmath) matrix from SciPy's pairs, and the scale |
 
 Generate with `uv run scripts/gen_minimize_bfgs_reference.py` from the repository root. Regenerating is a
@@ -46,29 +46,41 @@ No problem in the probed set (an uncommitted probe: Rosenbrock with gtol from 1e
 noisy and perturbed variants, 136 runs in all, plus Powell, Beale, Himmelblau) made `wolfe1` fail on a *smooth,
 consistent, bounded-below* objective. The fallback fires only where the objective is not what SciPy's line search assumes,
 so every `fallback` run is **constructed** (the problem is chosen to make `wolfe1` fail; SciPy 1.16.3 does call `wolfe2`
-on each):
+on each). Columns: `wolfe2_found` = `wolfe2` returned a step, `wolfe2_warned` = it did so with a `LineSearchWarning`
+(`_line_search_wolfe12` silences it). **A step returned with that warning is not a Wolfe step**: when its `maxiter`
+(10) is exhausted `scalar_search_wolfe2` returns its last trial (`alpha_star = alpha1`) and warns.
 
-| Run | Why `wolfe1` gives up | `wolfe2` began at evaluation | `wolfe2` found a step |
-|---|---|---|---|
-| `w2_unbounded` | `f = −x₀` is unbounded below, so the curvature condition never holds and `wolfe1` ends at its limit of 100 trials (`dcsrch did not converge within max iterations`) on the **first** line search. Exact arithmetic (`g = (−1, 0)`), no rounding noise. `maxiter = 1` keeps the run short | 101 (x₀ and 100 trials) | **yes**: SciPy takes the step and continues |
-| `w2_neggrad` | the gradient has the wrong sign: `ROUNDING ERRORS PREVENT PROGRESS` after 48 trials on the first line search, in the noise regime α ≈ 10⁻¹⁹ | 49 | no |
-| `w2_l1` | nonsmooth ‖x‖₁: `XTOL TEST SATISFIED` | 65 | no |
-| `w2_noisy` | `f` plus 1e-12·sin(1e7 x₀): `dcsrch did not converge within max iterations` | 83 | no |
-| `w2_pert` | the gradient is off by the constant 1e-3·(1, −1): `ROUNDING ERRORS PREVENT PROGRESS` | 55 | no |
+| Run | Why `wolfe1` gives up | `wolfe2` began at evaluation | `wolfe2` returned a step | warned |
+|---|---|---|---|---|
+| `w2_unbounded` | `f = −x₀` is unbounded below, so the curvature condition never holds and `wolfe1` ends at its limit of 100 trials (`dcsrch did not converge within max iterations`) on the **first** line search. Exact arithmetic (`g = (−1, 0)`), no rounding noise. `maxiter = 1` keeps the run short | 101 (x₀ and 100 trials) | yes, α = 1024 = 2¹⁰ (ten doublings) | **yes**: it gave up |
+| `w2_neggrad` | the gradient has the wrong sign: steps shrink to α ≈ 10⁻¹⁹ (below one ulp of x) | 49 | no | yes |
+| `w2_l1` | nonsmooth ‖x‖₁: `XTOL TEST SATISFIED` | 65 | no | yes |
+| `w2_noisy` | `f` plus 1e-12·sin(1e7 x₀): `dcsrch did not converge within max iterations` | 83 | no | yes |
+| `w2_pert` | the gradient is off by the constant 1e-3·(1, −1) | 55 | no | yes |
 
-**The asserted boundary case is `w2_unbounded`**: it is deterministic (no summation order or libm call can change a
-decision), the fallback **succeeds** in SciPy, and the Rust port stops at the same place with `LineSearchFailed`
-and no step: this is the exact point where the two differ, and the test (`bfgs_termination.rs`) asserts
-that the state asks for exactly the 101 evaluations SciPy made before `wolfe2`, then stops. The other four runs fail
-through effects at rounding level (the number of trials before DCSRCH gives up changes with the last bits of the
-direction: replaying `w2_neggrad` through a correct state stops it after 24 trials, SciPy after 48, both with
-`ROUNDING ERRORS`), so they are data (`wolfe2_calls > 0`), not asserted. Of the five fallbacks on finite objectives, `wolfe2`
-failed on four (SciPy ends with status 2 there, after more evaluations than a Rust stop at the failed `wolfe1`) and
-succeeded on the unbounded one; in the uncommitted probe all 43 fallbacks on bounded objectives failed.
+`nan_region` and `inf_region` (`f`, `g` NaN or +inf for `x₀ > 0.5`) are the only runs with `wolfe2` steps that came without
+a warning (`inf_region`: four, `wolfe2_found = 11110`, `wolfe2_warned = 00001`): there the fallback genuinely succeeds.
+Under the #38 rule the Rust port stops at the last finite iterate instead.
 
-`nan_region` and `inf_region` (`f`, `g` NaN or +inf for `x₀ > 0.5`) are the other runs where SciPy's `wolfe2`
-**found** a step (`wolfe2_found` = `1`, `11110`): the fallback is not only a failure path. Under the #38 rule the
-Rust port stops at the last finite iterate instead.
+**The asserted boundary case is `w2_unbounded`**: deterministic (no summation order or libm call can change a decision), and
+the place where the port and SciPy part for good: SciPy takes `wolfe2`'s last trial as the step and goes on, and the
+port stops at the same evaluation with `LineSearchFailed` and no step. The test (`bfgs_termination.rs`) asserts that the
+state asks for exactly the 101 evaluations SciPy made before `wolfe2`, then stops.
+
+**The `y^T s == 0` branch of SciPy is reached here.** `g` is constant, so after that step `y = 0`, `yᵀs = 0` exactly
+(`iters.csv` `ys`, `runs.csv` `n_rho1000 = 1`), and `_minimize_bfgs` applies its update with `ρ = 1000`. The branch is
+reachable after a `wolfe2` step that is not a Wolfe step; after `wolfe1` (strong Wolfe) steps, which are the only steps the
+port takes, `yᵀs ≥ (1 − c₂)(−gᵀs) > 0` and every update of every parity run has `yᵀs > 0` (`n_ys_nonpos = 0`, asserted by the
+generator).
+
+### Evaluations are not always one per trial
+
+SciPy's `ScalarFunction` does not re-evaluate the objective at a point equal to the previous one. In the rounding regime
+(steps below one ulp of `x`) the line search makes more trials than there are recorded evaluations (`cache_hits` in
+`runs.csv` = trials − evaluations: `w2_neggrad` 49, `w2_noisy` 57, `w2_pert` 48, `inf_region` 5), so the recorded
+evaluations cannot be matched one to one with trials there, and a Rust state that evaluates at every trial counts more.
+This is why the fallback runs other than `w2_unbounded` cannot be replayed index by index, and why the generator
+asserts `cache_hits == 0` for every parity run (all have 0).
 
 ## Tolerances
 
@@ -78,7 +90,7 @@ write data that violates them with a 4× margin (and `--check` repeats the measu
 
 | Quantity | Claim | Bound |
 |---|---|---|
-| evaluation count, iteration count, termination, `n_ls` | equal to SciPy's | exact |
+| evaluation count, iteration count, termination, `n_ls`, `cache_hits`, `n_updates`, `n_rho1000`, `n_ys_nonpos`, `wolfe2_*`, `applied` | equal to SciPy's | exact |
 | `f` at every evaluation, final `f` | the replay feeds SciPy's `f`, so equal | exact |
 | requested point `x_i` (evaluation `i`) | equals SciPy's `i`-th evaluation | `‖x_i − x_i^SciPy‖` componentwise ≤ min(C·n·ε·`x_scale`_i, 1e-8·(1 + ‖x_i^SciPy‖∞)), C = 64, ε = 2⁻⁵² |
 | final iterate | equals SciPy's `final_x` | the same bound at the last evaluation (SciPy's accepted point is the last it evaluated) |
@@ -119,8 +131,8 @@ above, compares with the committed CSVs and writes nothing.
 
 | Field | Rule | Why |
 |---|---|---|
-| ids, `group`, `problem`, `n`, options, `status`, `message`, counts, `wolfe2_*`, `wolfe1_fail`, `termination`, `parity`, `n_ls`, `ev_start`, `ev_end`, problem data | exact | they pin the path of every run |
-| `x`, `f`, `g`, `p`, `alpha`, `d_exact`, `final_*`, `gnorm_inf`, `h_scipy`, `h_exact` | within 1e-8 relative + 1e-10 absolute | last bits of libm (`sin`, `pow`) and BLAS (`@`, `np.dot`) differ by platform and feed the next step: bitwise would pin them |
+| ids, `group`, `problem`, `n`, options, `status`, `message`, counts, `wolfe2_*`, `wolfe1_fail`, `termination`, `parity`, `n_ls`, `cache_hits`, `n_updates`, `n_rho1000`, `n_ys_nonpos`, `applied`, `ev_start`, `ev_end`, problem data | exact | they pin the path of every run |
+| `x`, `f`, `g`, `p`, `alpha`, `ys`, `d_exact`, `final_*`, `gnorm_inf`, `h_scipy`, `h_exact` | within 1e-8 relative + 1e-10 absolute | last bits of libm (`sin`, `pow`) and BLAS (`@`, `np.dot`) differ by platform and feed the next step: bitwise would pin them |
 | `x_scale`, `d_scale`, `h_scale`, `x_ratio`, `dir_ratio_*`, `ratio`, `note`, `scipy_call` | not compared | derived diagnostics and text |
 
 CI wiring of this check (the `minimize-reference` job) is not part of this stage.
@@ -129,5 +141,5 @@ CI wiring of this check (the `minimize-reference` job) is not part of this stage
 
 - The envelope is measured on one platform (macOS arm64, Accelerate); the platform check on ubuntu-24.04 x86_64
   (OpenBLAS) has not been run. If a count differs there, that run is chaotic and is dropped from `parity`.
-- The `rho = 1000` branch of SciPy (`yᵀs == 0`) is never reached by any run here; no test pins it (open question 1
-  of the PR).
+- SciPy's `rho = 1000` branch (`yᵀs == 0`) is reached by `w2_unbounded` only (after a `wolfe2` step); no parity run
+  reaches it, and no test pins what the port does with such a pair (open question 1 of the PR).
