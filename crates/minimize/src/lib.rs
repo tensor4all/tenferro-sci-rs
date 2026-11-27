@@ -45,3 +45,6 @@
 
 pub mod linesearch;
 mod real;
+pub mod vector;
+
+pub use vector::Vector;
