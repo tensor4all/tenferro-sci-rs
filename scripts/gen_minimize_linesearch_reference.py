@@ -13,7 +13,10 @@ Run from the repository root:
 ``--data DIR``); it writes nothing and exits non-zero with a readable diff on a mismatch. It does
 not compare bytes: run ids, outcomes, tasks, counts, None-ness and the number of trials per run
 must be identical, every float must agree within 1e-12 relative (or be exactly equal, including
-both zero, both inf, both nan). The closed-form runs use libm ``exp``/``sin``/``cos``/``pow``,
+both zero, both inf, both nan), except phi' (trials.csv `dphi`), which is bounded by the
+dot-product error bound 4 n eps dphi_scale (Higham, section 3.1) with the committed scale: phi'
+of a run that converges at its first trial is cancellation noise of a BLAS dot product. The
+contract is in crates/minimize/tests/data/linesearch/README.md. The closed-form runs use libm ``exp``/``sin``/``cos``/``pow``,
 which Linux glibc and macOS libm may round one ulp apart, and that ulp is invisible to the
 Rust tests' tolerance but not to a byte compare. The ``#`` header lines (date, versions) are
 ignored.
@@ -195,6 +198,108 @@ FUNCS = {
 }  # fmt: skip
 
 
+# ----------------------------------------------------------------------------------------------
+# Rounding scale of phi' (column dphi_scale of trials.csv, with its term count dphi_n).
+#
+# phi' is a sum of terms; a different libm/BLAS may round each term and each addition differently,
+# so a regenerated phi' may differ from the committed one by about gamma_n * sum|terms|,
+# gamma_n = n eps / (1 - n eps) (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed.,
+# section 3.1). The scale is that sum of absolute values (the terms the code adds, evaluated at
+# the trial), and n the number of terms plus operations. `--check` allows
+# max(1e-12 |phi'|, 4 n eps scale) on phi', using the committed scale.
+# Where phi' is a single term (sf3, shiftq, lines, the non-finite helpers) the scale is |phi'|.
+# ----------------------------------------------------------------------------------------------
+
+
+def _s_sf1(a, p):
+    return (1.0 + abs(3 * a**2) + abs(4 * a**3), 3)
+
+
+def _s_sf2(a, p):
+    return (abs(4 * math.exp(-4 * a)) + abs(2 * a), 2)
+
+
+def _s_sf3(a, p):
+    return (abs(10 * math.cos(10 * a)), 1)
+
+
+def _s_wt(a, p):
+    return (1.0 + abs(0.05 * 2 * a), 2)
+
+
+def _s_quad(a, p):  # closed quadratic with given coefficients: |2 A a| + |B|
+    return (abs(2 * p[0] * a) + abs(p[1]), 2)
+
+
+def _s_shiftq(a, p):
+    return (abs(2 * (a - p[0])), 1)
+
+
+def _s_one(a, p):
+    return (1.0, 1)
+
+
+def _s_abs_dphi(fn):  # non-finite helpers and the 1e308 one: |phi'| itself
+    return lambda a, p: (abs(FUNCS[fn](a, p)[1]), 1)
+
+
+def _s_mt1(a, p):
+    s_ = a * a + MT1_B
+    return (s_ / (s_ * s_), 4)
+
+
+def _s_mt2(a, p):
+    x = a + MT2_B
+    return (abs(5 * x**4) + abs(8 * x**3), 3)
+
+
+def _s_mt3(a, p):
+    return (abs(_mt3_d0(a)) + abs((1 - MT3_B) * math.cos(MT3_L * math.pi * a / 2)), 2)
+
+
+def _s_yanai(b1, b2):
+    def g(b):
+        return math.sqrt(1 + b * b) - b
+
+    def f(a, p):
+        r1 = math.sqrt((1 - a) * (1 - a) + b2 * b2)
+        r2 = math.sqrt(a * a + b1 * b1)
+        return (abs(g(b1) * (a - 1) / r1) + abs(g(b2) * a / r2), 4)
+
+    return f
+
+
+DSCALE = {
+    "sf1": _s_sf1, "sf2": _s_sf2, "sf3": _s_sf3, "wt": _s_wt, "quad": _s_quad, "shiftq": _s_shiftq,
+    "lin_neg": _s_one, "lin_pos": _s_one, "inf_half": _s_abs_dphi("inf_half"),
+    "nan_half": _s_abs_dphi("nan_half"), "nan_dphi": _s_abs_dphi("nan_dphi"),
+    "big_half": _s_abs_dphi("big_half"), "nan_late": _s_abs_dphi("nan_late"),
+    "mt1": _s_mt1, "mt2": _s_mt2, "mt3": _s_mt3,
+    "mt4": _s_yanai(1e-3, 1e-3), "mt5": _s_yanai(1e-2, 1e-3), "mt6": _s_yanai(1e-3, 1e-2),
+}  # fmt: skip
+
+N_LINE = 20  # dimension of the SciPy line functions (TestLineSearch.N)
+
+
+def line_scale_scipy(fn, x, p, A):
+    """SciPy's line run: phi'(a) = dot(grad f(x + a p), p) with grad f = 2 y (line1) or
+    (A + A^T) y (line2). Scale: |p|^T |M| (|x| + |a| |p|), M = 2 I or A + A^T; n = 2 N + 2
+    (the matrix-vector product, the dot, and the formation of y)."""
+    M = 2.0 * np.eye(len(x)) if fn == "line1" else A + A.T
+    return lambda a: (float(np.abs(p) @ (np.abs(M) @ (np.abs(x) + abs(a) * np.abs(p)))), 2 * N_LINE + 2)
+
+
+def line_scale_closed(fn, x, p, A):
+    """The closed quadratic of that line, A_q a^2 + B_q a + C_q with A_q, B_q formed by dot
+    products: phi' = 2 A_q a + B_q. Scale: 2 |a| S_A + S_B, where S_A = |p|^T |Q| |p| and
+    S_B = |x|^T |Q| |p| + |p|^T |Q| |x| are the absolute sums of the dot-product terms
+    (Q = I for line1, A for line2); n = 2 N + 2."""
+    Q = np.eye(len(x)) if fn == "line1" else A
+    S_A = float(np.abs(p) @ np.abs(Q) @ np.abs(p))
+    S_B = float(np.abs(x) @ np.abs(Q) @ np.abs(p) + np.abs(p) @ np.abs(Q) @ np.abs(x))
+    return lambda a: (2 * abs(a) * S_A + S_B, 2 * N_LINE + 2)
+
+
 def closed(fn, params=()):
     f = FUNCS[fn]
     return (lambda a: f(float(a), params)[0]), (lambda a: f(float(a), params)[1])
@@ -276,11 +381,14 @@ def _hooked(self, alpha1, phi0=None, derphi0=None, maxiter=100):
 DCSRCH.__call__ = _hooked
 
 CASES: list[dict] = []
-TRIALS: list[tuple[str, int, float, float, float]] = []
+TRIALS: list[tuple[str, int, float, float, float, float, int]] = []
 
 
-def record(cid, run, kind, group, fn, params, old_phi0, note=""):
+def record(cid, run, kind, group, fn, params, old_phi0, note="", scale=None):
+    """`scale(alpha) -> (dphi_scale, n)`; default: the closed-form scale of `fn` with `params`."""
     L = LAST
+    if scale is None:
+        scale = lambda a: DSCALE[fn](a, params)  # noqa: E731
     reason = REASONS[L["task"]]
     row = dict(
         id=cid, run=run, kind=kind, group=group, fn=fn,
@@ -297,14 +405,15 @@ def record(cid, run, kind, group, fn, params, old_phi0, note=""):
     )  # fmt: skip
     CASES.append(row)
     for k, (a, f, g) in enumerate(L["trials"]):
-        TRIALS.append((cid, k, a, f, g))
+        sc, n = scale(a)
+        TRIALS.append((cid, k, a, f, g, float(sc), int(n)))
     return row
 
 
 def wolfe1(cid, run, group, fn, params, phi, dphi, phi0, old_phi0, dphi0, *, c1=1e-4, c2=0.9,
-           amax=50.0, amin=1e-8, xtol=1e-14, note=""):  # fmt: skip
+           amax=50.0, amin=1e-8, xtol=1e-14, note="", scale=None):  # fmt: skip
     ls.scalar_search_wolfe1(phi, dphi, phi0, old_phi0, dphi0, c1=c1, c2=c2, amax=amax, amin=amin, xtol=xtol)
-    return record(cid, run, "wolfe1", group, fn, params, old_phi0, note)
+    return record(cid, run, "wolfe1", group, fn, params, old_phi0, note, scale)
 
 
 def dcsrch(cid, group, fn, params, ftol, gtol, alpha0, *, xtol=1e-14, stpmin=0.0, stpmax=1e10,
@@ -365,7 +474,8 @@ def scipy_test_cases():
         f0 = f(x)
         g0 = fprime(x)
         s, fc, gc, fv, ofv, gv = ls.line_search_wolfe1(f, fprime, x, p, g0, f0, old_f, amax=100)
-        a = record(cid + ".scipy", "scipy", "wolfe1", "scipy_line", fn, (), float(old_f))
+        a = record(cid + ".scipy", "scipy", "wolfe1", "scipy_line", fn, (), float(old_f),
+                   scale=line_scale_scipy(fn, x, p, A))  # fmt: skip
         assert fc == a["phi_evals"] == gc  # sanity: our counts are SciPy's own
         # the line function along x + alpha p as the quadratic A a^2 + B a + C
         if fn == "line1":
@@ -375,7 +485,7 @@ def scipy_test_cases():
         params = (qa, qb, qc)
         cphi, cdphi = closed("quad", params)
         b = wolfe1(cid + ".closed", "closed", "scipy_line", "quad", params, cphi, cdphi,
-                   qc, float(old_f), qb, amax=100.0)  # fmt: skip
+                   qc, float(old_f), qb, amax=100.0, scale=line_scale_closed(fn, x, p, A))  # fmt: skip
         compare(cid, a, b, "BLAS dot products vs quadratic coefficients")
         k += 1
 
@@ -423,7 +533,7 @@ def dcsrch_cases():
     r = dcsrch("maxiter2", "edge", "shiftq", (20.0,), 1e-4, 0.9, 1.0, maxiter=2, stpmax=50.0, stpmin=1e-8,
                note="last evaluated point is never tested")  # fmt: skip
     assert r["reason"] == "maxiter" and r["n_trials"] == 2
-    a2, f2, g2 = [t for t in TRIALS if t[0] == "maxiter2"][-1][2:]
+    a2, f2, g2 = [t for t in TRIALS if t[0] == "maxiter2"][-1][2:5]
     f0, g0 = FUNCS["shiftq"](0.0, (20.0,))
     assert f2 <= f0 + 1e-4 * a2 * g0 and abs(g2) <= 0.9 * abs(g0), "trial 2 should satisfy strong Wolfe"
     dcsrch("maxiter3", "edge", "shiftq", (20.0,), 1e-4, 0.9, 1.0, maxiter=3, stpmax=50.0, stpmin=1e-8,
@@ -550,9 +660,11 @@ def texts() -> dict[str, str]:
     cases += ",".join(cols) + "\n"
     for r in CASES:
         cases += ",".join(str(r[c]).replace(",", ";") for c in cols) + "\n"
-    trials = HEADER + "# every trial SciPy evaluated: id,k,alpha,phi,dphi\n" + "id,k,alpha,phi,dphi\n"
-    for cid, k, a, p, d in TRIALS:
-        trials += f"{cid},{k},{fmt(a)},{fmt(p)},{fmt(d)}\n"
+    trials = HEADER + "# every trial SciPy evaluated: id,k,alpha,phi,dphi,dphi_scale,dphi_n\n"
+    trials += "# dphi_scale = sum of |terms| of phi', dphi_n = number of terms and operations (README.md)\n"
+    trials += "id,k,alpha,phi,dphi,dphi_scale,dphi_n\n"
+    for cid, k, a, p, d, sc, n in TRIALS:
+        trials += f"{cid},{k},{fmt(a)},{fmt(p)},{fmt(d)},{fmt(sc)},{n}\n"
     div = HEADER + "# scipy run vs closed-form run; the live test compares against the closed run for these\n"
     div += "id,what,scipy,closed,why\n"
     for row in divergences:
@@ -571,9 +683,19 @@ def write():
 # ----------------------------------------------------------------------------------------------
 
 REL_TOL = 1e-12
-# columns compared as text: identities, outcomes, tasks, counts, flags (exact)
+EPS = 2.0**-52
+DOT_FACTOR = 4  # tolerance on phi' = max(REL_TOL |phi'|, DOT_FACTOR * n * EPS * dphi_scale)
+
+# Exact (string equality): identities, outcomes, tasks, counts, flags, and the None-ness of every
+# column. These (with the trial count per run) pin the path of every search.
 EXACT_COLS = {"id", "run", "kind", "group", "fn", "reason", "task", "note", "k", "what",
-              "phi0_given", "dphi0_given", "maxiter", "phi_evals", "dphi_evals", "n_trials"}  # fmt: skip
+              "phi0_given", "dphi0_given", "maxiter", "phi_evals", "dphi_evals", "n_trials",
+              "dphi_n"}  # fmt: skip
+# Within REL_TOL relative: everything else (steps, phi, inputs, coefficients, scales). Platform
+# last bits of libm (exp, sin, cos, pow) and BLAS (np.dot) enter here and feed the next step, so
+# bitwise steps would pin them. The path itself is pinned exactly by the counts above.
+# trials.csv `dphi` is the exception: bounded by the dot-product error bound with the committed
+# dphi_scale (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., section 3.1).
 
 
 def parse_csv(text: str) -> tuple[list[str], list[dict[str, str]]]:
@@ -582,26 +704,54 @@ def parse_csv(text: str) -> tuple[list[str], list[dict[str, str]]]:
     return header, [dict(zip(header, l.split(","))) for l in lines[1:]]
 
 
-def floats_agree(a: str, b: str) -> bool:
+def _num(a: str) -> float | None:
+    try:
+        return float(a)
+    except ValueError:
+        return None
+
+
+def floats_agree(a: str, b: str, tol_abs: float = 0.0) -> bool:
     if a == b:
         return True
-    try:
-        x, y = float(a), float(b)
-    except ValueError:
+    x, y = _num(a), _num(b)
+    if x is None or y is None:
         return False
     if math.isnan(x) or math.isnan(y):
         return math.isnan(x) and math.isnan(y)
     if math.isinf(x) or math.isinf(y):
         return x == y
-    return x == y or abs(x - y) <= REL_TOL * max(abs(x), abs(y))
+    return x == y or abs(x - y) <= max(REL_TOL * max(abs(x), abs(y)), tol_abs)
 
 
-def diff_table(name: str, committed: str, fresh: str) -> list[str]:
+class Stat:
+    """Per-column diagnostics: values compared, bitwise equal, max abs / rel difference."""
+
+    def __init__(self):
+        self.n = self.same = 0
+        self.max_abs = self.max_rel = self.max_ratio = 0.0
+
+    def add(self, a: str, b: str, bound: float | None = None):
+        self.n += 1
+        x, y = _num(a), _num(b)
+        if a == b or (x is not None and y is not None and x == y):
+            self.same += 1
+            return
+        if x is None or y is None or not (math.isfinite(x) and math.isfinite(y)):
+            return
+        d = abs(x - y)
+        self.max_abs = max(self.max_abs, d)
+        self.max_rel = max(self.max_rel, d / max(abs(x), abs(y)))
+        if bound:
+            self.max_ratio = max(self.max_ratio, d / bound)
+
+
+def diff_table(name: str, committed: str, fresh: str, stats: dict) -> list[str]:
     h1, rows1 = parse_csv(committed)
     h2, rows2 = parse_csv(fresh)
-    out: list[str] = []
     if h1 != h2:
         return [f"{name}: columns differ: committed {h1} vs regenerated {h2}"]
+    out: list[str] = []
     key = (lambda r: (r["id"], r["k"])) if "k" in h1 else (lambda r: (r["id"], r.get("what", "")))
     m1 = {key(r): r for r in rows1}
     m2 = {key(r): r for r in rows2}
@@ -612,25 +762,44 @@ def diff_table(name: str, committed: str, fresh: str) -> list[str]:
     for k in sorted(m2.keys() - m1.keys()):
         out.append(f"{name}: row {k} is regenerated but not committed")
     for k in sorted(m1.keys() & m2.keys()):
+        r1, r2 = m1[k], m2[k]
         for col in h1:
-            a, b = m1[k][col], m2[k][col]
-            if col in EXACT_COLS or name == "divergences.csv":
+            a, b = r1[col], r2[col]
+            bound = None
+            if name == "trials.csv" and col == "dphi":
+                # the committed scale and term count, so a corrupted scale cannot widen it
+                sc, n = _num(r1["dphi_scale"]), _num(r1["dphi_n"])
+                bound = DOT_FACTOR * n * EPS * sc if sc is not None and n is not None and math.isfinite(sc) else 0.0
+                same = floats_agree(a, b, bound)
+            elif col in EXACT_COLS or name == "divergences.csv":
                 same = a == b
             else:
                 same = floats_agree(a, b)
+            stats.setdefault((name, col), Stat()).add(a, b, bound)
             if not same:
-                out.append(f"{name}: {k} column {col}: committed {a!r} vs regenerated {b!r}")
+                extra = f" (bound {bound:.3g})" if bound is not None else ""
+                out.append(f"{name}: {k} column {col}: committed {a!r} vs regenerated {b!r}{extra}")
     return out
 
 
 def check(data_dir: Path) -> int:
     problems: list[str] = []
+    stats: dict = {}
     for name, fresh in texts().items():
         path = data_dir / name
         if not path.exists():
             problems.append(f"{name}: not found in {data_dir}")
             continue
-        problems += diff_table(name, path.read_text(), fresh)
+        problems += diff_table(name, path.read_text(), fresh, stats)
+    print("per-column comparison (values compared / bitwise equal / max abs diff / max rel diff"
+          " [/ max diff over bound for dphi]):")
+    for (name, col), st in stats.items():
+        if col in EXACT_COLS and st.same == st.n:
+            continue
+        ratio = f" / diff/bound {st.max_ratio:.3g}" if st.max_ratio else ""
+        print(f"  {name:<15} {col:<10} {st.n:>5} / {st.same:>5} / {st.max_abs:.3g} / {st.max_rel:.3g}{ratio}")
+    exact = sum(1 for (n_, c), st in stats.items() if c in EXACT_COLS and st.same == st.n)
+    print(f"  ({exact} exact columns identical everywhere, not listed)")
     if problems:
         print(f"--check FAILED: {len(problems)} difference(s) against {data_dir}")
         for p in problems[:50]:
@@ -638,8 +807,7 @@ def check(data_dir: Path) -> int:
         if len(problems) > 50:
             print(f"  ... and {len(problems) - 50} more")
         return 1
-    print(f"--check OK: {len(CASES)} runs, {len(TRIALS)} trials agree with {data_dir} "
-          f"(floats within {REL_TOL:g} relative)")
+    print(f"--check OK: {len(CASES)} runs, {len(TRIALS)} trials agree with {data_dir}")
     return 0
 
 
