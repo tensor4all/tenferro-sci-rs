@@ -1,0 +1,11 @@
+[package]
+name = "minimize"
+description = "Scalar line searches in pure Rust: a port of SciPy's Moré–Thuente (DCSRCH) strong-Wolfe search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+keywords = ["optimization", "line-search", "wolfe", "scipy", "math"]
+categories = ["mathematics", "science"]
+publish = false

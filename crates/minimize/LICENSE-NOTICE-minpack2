@@ -1,0 +1,32 @@
+Notice for the code ported from SciPy's scipy/optimize/_dcsrch.py (the
+functions DCSRCH and dcstep of the line search of More and Thuente).
+
+SciPy's _dcsrch.py is a Python translation of the MINPACK-2 Fortran routines
+dcsrch.f and dcstep.f. Those files carry no license text, only the attribution
+block below, kept verbatim from dcsrch.f (and, for dcstep, from dcstep.f) as
+last present in SciPy at commit 042385d14c (scipy/optimize/minpack2/). SciPy's
+translation is distributed under the 3-clause BSD license of SciPy
+(LICENSE-BSD-3-Clause-scipy in this directory, Copyright (c) 2001-2002
+Enthought, Inc. 2003, SciPy Developers).
+
+----------------------------------------------------------------------------
+dcsrch.f:
+
+     MINPACK-1 Project. June 1983.
+     Argonne National Laboratory.
+     Jorge J. More' and David J. Thuente.
+
+     MINPACK-2 Project. November 1993.
+     Argonne National Laboratory and University of Minnesota.
+     Brett M. Averick, Richard G. Carter, and Jorge J. More'.
+
+dcstep.f:
+
+     MINPACK-1 Project. June 1983
+     Argonne National Laboratory.
+     Jorge J. More' and David J. Thuente.
+
+     MINPACK-2 Project. November 1993.
+     Argonne National Laboratory and University of Minnesota.
+     Brett M. Averick and Jorge J. More'.
+----------------------------------------------------------------------------
