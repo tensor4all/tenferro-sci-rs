@@ -58,6 +58,7 @@ import datetime
 import math
 import platform
 import sys
+import warnings
 from pathlib import Path
 
 import mpmath
@@ -266,6 +267,8 @@ def _build_problems():
     # constructed problems for the fallback and the non-finite runs
     ps["rosen2_neggrad"] = Problem("rosen2_neggrad", 2, rosen, lambda x: -rosen_der(x), note="constructed: the gradient has the wrong sign")
     ps["l1"] = Problem("l1", 3, l1, l1_der, note="constructed: |x|_1, nonsmooth at the minimizer")
+    ps["linear_unbounded"] = Problem("linear_unbounded", 2, lambda x: -x[0], lambda x: np.array([-1.0, 0.0]),
+                                     note="unbounded below: f = -x0, so wolfe1 never meets the curvature condition and ends at its 100-trial limit")
     ps["rosen2_noisy"] = Problem("rosen2_noisy", 2, noisy, rosen_der, note="constructed: rosen + 1e-12 sin(1e7 x0) with the smooth gradient")
     ps["rosen2_pert"] = Problem("rosen2_pert", 2, rosen, pert_der, note="constructed: rosen gradient plus the constant 1e-3 * (1, -1)")
     ps["rosen2_nan"] = Problem("rosen2_nan", 2, rosen_nan, rosen_nan_der, note="constructed: f and g are NaN for x0 > 0.5")
@@ -310,6 +313,9 @@ def _specs():
         Spec("rosen2_maxiter1", "finite", "rosen2", [-1.2, 1.0], maxiter=1),
         Spec("rosen2_maxiter5", "finite", "rosen2", [-1.2, 1.0], maxiter=5),
         # maxiter = nit of rosen2_a is set in generate(): the converging iteration is the last allowed one
+        Spec("w2_unbounded", "fallback", "linear_unbounded", [0.0, 0.0], maxiter=1,
+             note="f is unbounded below: wolfe1 ends at its 100-trial limit on the first line search, wolfe2 FINDS a step, SciPy goes on; "
+                  "exact arithmetic (f = -x0, g = (-1, 0)), no rounding noise"),
         Spec("w2_neggrad", "fallback", "rosen2_neggrad", [-1.2, 1.0], note="constructed: wolfe1 fails on the first line search"),
         Spec("w2_l1", "fallback", "l1", [1.0, 2.0, -3.0], note="constructed: nonsmooth objective"),
         Spec("w2_noisy", "fallback", "rosen2_noisy", [-1.2, 1.0], gtol=1e-8, note="constructed: rounding-level noise in f"),
@@ -386,7 +392,9 @@ def run_scipy(spec: Spec):
 
     oo._line_search_wolfe12, oo.line_search_wolfe2, DCSRCH.__call__ = hooked12, hooked2, hookedcall
     try:
-        res = so.minimize(fg, spec.x0.copy(), jac=True, method="BFGS", bounds=None, options=options, callback=cb)
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res = so.minimize(fg, spec.x0.copy(), jac=True, method="BFGS", bounds=None, options=options, callback=cb)
     finally:
         oo._line_search_wolfe12, oo.line_search_wolfe2, DCSRCH.__call__ = orig12, orig2, origcall
     call = (f"scipy.optimize.minimize(fun, x0, jac=True, method='BFGS', bounds=None, "
