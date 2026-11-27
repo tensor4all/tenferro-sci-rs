@@ -1,0 +1,50 @@
+Notice for the code ported from SciPy's scipy/optimize/_dcsrch.py (the
+functions DCSRCH and dcstep of the line search of More and Thuente).
+
+Provenance chain
+----------------
+
+1. MINPACK-2 dcsrch.f and dcstep.f (November 1993). The algorithm is that of
+   MINPACK-1 (June 1983, More and Thuente).
+2. SciPy shipped them as scipy/optimize/minpack2/dcsrch.f and dcstep.f,
+   wrapped with f2py.
+3. scipy/scipy#19060 (commit 73ce9560ba, 2023-08-24), "port minpack2.dcsrch
+   from Fortran to Python", added scipy/optimize/_dcsrch.py and switched the
+   line search to it.
+4. scipy/scipy#21125 (commit 3073b263fadf1bb97241f4cc29b32c41fa839f90,
+   2024-07-06), "remove unused minpack2 fortran code", deleted
+   minpack2/dcsrch.f, dcstep.f and minpack2.pyf.
+5. SciPy v1.16.3 (b9105ccc2237f57acb1060202cd77f6dd264fb34),
+   scipy/optimize/_dcsrch.py: the source of this crate's port.
+
+The Fortran files carry no license text, only the attribution blocks below.
+They are kept verbatim from dcsrch.f and dcstep.f as they were in SciPy at
+commit 042385d14c, the parent of 73ce9560ba (the files stayed in SciPy until
+3073b263fa). SciPy's translation is distributed under the 3-clause BSD license
+of SciPy (LICENSE-BSD-3-Clause-scipy in this directory, Copyright (c)
+2001-2002 Enthought, Inc. 2003, SciPy Developers).
+
+The MINPACK-1 license (University of Chicago) is deliberately not used here:
+it covers a different code base (the MINPACK-1 library), not these routines.
+
+----------------------------------------------------------------------------
+dcsrch.f:
+
+     MINPACK-1 Project. June 1983.
+     Argonne National Laboratory.
+     Jorge J. More' and David J. Thuente.
+
+     MINPACK-2 Project. November 1993.
+     Argonne National Laboratory and University of Minnesota.
+     Brett M. Averick, Richard G. Carter, and Jorge J. More'.
+
+dcstep.f:
+
+     MINPACK-1 Project. June 1983
+     Argonne National Laboratory.
+     Jorge J. More' and David J. Thuente.
+
+     MINPACK-2 Project. November 1993.
+     Argonne National Laboratory and University of Minnesota.
+     Brett M. Averick and Jorge J. More'.
+----------------------------------------------------------------------------

@@ -91,6 +91,22 @@ jobs:
       - name: Require that every suite ran tests
         run: python3 scripts/assert_tests_ran.py test.log crates/specials/tests
 
+  # The committed SciPy reference data of crates/minimize is regenerated with the versions pinned
+  # in the script's inline metadata (SciPy 1.16.3, NumPy 2.3.5, Python 3.12) and compared:
+  # ids, outcomes and counts exactly, floats within 1e-12 relative. Nothing is written.
+  # setup-uv publishes no floating major tag any more, hence the exact version.
+  minimize-reference:
+    name: minimize reference data (SciPy 1.16.3)
+    if: inputs.tenferro == 'release'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.4.0
+
+      - name: Compare the regenerated line-search data with the committed CSVs
+        run: uv run scripts/gen_minimize_linesearch_reference.py --check
+
   msrv:
     name: msrv
     if: inputs.tenferro == 'release'

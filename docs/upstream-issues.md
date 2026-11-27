@@ -681,3 +681,28 @@ special-value file (`tests/data/orthogonal_special_values.csv`, `expected`) foll
 (SciPy: `-inf`); `assoc_legendre_p(3, 0, -1)` is `-1` (SciPy: `1`, scipy/gh-23101);
 `eval_genlaguerre(n, alpha, x)` for `alpha` within 1e-14 of `-1` is accurate (SciPy: 0, gh-457).
 The `scipy` column of the reference files is SciPy's value, and the parity comparisons skip those rows.
+
+## scipy: `_dcsrch.py` compares with `<=` where MINPACK-2, the paper and SciPy's own C copy have `<`
+
+- **Affects:** SciPy v1.16.3 (`b9105ccc2237f57acb1060202cd77f6dd264fb34`),
+  `scipy/optimize/_dcsrch.py`, `dcstep`, first case (`fp > fx`), line 615.
+- **Evidence:** the step is the cubic step `stpc` when it is closer to `stx` than the quadratic
+  step `stpq`, else their average. Moré & Thuente (ACM TOMS 20(3), 1994, p. 299) say "closer",
+  MINPACK-2 `dcstep.f:120` has `abs(stpc-stx) .lt. abs(stpq-stx)`, and SciPy's own C
+  translation in `scipy/optimize/__lbfgsb.c:3626` has `fabs(stpc - *stx) < fabs(stpq - *stx)`.
+  Only `_dcsrch.py` has `abs(stpc - stx) <= abs(stpq - stx)`.
+- **Impact:** the two differ only on an exact tie `|stpc - stx| == |stpq - stx|` with
+  `stpc != stpq`, that is when the two steps are equidistant on opposite sides of `stx`. For a
+  valid state (negative slope at `stx` in the direction of the step) `stpq` lies on the side of
+  `stp`, so the tie needs a cubic step that extrapolates backwards by exactly the quadratic
+  step's distance. No run in the recorded reference data (SciPy's own test problems, the paper's
+  tables, the edge cases) depends on it: they all replay identically with either comparison.
+  No valid MINPACK state is known to reach it. A tie exists for an input that is not a valid
+  state (`stx = 0`, `fx = 0`, `dx = +0.25`, `stp = 1`, `fp = 0.5`, `dp = 2.75` gives
+  `stpc = 0.5`, `stpq = -0.5`), and `dcstep.rs` pins the operator with it
+  (`case_one_tie_takes_the_average`: the strict `<` returns the average 0, `<=` would return
+  0.5); that test fails if the comparison is changed to `<=`.
+- **Upstream:** not reported.
+- **Here:** `crates/minimize/src/linesearch/dcstep.rs` uses the strict `<` of the paper and the
+  Fortran. A run that hits the tie would take the averaged step here and the cubic step in
+  SciPy; the evaluation counts of such a run could differ by that one step.

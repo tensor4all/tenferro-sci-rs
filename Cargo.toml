@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/specials"]
+members = ["crates/minimize", "crates/specials"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/tensor4all/tenferro-sci-rs"
 # Exact pin: the families it provides are re-exported by `specials`.
 few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
+thiserror = "2"
 xprec = "0.2.3"
 
 # No default profile carries debug info (tensor4all-agent-rules, rules/rust/performance.md,
