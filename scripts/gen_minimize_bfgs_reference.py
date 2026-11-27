@@ -30,7 +30,15 @@ Hooks (they only observe; every number SciPy computes is unchanged):
 * ``_optimize._line_search_wolfe12`` is wrapped, so ``iters.csv`` holds the iterate, the gradient, SciPy's
   direction ``p_k``, the steps and the evaluations of every line search, and whether it failed;
 * ``_optimize.line_search_wolfe2`` is wrapped, so a run records ``wolfe2_calls``, the evaluation index
-  ``wolfe2_first_eval`` at which the fallback began, and whether it returned a step;
+  ``wolfe2_first_eval`` at which the fallback began, whether it returned a step (``wolfe2_found``) and whether it
+  did so with a ``LineSearchWarning`` (``wolfe2_warned``: ``scalar_search_wolfe2`` returns its last trial step,
+  which need not satisfy the Wolfe conditions, when its ``maxiter`` is exhausted, and
+  ``_line_search_wolfe12`` silences the warning);
+* the objective calls the line searches make are counted (``cache_hits`` = trials minus evaluations): SciPy's
+  ``ScalarFunction`` does not re-evaluate at a point equal to the previous one, so in the rounding regime
+  (steps below one ulp of x) the recorded evaluations are fewer than the trials; parity runs must have none;
+* ``y^T s`` of every accepted pair is recorded as ``_minimize_bfgs`` forms it (``ys``), with whether the update
+  was applied, and ``n_rho1000`` / ``n_ys_nonpos`` count applied updates with ``y^T s == 0`` / ``<= 0``;
 * ``DCSRCH.__call__`` is wrapped, so a failing ``wolfe1`` records its DCSRCH task (``wolfe1_fail``).
 
 Outputs (committed; regenerating them is a separate commit), all in crates/minimize/tests/data/bfgs/:
@@ -336,7 +344,8 @@ class Log:
         self.evals = []  # (x, f, g)
         self.ls = []  # one dict per _line_search_wolfe12 call
         self.callbacks = []  # (k, x, fun, n_evals)
-        self.w2 = []  # (first_eval, found)
+        self.w2 = []  # (first_eval, found, warned)
+        self.f_calls = 0  # objective calls the line searches made (trials), before ScalarFunction's cache
         self.tasks = []  # last DCSRCH task per call
 
 
@@ -357,8 +366,13 @@ def run_scipy(spec: Spec):
                    ev_start=len(log.evals), alpha=None, ev_end=None, failed=False, w2=None, w1_fail=None)
         log.ls.append(rec)
         n_w2, n_task = len(log.w2), len(log.tasks)
+
+        def f_counted(x, *aa):
+            log.f_calls += 1
+            return f(x, *aa)
+
         try:
-            ret = orig12(f, fprime, xk, pk, gfk, old_fval, old_old_fval, **kw)
+            ret = orig12(f_counted, fprime, xk, pk, gfk, old_fval, old_old_fval, **kw)
         except oo._LineSearchError:
             rec["failed"] = True
             rec["ev_end"] = len(log.evals)
@@ -375,8 +389,11 @@ def run_scipy(spec: Spec):
 
     def hooked2(*a, **k):
         first = len(log.evals)
-        ret = orig2(*a, **k)
-        log.w2.append((first, ret[0] is not None))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")  # inside _line_search_wolfe12's own "ignore": we see the warning
+            ret = orig2(*a, **k)
+        warned = any(issubclass(w.category, lsm.LineSearchWarning) for w in caught)
+        log.w2.append((first, ret[0] is not None, warned))
         return ret
 
     def hookedcall(self, *a, **k):
@@ -596,7 +613,9 @@ def generate():
             assert res.njev == res.nfev, (spec.rid, res.nfev, res.njev)
         wolfe2_calls = len(log.w2)
         first_w2 = log.w2[0][0] if log.w2 else None
-        w2_found = [found for _, found in log.w2]
+        w2_found = [found for _, found, _ in log.w2]
+        w2_warned = [warned for _, _, warned in log.w2]
+        cache_hits = log.f_calls - (res.nfev - 1)  # trials the line searches made minus evaluations SciPy's cache let through
         parity = spec.group == "finite" and wolfe2_calls == 0
         if spec.group == "fallback":
             assert wolfe2_calls > 0, f"{spec.rid}: no fallback fired"
@@ -611,9 +630,11 @@ def generate():
             assert err <= float(np.linalg.norm(res.jac)) / prob.mu * (1 + 1e-9), (spec.rid, err)
 
         # pairs as SciPy formed them, and which of them were applied to H
-        pairs, applied = [], []
+        pairs, applied, ys_list = [], [], []
         for j, rec in enumerate(log.ls):
             if rec["alpha"] is None:
+                ys_list.append(None)
+                applied.append(None)
                 break
             s = rec["alpha"] * rec["pk"]
             g_next = log.evals[rec["ev_end"] - 1][2]
@@ -626,6 +647,13 @@ def generate():
             if not stop:
                 pairs.append((s, y))
             applied.append(not stop)
+            ys_list.append(float(np.dot(y, s)))  # as _minimize_bfgs forms rhok_inv
+        applied_ys = [ys for ys, ap in zip(ys_list, applied) if ap]
+        n_rho1000 = sum(1 for t in applied_ys if t == 0.0)
+        n_ys_nonpos = sum(1 for t in applied_ys if t <= 0.0)
+        if parity:
+            assert cache_hits == 0, f"{spec.rid}: SciPy's cache skipped {cache_hits} evaluations: evaluations are not one per trial"
+            assert n_ys_nonpos == 0, f"{spec.rid}: a parity run applied an update with y^T s <= 0"
         mpH = mp_updates(n, pairs) if parity else None
         sc = scale_updates(n, pairs) if parity else None
 
@@ -635,6 +663,8 @@ def generate():
             scipy_call=clean(call), status=res.status, message=clean(res.message), nit=res.nit, nfev=res.nfev,
             njev=res.njev, wolfe2_calls=wolfe2_calls, wolfe2_first_eval=("none" if first_w2 is None else first_w2),
             wolfe2_found=("none" if not w2_found else "".join("1" if t else "0" for t in w2_found)),
+            wolfe2_warned=("none" if not w2_warned else "".join("1" if t else "0" for t in w2_warned)),
+            cache_hits=cache_hits, n_updates=len(applied_ys), n_rho1000=n_rho1000, n_ys_nonpos=n_ys_nonpos,
             wolfe1_fail=("none" if w1_fail is None else clean(w1_fail)), termination=term,
             parity=("true" if parity else "false"), final_x=vec(res.x), final_f=fl(res.fun),
             gnorm_inf=fl(gnorm), n_ls=len(log.ls), note=clean(spec.note + " | " + prob.note)))
@@ -673,7 +703,7 @@ def generate():
                 out["iters"].append(dict(
                     run=spec.rid, k=j, x=vec(rec["xk"]), f=fl(rec["fk"]), g=vec(rec["gk"]), p=vec(rec["pk"]),
                     d_exact=vec(d_exact_f), d_scale=vec(d_scale), alpha=fl(rec["alpha"]),
-                    ev_start=rec["ev_start"], ev_end=rec["ev_end"], dir_ratio_scipy=fl(r_scipy),
+                    ev_start=rec["ev_start"], ev_end=rec["ev_end"], ys=fl(ys_list[j]), applied=("none" if applied[j] is None else str(applied[j]).lower()), dir_ratio_scipy=fl(r_scipy),
                     dir_ratio_mirror=fl(r_mirror)))
             # final inverse Hessian: SciPy's vs exact
             Hs = np.array(res.hess_inv)
@@ -689,7 +719,9 @@ def generate():
                 out["iters"].append(dict(
                     run=spec.rid, k=j, x=vec(rec["xk"]), f=fl(rec["fk"]), g=vec(rec["gk"]), p=vec(rec["pk"]),
                     d_exact="none", d_scale="none", alpha=fl(rec["alpha"]), ev_start=rec["ev_start"],
-                    ev_end=rec["ev_end"], dir_ratio_scipy="none", dir_ratio_mirror="none"))
+                    ev_end=rec["ev_end"], ys=fl(ys_list[j]),
+                    applied=("none" if applied[j] is None else str(applied[j]).lower()),
+                    dir_ratio_scipy="none", dir_ratio_mirror="none"))
 
     for p in PROBLEMS.values():
         out["problems"].append(dict(
@@ -705,9 +737,10 @@ COLUMNS = dict(
     problems=["id", "n", "A", "b", "x_star", "f_star", "mu", "note"],
     runs=["id", "group", "problem", "n", "x0", "gtol", "xrtol", "c1", "c2", "maxiter", "ls_maxiter", "scipy_call",
           "status", "message", "nit", "nfev", "njev", "wolfe2_calls", "wolfe2_first_eval", "wolfe2_found",
+          "wolfe2_warned", "cache_hits", "n_updates", "n_rho1000", "n_ys_nonpos",
           "wolfe1_fail", "termination", "parity", "final_x", "final_f", "gnorm_inf", "n_ls", "note"],
     evals=["run", "i", "x", "f", "g", "x_scale", "x_ratio"],
-    iters=["run", "k", "x", "f", "g", "p", "d_exact", "d_scale", "alpha", "ev_start", "ev_end", "dir_ratio_scipy",
+    iters=["run", "k", "x", "f", "g", "p", "d_exact", "d_scale", "alpha", "ev_start", "ev_end", "ys", "applied", "dir_ratio_scipy",
            "dir_ratio_mirror"],
     hess=["run", "n", "n_updates", "h_scipy", "h_exact", "h_scale", "ratio"],
 )
@@ -771,7 +804,7 @@ def _close(a, b, scale):
 
 
 FLOAT_COLS = {"x0", "gtol", "xrtol", "c1", "c2", "final_x", "final_f", "gnorm_inf", "x", "f", "g", "x_scale", "x_ratio",
-              "p", "d_exact", "d_scale", "alpha", "dir_ratio_scipy", "dir_ratio_mirror", "h_scipy", "h_exact",
+              "p", "d_exact", "d_scale", "alpha", "ys", "dir_ratio_scipy", "dir_ratio_mirror", "h_scipy", "h_exact",
               "h_scale", "ratio", "A", "b", "x_star", "f_star", "mu"}
 # exact floats: what the problems and options are, not a computed trajectory
 EXACT_COLS = {"x0", "gtol", "xrtol", "c1", "c2", "A", "b", "x_star", "f_star", "mu"}
