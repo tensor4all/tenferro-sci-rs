@@ -402,6 +402,7 @@ pub fn start_error_name(e: &StartError) -> &'static str {
         StartError::StepBelowStpmin => "err_below_stpmin",
         StartError::StepAboveStpmax => "err_above_stpmax",
         StartError::NotDescent => "err_not_descent",
+        StartError::NonFiniteStart => "err_non_finite_start",
     }
 }
 

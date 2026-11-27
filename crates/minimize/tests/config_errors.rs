@@ -15,7 +15,8 @@ mod common;
 
 use common::*;
 use minimize::linesearch::{
-    scalar_search_wolfe1, ConfigError, MoreThuente, MoreThuenteConfig, Wolfe1Options, Wolfe1Outcome,
+    scalar_search_wolfe1, ConfigError, MoreThuente, MoreThuenteConfig, StartError, Wolfe1Options,
+    Wolfe1Outcome,
 };
 
 fn good() -> MoreThuenteConfig {
@@ -156,4 +157,68 @@ fn driver_reports_start_errors_as_outcomes() {
     assert_eq!(outcome_name(&rep.outcome), "err_not_descent");
     assert!(matches!(rep.outcome, Wolfe1Outcome::Error(_)));
     assert_eq!((rep.phi_evals, rep.dphi_evals), (0, 0));
+}
+
+#[test]
+fn non_finite_start_values() {
+    // A documented addition to SciPy: DCSRCH has no check for non-finite phi(0) or phi'(0)
+    // (NaN phi'(0) passes its `g >= 0` test and the search proceeds; LineSearches.jl throws).
+    // `MoreThuente::start` returns `StartError::NonFiniteStart` when phi0 or dphi0 is NaN or +-inf.
+    let cfg = good();
+    for (phi0, dphi0) in [
+        (f64::NAN, -1.0),
+        (f64::INFINITY, -1.0),
+        (f64::NEG_INFINITY, -1.0),
+        (1.0, f64::NAN),
+        (1.0, f64::NEG_INFINITY),
+    ] {
+        let e = MoreThuente::start(&cfg, phi0, dphi0, 1.0).unwrap_err();
+        assert!(
+            matches!(e, StartError::NonFiniteStart),
+            "phi0 = {phi0}, dphi0 = {dphi0}: {e:?}"
+        );
+    }
+}
+
+#[test]
+fn non_finite_is_checked_before_the_descent_test() {
+    // dphi0 = +inf and dphi0 = NaN also fail `dphi0 < 0`; non-finiteness wins. dphi0 = -inf is a
+    // (not finite) descent value and is NonFiniteStart, not an accepted start.
+    let cfg = good();
+    for (phi0, dphi0) in [
+        (1.0, f64::INFINITY),
+        (f64::NAN, 1.0),
+        (f64::NAN, 0.0),
+        (1.0, f64::NAN),
+    ] {
+        let e = MoreThuente::start(&cfg, phi0, dphi0, 1.0).unwrap_err();
+        assert!(
+            matches!(e, StartError::NonFiniteStart),
+            "phi0 = {phi0}, dphi0 = {dphi0}: {e:?}"
+        );
+    }
+    // finite non-descent values are still NotDescent
+    let e = MoreThuente::start(&cfg, 1.0, 1.0, 1.0).unwrap_err();
+    assert!(matches!(e, StartError::NotDescent), "{e:?}");
+}
+
+#[test]
+fn driver_reports_non_finite_start_as_an_outcome() {
+    // `Wolfe1Outcome::Error(StartError::NonFiniteStart)` with `alpha: None`, no trial evaluated.
+    let o = Wolfe1Options::default();
+    for (phi0, dphi0) in [(f64::NAN, -1.0), (f64::INFINITY, -1.0), (1.0, f64::NAN)] {
+        let rep = scalar_search_wolfe1(|a| a, |_| -1.0, Some(phi0), None, Some(dphi0), &o)
+            .expect("options ok");
+        assert!(rep.alpha.is_none());
+        assert_eq!(
+            outcome_name(&rep.outcome),
+            "err_non_finite_start",
+            "phi0 = {phi0}, dphi0 = {dphi0}"
+        );
+        assert!(matches!(
+            rep.outcome,
+            Wolfe1Outcome::Error(StartError::NonFiniteStart)
+        ));
+        assert_eq!((rep.phi_evals, rep.dphi_evals), (0, 0));
+    }
 }
