@@ -113,8 +113,8 @@ pub enum Wolfe1Outcome {
 /// let rep = scalar_search_wolfe1(|a| (a - 2.0) * (a - 2.0), |a| 2.0 * (a - 2.0),
 ///     None, None, None, &Wolfe1Options::default())?;
 /// assert_eq!(rep.phi0, 4.0);
-/// // phi(0) and phi'(0) were evaluated by the driver and are counted
-/// assert_eq!(rep.phi_evals, rep.dphi_evals);
+/// // phi(0) and phi'(0) are evaluated by the driver and counted, one call each per trial
+/// assert_eq!((rep.phi_evals, rep.dphi_evals), (2, 2));
 /// # Ok::<(), minimize::linesearch::Wolfe1Error>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]

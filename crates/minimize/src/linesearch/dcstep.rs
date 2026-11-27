@@ -157,8 +157,8 @@ pub(crate) fn dcstep<T: Real>(
             } else {
                 stpq
             };
-            // never beyond 66% of the way to sty (the bisection safeguard of §2, p. 293)
-            let cap = stp + T::from_f64(BISECT_FRACTION) * (y.a - stp);
+            // never beyond 66% of the way to sty (MINPACK's cap, §4, p. 300)
+            let cap = stp + T::from_f64(CASE3_CAP) * (y.a - stp);
             if stp > stx {
                 min(cap, stpf)
             } else {
@@ -212,9 +212,10 @@ pub(crate) fn dcstep<T: Real>(
     }
 }
 
-/// Case 3 never steps beyond this fraction of the way from stp to sty (δ = 0.66, p. 293; the
-/// same constant drives the bisection rule of `DCSRCH`).
-pub(crate) const BISECT_FRACTION: f64 = 0.66;
+/// Case 3 with a bracket never steps beyond this fraction of the way from stp to sty: the cap
+/// `stp + 0.66 (sty - stp)` of MINPACK's `dcstep` (§4, p. 300). A separate constant from the
+/// bisection rule of `DCSRCH`, which uses 0.66 for a different purpose (p. 293).
+pub(crate) const CASE3_CAP: f64 = 0.66;
 
 #[cfg(test)]
 mod tests {
