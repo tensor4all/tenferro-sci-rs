@@ -155,9 +155,9 @@ fn live_wolfe1(case: &Case) {
 /// `DCSRCH` driven directly (the paper runs, the maxiter and searched runs).
 fn live_dcsrch(case: &Case) {
     let (name, p) = (case.func.as_str(), case.p.as_slice());
-    let setup = case.setup();
+    let cfg = case.config();
     let run = drive(
-        &setup,
+        &cfg,
         |a| phi_of(name, p, a),
         |a| dphi_of(name, p, a),
         case.phi0,

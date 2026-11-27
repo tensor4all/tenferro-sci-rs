@@ -37,8 +37,7 @@ use minimize::linesearch::{MoreThuente, Step};
 const STEP_TOL: f64 = 1e-12;
 
 fn replay(case: &Case) {
-    let setup = case.setup();
-    let cfg = setup.config();
+    let cfg = case.config();
     let started = MoreThuente::start(&cfg, case.phi0, case.dphi0, case.alpha1);
 
     if case.reason.starts_with("err_") {

@@ -171,14 +171,8 @@ pub fn case_by_id(id: &str) -> Case {
 }
 
 impl Case {
-    pub fn setup(&self) -> Setup {
-        Setup {
-            ftol: self.ftol,
-            gtol: self.gtol,
-            xtol: self.xtol,
-            stpmin: self.stpmin,
-            stpmax: self.stpmax,
-        }
+    pub fn config(&self) -> MoreThuenteConfig {
+        cfg_with(self.ftol, self.gtol, self.xtol, self.stpmin, self.stpmax)
     }
 
     /// Whether the open non-finite decision (issue #38, review 9.1) applies to this run.
@@ -420,33 +414,15 @@ pub fn outcome_name(o: &Wolfe1Outcome) -> &'static str {
 // Ask/tell drivers
 // ---------------------------------------------------------------------------------------------
 
-/// The five numbers of `MoreThuenteConfig::new`, kept readable so a test can check against them.
-#[derive(Clone, Copy, Debug)]
-pub struct Setup {
-    pub ftol: f64,
-    pub gtol: f64,
-    pub xtol: f64,
-    pub stpmin: f64,
-    pub stpmax: f64,
+/// (mu, eta) with the settings of the paper's section 5 that the paper does not state and this
+/// suite assumes: `xtol = 1e-14`, `stpmin = 0`, `stpmax = 1e10`.
+pub fn cfg(mu: f64, eta: f64) -> MoreThuenteConfig {
+    cfg_with(mu, eta, 1e-14, 0.0, 1e10)
 }
 
-impl Setup {
-    /// (mu, eta) with the settings of the paper's section 5 that the paper does not state and
-    /// this suite assumes: `xtol = 1e-14`, `stpmin = 0`, `stpmax = 1e10`.
-    pub fn new(mu: f64, eta: f64) -> Self {
-        Setup {
-            ftol: mu,
-            gtol: eta,
-            xtol: 1e-14,
-            stpmin: 0.0,
-            stpmax: 1e10,
-        }
-    }
-
-    pub fn config(&self) -> MoreThuenteConfig {
-        MoreThuenteConfig::new(self.ftol, self.gtol, self.xtol, self.stpmin, self.stpmax)
-            .expect("test configuration must be valid")
-    }
+pub fn cfg_with(ftol: f64, gtol: f64, xtol: f64, stpmin: f64, stpmax: f64) -> MoreThuenteConfig {
+    MoreThuenteConfig::new(ftol, gtol, xtol, stpmin, stpmax)
+        .expect("test configuration must be valid")
 }
 
 /// How a driven search ended.
@@ -515,12 +491,12 @@ struct Checker {
 }
 
 impl Checker {
-    fn new(setup: &Setup, phi0: f64, dphi0: f64) -> Self {
+    fn new(cfg: &MoreThuenteConfig, phi0: f64, dphi0: f64) -> Self {
         Checker {
-            mu: setup.ftol,
-            eta: setup.gtol,
-            stpmin: setup.stpmin,
-            stpmax: setup.stpmax,
+            mu: cfg.ftol(),
+            eta: cfg.gtol(),
+            stpmin: cfg.stpmin(),
+            stpmax: cfg.stpmax(),
             phi0,
             dphi0,
             prev_best_phi: phi0,
@@ -589,15 +565,22 @@ impl Checker {
         match snap.bracket {
             Some((lo, hi)) if !terminal => {
                 self.widths.push(Some(hi - lo));
-                // P9d: invariant (2.1) of the bracket [best, u]. A terminating tell returns before
-                // dcstep updates the interval (while the stage may already have switched), so it
-                // is excluded. In the auxiliary stage the psi form is asserted only
-                // for mu <= eta. That restriction is empirical: the form held in every mu <= eta run
-                // probed against SciPy 1.16.3 (MT1-MT6 x 4 alpha0, example (3.1) with eta >= mu, ...)
-                // and failed, structurally and not by rounding, for eta < mu before the stage switch
+                // P9d: invariant (2.1) of the bracket [best, u]. The terminating tell is excluded
+                // (it returns before dcstep updates the interval while the stage may already have
+                // switched), and u = 0 (the start point, dcstep's U3) is allowed.
+                // Stage 2: phi(best) <= phi(u) and phi'(best)(u - best) < 0 is theorem-backed
+                // (Thm 3.2) and asserted unconditionally.
+                // Stage 1, the psi form, is an EMPIRICAL REGRESSION PIN, not a theorem, and is asserted
+                // only for mu <= eta. MINPACK's stage 1 is a hybrid: it works on psi only when
+                // f <= fx and f > ftest and updates on phi otherwise, so the paper's (2.1), stated
+                // for a pure psi search, is not a code invariant. That is why it fails when eta < mu
                 // (example (3.1) with mu = 0.25, eta = 0.05 at all four alpha0; example (3.3) with
-                // mu = 0.03, eta = 0.001 at alpha0 = 10 and 1e3: psi'(best) > 0 with u > best);
-                // checking with whichever function the update used also failed there.
+                // mu = 0.03, eta = 0.001 at alpha0 = 10 and 1e3: psi'(best) > 0 with u > best), not
+                // by rounding. Why it plausibly holds for mu <= eta (an argument, not a proof): a
+                // stage-1 trial with psi <= 0 that has not converged must have phi' < mu phi'(0),
+                // since otherwise |phi'| <= mu |phi'(0)| <= eta |phi'(0)| would mean convergence and
+                // phi' >= 0 would switch the stage; hence psi' < 0. It held in every mu <= eta run
+                // probed against SciPy 1.16.3 (MT1-MT6 x 4 alpha0, example (3.1) with eta >= mu, ...).
                 let u = if best.alpha == lo { hi } else { lo };
                 assert!(
                     best.alpha == lo || best.alpha == hi,
@@ -661,7 +644,7 @@ impl Checker {
 /// (1.1) and (1.2) with the configured (mu, eta) exactly (P1), and after every tell the invariants
 /// of `Checker` (P9-P11) and the termination claims (P12) hold.
 pub fn drive(
-    setup: &Setup,
+    cfg: &MoreThuenteConfig,
     mut phi: impl FnMut(f64) -> f64,
     mut dphi: impl FnMut(f64) -> f64,
     phi0: f64,
@@ -669,8 +652,7 @@ pub fn drive(
     alpha0: f64,
     maxiter: usize,
 ) -> Result<Run, StartError> {
-    let cfg = setup.config();
-    let (mut ls, mut step) = MoreThuente::start(&cfg, phi0, dphi0, alpha0)?;
+    let (mut ls, mut step) = MoreThuente::start(cfg, phi0, dphi0, alpha0)?;
     let start = snap(&ls);
     assert_eq!(
         start.best,
@@ -690,7 +672,7 @@ pub fn drive(
         start.bracket.is_none(),
         "nothing is bracketed right after start"
     );
-    let mut checker = Checker::new(setup, phi0, dphi0);
+    let mut checker = Checker::new(cfg, phi0, dphi0);
     let mut trace: Vec<Trial> = Vec::new();
     let mut snaps: Vec<Snap> = Vec::new();
     loop {
@@ -712,12 +694,23 @@ pub fn drive(
                 // `after_tell` above (P9a); on Converged the returned alpha satisfies (1.1) and
                 // (1.2). MINPACK returns stp *before* dcstep updates stx, so `best.alpha == alpha`
                 // does not hold in general and is not asserted.
+                if matches!(t.reason, Reason::NonFiniteStep) {
+                    // alpha/phi/dphi are the last evaluated trial (finite), bitwise
+                    let &(a, f, g) = trace.last().expect("a tell happened");
+                    assert!(
+                        t.alpha.to_bits() == a.to_bits()
+                            && t.phi.to_bits() == f.to_bits()
+                            && t.dphi.to_bits() == g.to_bits(),
+                        "NonFiniteStep: Termination is not the last trial {:?}",
+                        (a, f, g)
+                    );
+                }
                 if matches!(t.reason, Reason::Converged) {
                     assert_strong_wolfe(
                         phi0,
                         dphi0,
-                        setup.ftol,
-                        setup.gtol,
+                        cfg.ftol(),
+                        cfg.gtol(),
                         t.alpha,
                         t.phi,
                         t.dphi,
@@ -735,10 +728,10 @@ pub fn drive(
             }
             Step::Evaluate { alpha } => {
                 assert!(
-                    alpha >= setup.stpmin && alpha <= setup.stpmax,
+                    alpha >= cfg.stpmin() && alpha <= cfg.stpmax(),
                     "trial {alpha:e} outside [{:e}, {:e}] (P6a)",
-                    setup.stpmin,
-                    setup.stpmax
+                    cfg.stpmin(),
+                    cfg.stpmax()
                 );
                 if let Some(&s) = snaps.last() {
                     checker.after_tell(&trace, &s, Some(alpha));
@@ -755,7 +748,7 @@ pub fn drive(
                         dphi0,
                     });
                 }
-                step = ls.tell(&cfg, f, g);
+                step = ls.tell(cfg, f, g);
                 snaps.push(snap(&ls));
             }
         }
@@ -766,13 +759,13 @@ pub fn drive(
 /// full trial trace. Evaluates `phi(0)` and `dphi(0)` itself. Panics on a start error or if the
 /// search does not terminate within 1000 evaluations.
 pub fn run_traced(
-    setup: &Setup,
+    cfg: &MoreThuenteConfig,
     mut phi: impl FnMut(f64) -> f64,
     mut dphi: impl FnMut(f64) -> f64,
     alpha0: f64,
 ) -> (Termination, Vec<Trial>) {
     let (phi0, dphi0) = (phi(0.0), dphi(0.0));
-    let run = drive(setup, phi, dphi, phi0, dphi0, alpha0, 1000)
+    let run = drive(cfg, phi, dphi, phi0, dphi0, alpha0, 1000)
         .unwrap_or_else(|e| panic!("start error {}", start_error_name(&e)));
     match run.ended {
         Ended::Done(t) => (t, run.trace),
@@ -781,11 +774,11 @@ pub fn run_traced(
 }
 
 /// `run_traced` for a named function of `eval`.
-pub fn run_named(setup: &Setup, name: &str, p: &[f64], alpha0: f64) -> (Termination, Vec<Trial>) {
-    run_traced(
-        setup,
-        |a| phi_of(name, p, a),
-        |a| dphi_of(name, p, a),
-        alpha0,
-    )
+pub fn run_named(
+    cfg: &MoreThuenteConfig,
+    name: &str,
+    p: &[f64],
+    alpha0: f64,
+) -> (Termination, Vec<Trial>) {
+    run_traced(cfg, |a| phi_of(name, p, a), |a| dphi_of(name, p, a), alpha0)
 }

@@ -60,7 +60,7 @@ fn via_driver(case: &Case, maxiter: usize) -> Wolfe1Report {
 fn via_state_machine(case: &Case) -> Run {
     let (name, p) = (case.func.as_str(), case.p.as_slice());
     drive(
-        &case.setup(),
+        &case.config(),
         |a| phi_of(name, p, a),
         |a| dphi_of(name, p, a),
         case.phi0,
@@ -186,6 +186,13 @@ fn non_finite_step_without_non_finite_phi() {
         trace.iter().all(|t| t.1.is_finite() && t.2.is_finite()),
         "phi stayed finite"
     );
+    // Termination.alpha/phi/dphi are the last evaluated trial (finite), bitwise
+    let &(a, f, g) = trace.last().unwrap();
+    assert!(a.is_finite());
+    assert_eq!(
+        (t.alpha.to_bits(), t.phi.to_bits(), t.dphi.to_bits()),
+        (a.to_bits(), f.to_bits(), g.to_bits())
+    );
     let rep = via_driver(&case, 100);
     assert!(matches!(
         rep.outcome,
@@ -261,7 +268,7 @@ fn start_errors_are_outcomes_of_the_driver() {
     // alpha0 < stpmin through DCSRCH directly (the driver's alpha1 is 1 or smaller by its heuristic)
     let case = case_by_id("below_stpmin");
     let e = drive(
-        &case.setup(),
+        &case.config(),
         |a| phi_of("shiftq", &[5.0], a),
         |a| dphi_of("shiftq", &[5.0], a),
         case.phi0,

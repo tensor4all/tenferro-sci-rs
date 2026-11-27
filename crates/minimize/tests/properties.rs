@@ -21,15 +21,19 @@
 mod common;
 
 use common::*;
-use minimize::linesearch::{Reason, Stage};
+use minimize::linesearch::{MoreThuenteConfig, Reason, Stage};
 
 type Fun = fn(f64) -> (f64, f64);
 
-fn run_fn(setup: &Setup, f: Fun, alpha0: f64) -> (minimize::linesearch::Termination, Vec<Trial>) {
+fn run_fn(
+    setup: &MoreThuenteConfig,
+    f: Fun,
+    alpha0: f64,
+) -> (minimize::linesearch::Termination, Vec<Trial>) {
     run_traced(setup, |a| f(a).0, |a| f(a).1, alpha0)
 }
 
-fn full_run(setup: &Setup, f: Fun, alpha0: f64) -> Run {
+fn full_run(setup: &MoreThuenteConfig, f: Fun, alpha0: f64) -> Run {
     drive(
         setup,
         |a| f(a).0,
@@ -76,8 +80,8 @@ fn quad1(a: f64) -> (f64, f64) {
 }
 
 /// psi <= 0 and phi' < mu phi'(0): the "no bracket yet" trial of (2.3).
-fn extrapolating(setup: &Setup, phi0: f64, dphi0: f64, t: Trial) -> bool {
-    sufficient_decrease(phi0, dphi0, setup.ftol, t.0, t.1) && t.2 < setup.ftol * dphi0
+fn extrapolating(setup: &MoreThuenteConfig, phi0: f64, dphi0: f64, t: Trial) -> bool {
+    sufficient_decrease(phi0, dphi0, setup.ftol(), t.0, t.1) && t.2 < setup.ftol() * dphi0
 }
 
 // ---- P1, P2, P12: the paper's six functions ---------------------------------------------------
@@ -93,7 +97,7 @@ fn p2_finite_termination_on_the_test_set() {
     // `best.alpha == alpha` is NOT claimed: the converged point need not be the best point yet.
     for (name, mu, eta) in MT_SETUPS {
         for a0 in A0S {
-            let s = Setup::new(mu, eta);
+            let s = cfg(mu, eta);
             let (t, trace) = run_named(&s, name, &[], a0);
             assert!(
                 t.reason.is_converged(),
@@ -130,7 +134,7 @@ fn example_3_1_converges_inside_t_of_mu() {
     assert!((lo - 5.0 / 6.0).abs() < 1e-15 && (hi - 3.0).abs() < 1e-15);
     for eta in [0.25, 0.5] {
         for a0 in A0S {
-            let (t, _) = run_fn(&Setup::new(mu, eta), ex31, a0);
+            let (t, _) = run_fn(&cfg(mu, eta), ex31, a0);
             assert!(
                 t.reason.is_converged(),
                 "eta = {eta}, alpha0 = {a0:e}: {:?}",
@@ -151,7 +155,7 @@ fn p3_no_strong_wolfe_point_exists() {
     // impossible. Every alpha0: terminates, never Converged. On the warnings that report the best
     // point (rounding errors, xtol, stpmax) the returned alpha satisfies (1.1): MINPACK has reset
     // stp to stx, which satisfies (1.1) by invariant (2.1). 4 runs.
-    let s = Setup::new(0.25, 0.05);
+    let s = cfg(0.25, 0.05);
     let (lo, hi) = (5.0 / 6.0, 3.0);
     for a0 in A0S {
         let (t, trace) = run_fn(&s, ex31, a0);
@@ -162,7 +166,7 @@ fn p3_no_strong_wolfe_point_exists() {
             Reason::RoundingErrors | Reason::XtolSatisfied | Reason::StpMax
         ) {
             assert!(
-                sufficient_decrease(phi0, dphi0, s.ftol, t.alpha, ex31(t.alpha).0),
+                sufficient_decrease(phi0, dphi0, s.ftol(), t.alpha, ex31(t.alpha).0),
                 "alpha0 = {a0:e}: returned alpha {:e} violates (1.1) on {:?}",
                 t.alpha,
                 t.reason
@@ -172,7 +176,7 @@ fn p3_no_strong_wolfe_point_exists() {
         assert!(sufficient_decrease(
             phi0,
             dphi0,
-            s.ftol,
+            s.ftol(),
             t.best.alpha,
             t.best.phi
         ));
@@ -182,15 +186,20 @@ fn p3_no_strong_wolfe_point_exists() {
             // the linear piece has q = 0 (0/0). So the non-finite-step exit is NOT only about
             // non-finite phi. The last trial violates (1.1) but `best` satisfies it (P9a).
             assert!(matches!(t.reason, Reason::NonFiniteStep), "{:?}", t.reason);
-            let &(a, f, _) = trace.last().unwrap();
+            let &(a, f, g) = trace.last().unwrap();
+            // Termination.alpha/phi/dphi are the last evaluated trial (finite), bitwise
+            assert_eq!(
+                (t.alpha.to_bits(), t.phi.to_bits(), t.dphi.to_bits()),
+                (a.to_bits(), f.to_bits(), g.to_bits())
+            );
             assert!(
-                !sufficient_decrease(phi0, dphi0, s.ftol, a, f),
+                !sufficient_decrease(phi0, dphi0, s.ftol(), a, f),
                 "last trial {a:e} must violate (1.1)"
             );
             assert!(sufficient_decrease(
                 phi0,
                 dphi0,
-                s.ftol,
+                s.ftol(),
                 t.best.alpha,
                 t.best.phi
             ));
@@ -221,7 +230,7 @@ fn p4_eta_below_mu_converges_after_the_stage_switch() {
         (1e-3, 1e-1, true),
     ];
     for (eta, a0, premise_expected) in cases {
-        let s = Setup::new(MU33, eta);
+        let s = cfg(MU33, eta);
         let run = full_run(&s, ex33, a0);
         let (phi0, dphi0) = (ex33(0.0).0, ex33(0.0).1);
         let premise = run
@@ -270,7 +279,7 @@ fn p4_documented_non_case() {
     // promises nothing (SciPy: its bare non-finite-step WARN). Assert only that the search
     // terminates and is not Converged, and that the premise indeed never holds. 2 runs.
     for a0 in [1e1, 1e3] {
-        let s = Setup::new(MU33, 1e-3);
+        let s = cfg(MU33, 1e-3);
         let run = full_run(&s, ex33, a0);
         let (phi0, dphi0) = (ex33(0.0).0, ex33(0.0).1);
         assert!(!run
@@ -291,16 +300,14 @@ fn p5_stp_max_on_a_monotone_function() {
     // Theorem 2.2 / equation (2.3) (p. 292): phi = -a is unbounded below, so every trial has
     // psi <= 0 and phi' < mu phi'(0), the trials increase strictly, and the search ends at
     // alpha_max = 50 with psi <= 0 and phi' <= mu phi'(0). SciPy's trials: 1, 5, 21, 50. 1 run.
-    let s = Setup {
-        stpmin: 1e-8,
-        stpmax: 50.0,
-        ..Setup::new(1e-4, 0.9)
-    };
+    let s = cfg_with(1e-4, 0.9, 1e-14, 1e-8, 50.0);
     let (t, trace) = run_fn(&s, |a| (-a, -1.0), 1.0);
     assert!(matches!(t.reason, Reason::StpMax), "{:?}", t.reason);
     assert_eq!(t.alpha, 50.0);
     let (phi0, dphi0) = (0.0, -1.0);
-    assert!(sufficient_decrease(phi0, dphi0, s.ftol, t.alpha, t.phi) && t.dphi <= s.ftol * dphi0);
+    assert!(
+        sufficient_decrease(phi0, dphi0, s.ftol(), t.alpha, t.phi) && t.dphi <= s.ftol() * dphi0
+    );
     for w in trace.windows(2) {
         assert!(w[0].0 < w[1].0, "trials must increase strictly");
     }
@@ -322,23 +329,21 @@ fn p5_stp_min_on_a_steeply_rising_function() {
     // Theorem 2.2 / equation (2.4) (p. 292): phi = -a + 1e6 a^2 rises steeply; every trial has
     // psi > 0 or phi' >= mu phi'(0), the trials decrease strictly, and the search ends at
     // alpha_min = 1e-3 where (1.1) fails or phi' >= mu phi'(0). 1 run.
-    let s = Setup {
-        stpmin: 1e-3,
-        stpmax: 50.0,
-        ..Setup::new(1e-4, 0.9)
-    };
+    let s = cfg_with(1e-4, 0.9, 1e-14, 1e-3, 50.0);
     let f: Fun = |a| (-a + 1e6 * a * a, -1.0 + 2e6 * a);
     let (t, trace) = run_fn(&s, f, 1.0);
     assert!(matches!(t.reason, Reason::StpMin), "{:?}", t.reason);
     assert_eq!(t.alpha, 1e-3);
     let (phi0, dphi0) = (0.0, -1.0);
-    assert!(!sufficient_decrease(phi0, dphi0, s.ftol, t.alpha, t.phi) || t.dphi >= s.ftol * dphi0);
+    assert!(
+        !sufficient_decrease(phi0, dphi0, s.ftol(), t.alpha, t.phi) || t.dphi >= s.ftol() * dphi0
+    );
     for w in trace.windows(2) {
         assert!(w[0].0 > w[1].0, "trials must decrease strictly");
     }
     for &(a, f, g) in &trace {
         assert!(
-            !sufficient_decrease(phi0, dphi0, s.ftol, a, f) || g >= s.ftol * dphi0,
+            !sufficient_decrease(phi0, dphi0, s.ftol(), a, f) || g >= s.ftol() * dphi0,
             "(2.4) at {a:e}"
         );
     }
@@ -349,7 +354,7 @@ fn p5_stp_min_on_a_steeply_rising_function() {
 /// Eq. (2.2), delta in [1.1, 4]: while no bracket has appeared (every trial so far had psi <= 0 and
 /// phi' < mu phi'(0)), the next trial lies in [a + 1.1 (a - a_l), min(a + 4 (a - a_l), a_max)], with
 /// a_l the previous best point (0 for the first step; each such trial becomes the new best).
-fn check_extrapolation(setup: &Setup, phi0: f64, dphi0: f64, trace: &[Trial]) -> usize {
+fn check_extrapolation(setup: &MoreThuenteConfig, phi0: f64, dphi0: f64, trace: &[Trial]) -> usize {
     let mut al = 0.0;
     let mut checked = 0;
     for w in trace.windows(2) {
@@ -358,7 +363,7 @@ fn check_extrapolation(setup: &Setup, phi0: f64, dphi0: f64, trace: &[Trial]) ->
             break;
         }
         let lo = aj + 1.1 * (aj - al);
-        let hi = (aj + 4.0 * (aj - al)).min(setup.stpmax);
+        let hi = (aj + 4.0 * (aj - al)).min(setup.stpmax());
         assert!(
             next >= lo && next <= hi,
             "(2.2): {next:e} outside [{lo:e}, {hi:e}] after {aj:e} (a_l = {al:e})"
@@ -372,15 +377,11 @@ fn check_extrapolation(setup: &Setup, phi0: f64, dphi0: f64, trace: &[Trial]) ->
 #[test]
 fn p6b_extrapolation_bounds() {
     // 2 runs: phi = -a (alpha_max = 50), and MT1 from alpha0 = 1e-3 with the paper's iterates.
-    let s = Setup {
-        stpmin: 1e-8,
-        stpmax: 50.0,
-        ..Setup::new(1e-4, 0.9)
-    };
+    let s = cfg_with(1e-4, 0.9, 1e-14, 1e-8, 50.0);
     let (_, trace) = run_fn(&s, |a| (-a, -1.0), 1.0);
     assert_eq!(check_extrapolation(&s, 0.0, -1.0, &trace), 3);
 
-    let s = Setup::new(1e-3, 1e-1);
+    let s = cfg(1e-3, 1e-1);
     let (t, trace) = run_named(&s, "mt1", &[], 1e-3);
     let (phi0, dphi0) = eval("mt1", &[], 0.0);
     assert!(check_extrapolation(&s, phi0, dphi0, &trace) >= 4);
@@ -411,7 +412,7 @@ fn p6c_case_1_bound() {
         (quad1, 1e-4, 0.9, 10.0),
     ];
     for (f, mu, eta, a0) in cases {
-        let s = Setup::new(mu, eta);
+        let s = cfg(mu, eta);
         let (_, trace) = run_fn(&s, f, a0);
         let (phi0, dphi0) = f(0.0);
         let gtest = mu * dphi0;
@@ -420,7 +421,7 @@ fn p6c_case_1_bound() {
         for w in trace.windows(2) {
             let (a, fa, _) = w[0];
             let psi = fa - phi0 - a * gtest;
-            if psi > best_psi && w[1].0 != s.stpmin {
+            if psi > best_psi && w[1].0 != s.stpmin() {
                 assert!(
                     (w[1].0 - best).abs() <= 7.0 / 12.0 * (a - best).abs(),
                     "Case 1 bound: a_t = {a:e}, a_l = {best:e}, next = {:e}",
@@ -451,7 +452,7 @@ fn p7_quadratic_is_solved_by_the_second_trial() {
     // (with eta = 0.9 alpha0 = 1.5 is accepted at once). 2 runs. Also the property later BFGS
     // tests rely on: an exact line search on quadratics.
     for a0 in [3.0, 1.5] {
-        let (t, trace) = run_fn(&Setup::new(1e-4, 1e-3), quad1, a0);
+        let (t, trace) = run_fn(&cfg(1e-4, 1e-3), quad1, a0);
         assert!(t.reason.is_converged(), "alpha0 = {a0}");
         assert_eq!(t.evaluations, 2, "alpha0 = {a0}");
         assert!(
@@ -490,7 +491,7 @@ fn p8_scale_invariance_is_exact() {
     funcs.push(("ex33".into(), ex33 as Fun, MU33, 0.01));
     let a0 = 0.1;
     for (name, f, mu, eta) in funcs {
-        let s = Setup::new(mu, eta);
+        let s = cfg(mu, eta);
         let (t0, tr0) = run_fn(&s, f, a0);
         for k in [10_i32, -10] {
             let c = 2f64.powi(k);
@@ -508,10 +509,7 @@ fn p8_scale_invariance_is_exact() {
                 "{name}, k = {k}"
             );
             // (b) argument scaled
-            let sb = Setup {
-                stpmax: s.stpmax / c,
-                ..s
-            };
+            let sb = cfg_with(s.ftol(), s.gtol(), s.xtol(), s.stpmin(), s.stpmax() / c);
             let (t2, tr2) = run_traced(&sb, |a| f(c * a).0, |a| c * f(c * a).1, a0 / c);
             let scaled: Vec<f64> = tr0.iter().map(|t| t.0 / c).collect();
             let alphas2: Vec<f64> = tr2.iter().map(|t| t.0).collect();
@@ -538,7 +536,7 @@ fn p11_bracketing_terminates_quickly_on_the_hard_problems() {
     // the relative width of the xtol test. MT2 and MT3, the paper's hard problems (p. 305): 8 runs.
     for (name, mu, eta) in [("mt2", 1e-1, 1e-1), ("mt3", 1e-1, 1e-1)] {
         for a0 in A0S {
-            let s = Setup::new(mu, eta);
+            let s = cfg(mu, eta);
             let f: Fun = if name == "mt2" {
                 |a| eval("mt2", &[], a)
             } else {
@@ -548,7 +546,7 @@ fn p11_bracketing_terminates_quickly_on_the_hard_problems() {
             let bracketed: Vec<(f64, f64)> = run.snaps.iter().filter_map(|s| s.bracket).collect();
             if let (Some(&(l0, h0)), Some(&(_, hl))) = (bracketed.first(), bracketed.last()) {
                 let w_first = h0 - l0;
-                let k = ((w_first / (s.xtol * hl)).ln() / (1.0 / 0.66f64).ln())
+                let k = ((w_first / (s.xtol() * hl)).ln() / (1.0 / 0.66f64).ln())
                     .ceil()
                     .max(0.0) as usize;
                 let bound = 2 * k + 4;
@@ -568,7 +566,7 @@ fn p9_best_never_worsens_and_states_start_clean() {
     // start, best() = (0, phi(0), phi'(0)), stage() = Auxiliary, bracket() = None (asserted in
     // `drive`), and on a run that converges at the first trial `best` is still the start point
     // (MINPACK returns before dcstep updates stx): MT1 from alpha0 = 10 (Table I: m = 1). 1 run.
-    let s = Setup::new(1e-3, 1e-1);
+    let s = cfg(1e-3, 1e-1);
     let run = full_run(&s, |a| eval("mt1", &[], a), 10.0);
     let Ended::Done(t) = run.ended else { panic!() };
     assert!(t.reason.is_converged());

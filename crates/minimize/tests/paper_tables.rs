@@ -15,11 +15,13 @@
 //! 24 rows were checked against SciPy 1.16.3's DCSRCH when the data was generated: 23 agree on
 //! all of m, alpha_m and phi'(alpha_m); the one difference is Table II, alpha0 = 1e-3, below.
 //!
-//! The Table values are transcribed once, in `TABLES`, from the OCR text extraction `mt.txt`; they
-//! were not checked against a rendered page (the PDF at hand was not a PDF). OCR loses minus signs and
-//! decimal points, so a slip is possible; the check is the agreement with SciPy: 23 of the 24 rows
-//! match SciPy on m, alpha_m and phi'(alpha_m) including signs. The Table II row at alpha0 = 1e-3 is the
-//! one row where an OCR slip cannot be told apart from a real difference.
+//! The Table values are transcribed once, in `TABLES`. They were first read from the OCR text
+//! extraction `mt.txt` and the two differences from SciPy below were then checked against the
+//! rendered PDF pages: both are genuine differences, not OCR slips. 23 of the 24 rows match SciPy on m,
+//! alpha_m and phi'(alpha_m) including signs; the other is Table II, alpha0 = 1e-3, whose printed
+//! phi' = 7.1e-9 (p. 304) differs from SciPy's 3.8e-9. The second difference is in the text: p. 303
+//! says 8 evaluations for function 1 with mu = 0.1, eta = 0.001, alpha0 = 1e-3, SciPy needs 9
+//! (`function_1_with_eta_0_001`).
 
 mod common;
 
@@ -74,7 +76,7 @@ fn dphi_tol(printed: f64) -> f64 {
 #[test]
 fn tables_i_to_vi() {
     for t in &TABLES {
-        let setup = Setup::new(t.mu, t.eta);
+        let setup = cfg(t.mu, t.eta);
         for (a0, &(m, alpha_p, decimals, dphi_p)) in A0S.iter().zip(&t.rows) {
             let ctx = format!("{} (mt.txt line {}), alpha0 = {a0:e}", t.name, t.line);
             let (term, trace) = run_named(&setup, t.func, &[], *a0);
@@ -102,13 +104,13 @@ fn tables_i_to_vi() {
             );
             if t.func == "mt2" && *a0 == 1e-3 {
                 // Table II, alpha0 = 1e-3 prints phi'(alpha_m) = 7.1e-9; SciPy 1.16.3 (and this
-                // code, which replays SciPy) gives 3.8e-9. The paper's table is not reproduced
-                // there. The set of acceptable alpha for this function is an interval of length
+                // code, which replays SciPy) gives 3.8e-9. The printed value is genuine
+                // (checked on the rendered page, p. 304), not an OCR slip, and is not reproduced there. The set of acceptable alpha for this function is an interval of length
                 // about 2.5e-9 around 1.596 (the paper, p. 305, "approximate length 2.5 10^-9"),
                 // across which phi' changes by about 5e-8, so a last interpolation step that
                 // differs in the last digits lands at a different phi'; both values satisfy (1.2)
                 // by a wide margin (eta |phi'(0)| is about 5e-8). The cause of the difference
-                // (SciPy's MINPACK-2 vs the authors' code, or the printed value) is not known.
+                // (SciPy's MINPACK-2 vs the authors' code) is not known.
                 // Asserted instead: the robust claim (|phi'| <= eta |phi'(0)|, sign, order of magnitude).
                 let dphi0 = dphi_of(t.func, &[], 0.0);
                 assert!(term.dphi.abs() <= t.eta * dphi0.abs(), "{ctx}: (1.2)");
@@ -142,7 +144,7 @@ fn table_iv_alpha_is_a_half_unit_tie() {
     // Table IV, alpha0 = 1e-3 prints alpha_m = 0.08, but the iterates are 0.005, 0.021, 0.085 (the
     // extrapolation sequence quoted on p. 304, mt.txt line 1143) and the 4th evaluation is accepted at 0.085:
     // exactly half a unit of the printed digit. The paper rounded 0.085 down; `alpha_tol` allows the tie.
-    let (term, trace) = run_named(&Setup::new(1e-3, 1e-3), "mt4", &[], 1e-3);
+    let (term, trace) = run_named(&cfg(1e-3, 1e-3), "mt4", &[], 1e-3);
     assert_eq!(term.evaluations, 4);
     assert!((term.alpha - 0.085).abs() < 1e-12, "{}", term.alpha);
     assert!((trace[2].0 - 0.021).abs() < 5e-4);
@@ -157,7 +159,7 @@ fn function_1_with_mu_eta_equal_to_0_1() {
     // the algorithm from the other two starting points", i.e. Table I's m = 6 and 3, alpha_m = 1.4.
     // SciPy: alpha_m = 1.6496 (m = 3) and 1.6278 (m = 7), within the printed one decimal
     // (|alpha - 1.6| < 0.05).
-    let s = Setup::new(0.1, 0.1);
+    let s = cfg(0.1, 0.1);
     for a0 in [10.0, 1e3] {
         let (t, _) = run_named(&s, "mt1", &[], a0);
         assert!(t.reason.is_converged());
@@ -188,7 +190,7 @@ fn function_1_with_eta_0_001() {
     // alpha0 = 10^3. The number ... for alpha0 = 10^-3 and 10^-1 is, respectively, 8 and 4."
     // alpha* = sqrt(2) = 1.4142 (the minimizer of (5.1) with beta = 2).
     // mu = 0.1 > eta = 0.001: the case of Theorem 3.3 (the search switches to phi, stage 2).
-    let s = Setup::new(0.1, 1e-3);
+    let s = cfg(0.1, 1e-3);
     for (a0, m) in [(1e-1, 4), (1e1, 6), (1e3, 10)] {
         let (t, _) = run_named(&s, "mt1", &[], a0);
         assert!(t.reason.is_converged(), "alpha0 = {a0:e}");
@@ -199,7 +201,7 @@ fn function_1_with_eta_0_001() {
             t.alpha
         );
     }
-    // alpha0 = 1e-3: the paper counts 8; SciPy 1.16.3 gives 9. The difference of one evaluation is
+    // alpha0 = 1e-3: the paper counts 8 (p. 303, checked on the rendered page); SciPy 1.16.3 gives 9. The difference of one evaluation is
     // unexplained (the authors' code vs SciPy's MINPACK-2 port); the port must give SciPy's 9
     // (also checked by scipy_replay.rs), so that is what is asserted, and the paper's 8 is
     // recorded here as the documented difference.
@@ -214,7 +216,7 @@ fn function_6_with_mu_0_001_and_eta_0_1() {
     // p. 306 (mt.txt lines 1204-1207): "the number of function evaluations needed to obtain an
     // acceptable alpha from the starting points alpha0 = 10^i for i = -3, -1, 1, and 3 would be,
     // respectively, 2, 1, 3, and 4" (function 6 = Figure 8, mu = 0.001, eta = 0.1).
-    let s = Setup::new(1e-3, 1e-1);
+    let s = cfg(1e-3, 1e-1);
     for (a0, m) in [(1e-3, 2), (1e-1, 1), (1e1, 3), (1e3, 4)] {
         let (t, _) = run_named(&s, "mt6", &[], a0);
         assert!(t.reason.is_converged(), "alpha0 = {a0:e}");
@@ -229,7 +231,7 @@ fn function_2_is_unchanged_for_any_mu_below_eta() {
     // SciPy 1.16.3 reproduces the counts and steps (1.596) for both.
     let ms = [12, 8, 8, 11];
     for mu in [1e-2, 1e-3] {
-        let s = Setup::new(mu, 1e-1);
+        let s = cfg(mu, 1e-1);
         for (a0, m) in A0S.iter().zip(ms) {
             let (t, _) = run_named(&s, "mt2", &[], *a0);
             assert!(t.reason.is_converged(), "mu = {mu:e}, alpha0 = {a0:e}");

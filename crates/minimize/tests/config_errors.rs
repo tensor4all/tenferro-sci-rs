@@ -222,3 +222,58 @@ fn driver_reports_non_finite_start_as_an_outcome() {
         assert_eq!((rep.phi_evals, rep.dphi_evals), (0, 0));
     }
 }
+
+#[test]
+fn non_finite_config_values_are_rejected() {
+    // A documented addition to SciPy (whose DCSRCH compares NaN as "not negative" and goes on):
+    // any of ftol, gtol, xtol, stpmin, stpmax that is NaN or +-inf is `ConfigError::NonFinite`,
+    // except stpmax = +inf, which means "no upper bound" and is allowed.
+    let e = MoreThuenteConfig::new(f64::NAN, 0.9, 1e-14, 1e-8, 50.0).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "ftol NaN: {e:?}");
+    let e = MoreThuenteConfig::new(1e-4, f64::INFINITY, 1e-14, 1e-8, 50.0).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "gtol +inf: {e:?}");
+    let e = MoreThuenteConfig::new(1e-4, 0.9, f64::NAN, 1e-8, 50.0).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "xtol NaN: {e:?}");
+    let e = MoreThuenteConfig::new(1e-4, 0.9, 1e-14, f64::NEG_INFINITY, 50.0).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "stpmin -inf: {e:?}");
+    let e = MoreThuenteConfig::new(1e-4, 0.9, 1e-14, 1e-8, f64::NAN).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "stpmax NaN: {e:?}");
+}
+
+#[test]
+fn stpmax_infinity_is_allowed_and_runs() {
+    // stpmax = +inf is accepted, and a search with it converges: MT1 (Table I's mu, eta) from
+    // alpha0 = 1e-1 (Table I: 3 evaluations, alpha_m = 1.4414).
+    let c = cfg_with(1e-3, 1e-1, 1e-14, 0.0, f64::INFINITY);
+    let (t, trace) = run_named(&c, "mt1", &[], 1e-1);
+    assert!(t.reason.is_converged(), "{:?}", t.reason);
+    assert_eq!(t.evaluations, 3);
+    assert_eq!(trace.len(), 3);
+    assert!((t.alpha - 1.4414).abs() < 1e-3, "{}", t.alpha);
+}
+
+#[test]
+fn non_finite_alpha0_is_a_start_error_before_the_bounds() {
+    // StartError::NonFiniteStart also covers alpha0 = NaN or +-inf, checked before the bound and
+    // descent checks: NaN is NonFiniteStart, not a bound error (every comparison with NaN is false,
+    // so a bound check could not report it); +inf with a finite stpmax is NonFiniteStart, not
+    // StepAboveStpmax; -inf is NonFiniteStart, not StepBelowStpmin.
+    let cfg = good();
+    for a0 in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let e = MoreThuente::start(&cfg, 1.0, -1.0, a0).unwrap_err();
+        assert!(
+            matches!(e, StartError::NonFiniteStart),
+            "alpha0 = {a0}: {e:?}"
+        );
+        // ... and also before the descent test
+        let e = MoreThuente::start(&cfg, 1.0, 1.0, a0).unwrap_err();
+        assert!(
+            matches!(e, StartError::NonFiniteStart),
+            "alpha0 = {a0}, dphi0 = 1: {e:?}"
+        );
+    }
+    // alpha0 = +inf with stpmax = +inf: inside [stpmin, stpmax] but still not a usable step
+    let unbounded = cfg_with(1e-4, 0.9, 1e-14, 0.0, f64::INFINITY);
+    let e = MoreThuente::start(&unbounded, 1.0, -1.0, f64::INFINITY).unwrap_err();
+    assert!(matches!(e, StartError::NonFiniteStart), "{e:?}");
+}
