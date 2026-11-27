@@ -6,8 +6,6 @@
 //! every helper here (see [`min`], [`max`], [`clip`]); `f64::clamp` is not used anywhere because
 //! it panics on NaN bounds or `min > max`.
 
-#![allow(dead_code)] // stub commit; removed when the algorithm lands
-
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 

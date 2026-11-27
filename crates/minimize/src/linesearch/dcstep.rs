@@ -52,7 +52,8 @@ pub(crate) struct DcStep<T> {
     pub stp: T,
     /// Whether a minimizer is now bracketed.
     pub brackt: bool,
-    /// The branch taken.
+    /// The branch taken (read by the unit tests).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub case: Case,
 }
 
