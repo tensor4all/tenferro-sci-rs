@@ -6,7 +6,8 @@
 //!
 //! - Case 1 takes the cubic step on a strict `<` (`|stpc - stx| < |stpq - stx|`), as the paper
 //!   (p. 299), the MINPACK Fortran and SciPy's C copy in `__lbfgsb.c` do; `_dcsrch.py` has `<=`.
-//!   The two differ only on an exact tie with `stpc != stpq` (docs/upstream-issues.md).
+//!   The two differ only on an exact tie with `stpc != stpq` (docs/upstream-issues.md); the unit
+//!   test `case_one_tie_takes_the_average` pins the operator with such a tie.
 //! - Case 3 follows the MINPACK code (the farther step, the bound when the cubic is unsuitable,
 //!   the clip into `[stpmin, stpmax]`), not the paper's text, which says "closest" (§4, p. 300);
 //!   the paper's tables were produced by the code (p. 304).
@@ -64,6 +65,25 @@ fn theta_s<T: Real>(a: Pt<T>, b: Pt<T>) -> (T, T) {
     (theta, max(max(theta.abs(), a.g.abs()), b.g.abs()))
 }
 
+/// The cubic step `stpc` (minimizer of the cubic interpolant) and the quadratic step `stpq` of
+/// Case 1 (p. 299), shared by [`dcstep`] and its unit tests.
+pub(crate) fn case1_steps<T: Real>(x: Pt<T>, t: Pt<T>) -> (T, T) {
+    let two = T::from_f64(2.0);
+    let (stx, fx, dx) = (x.a, x.f, x.g);
+    let (stp, fp, dp) = (t.a, t.f, t.g);
+    let (theta, s) = theta_s(x, t);
+    let mut gamma = s * ((theta / s) * (theta / s) - (dx / s) * (dp / s)).sqrt();
+    if stp < stx {
+        gamma = -gamma;
+    }
+    let p = (gamma - dx) + theta;
+    let q = ((gamma - dx) + gamma) + dp;
+    let r = p / q;
+    let stpc = stx + r * (stp - stx); // minimizer of the cubic interpolant (p. 299)
+    let stpq = stx + ((dx / ((fx - fp) / (stp - stx) + dx)) / two) * (stp - stx);
+    (stpc, stpq)
+}
+
 /// One safeguarded step and the interval update (§4, p. 299–300).
 ///
 /// `x` is the best point (least function value), `y` the other endpoint of the interval, `t` the
@@ -89,17 +109,9 @@ pub(crate) fn dcstep<T: Real>(
         // to stx than the quadratic step, the cubic step is taken, otherwise the average of the
         // two. Both lie within 2/3 and 1/2 of |stp - stx| of stx, so the result is within 7/12
         // (p. 299), which implements the safeguard (2.5).
-        let (theta, s) = theta_s(x, t);
-        let mut gamma = s * ((theta / s) * (theta / s) - (dx / s) * (dp / s)).sqrt();
-        if stp < stx {
-            gamma = -gamma;
-        }
-        let p = (gamma - dx) + theta;
-        let q = ((gamma - dx) + gamma) + dp;
-        let r = p / q;
-        let stpc = stx + r * (stp - stx); // minimizer of the cubic interpolant (p. 299)
-        let stpq = stx + ((dx / ((fx - fp) / (stp - stx) + dx)) / two) * (stp - stx);
-        // strict `<`: the paper, MINPACK and the C copy (not `<=` of _dcsrch.py)
+        let (stpc, stpq) = case1_steps(x, t);
+        // strict `<`: the paper, MINPACK and the C copy (not `<=` of _dcsrch.py); pinned by the
+        // unit test `case_one_tie_takes_the_average`
         let stpf = if (stpc - stx).abs() < (stpq - stx).abs() {
             stpc
         } else {
@@ -354,6 +366,56 @@ mod tests {
         let aq = quad_min(x, 2.0, 0.1);
         assert!(ac.abs() >= aq.abs(), "test setup: {ac} vs {aq}");
         assert!(close(run(x, x, t, false).stp, 0.5 * (ac + aq), 1e-12));
+    }
+
+    #[test]
+    fn case_one_tie_takes_the_average() {
+        // Pins the strict `<` of Case 1 (paper p. 299, MINPACK dcstep.f:120, __lbfgsb.c:3626;
+        // _dcsrch.py has `<=`). On an exact tie |stpc - stx| == |stpq - stx| with stpc != stpq the
+        // strict test takes the AVERAGE of the two steps, `<=` would take stpc.
+        //
+        // Found by this deterministic search (3267 evaluations, exactly one hit): stx = 0, fx = 0,
+        // stp = 1, fp in {0.5, 1, 2}, dx and dp in {-4, -3.75, ..., 4}. The tie needs the cubic and
+        // the quadratic step on opposite sides of stx, which no valid MINPACK state produces (it
+        // needs dx < 0 in the direction of the step; here dx = +0.25), so this pins the operator,
+        // not a reachable trajectory.
+        let mut hits = Vec::new();
+        for fp in [0.5, 1.0, 2.0] {
+            for i in -16..=16 {
+                for j in -16..=16 {
+                    let (dx, dp) = (f64::from(i) / 4.0, f64::from(j) / 4.0);
+                    let (x, t) = (pt(0.0, 0.0, dx), pt(1.0, fp, dp));
+                    let (stpc, stpq) = case1_steps(x, t);
+                    if stpc.is_finite()
+                        && stpq.is_finite()
+                        && (stpc - x.a).abs() == (stpq - x.a).abs()
+                        && stpc != stpq
+                    {
+                        hits.push((x, t, stpc, stpq));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            hits.len(),
+            1,
+            "the search grid has exactly one tie: {hits:?}"
+        );
+        let (x, t, stpc, stpq) = hits[0];
+        // the input found: fp = 0.5, dx = 0.25, dp = 2.75; stpc = 0.5, stpq = -0.5, both at distance 0.5
+        assert_eq!((t.f, x.g, t.g), (0.5, 0.25, 2.75));
+        assert_eq!((stpc, stpq), (0.5, -0.5));
+        assert_eq!((stpc - x.a).abs(), (stpq - x.a).abs()); // the tie holds
+        let d = dcstep(x, x, t, false, -1e3, 1e3);
+        assert_eq!(d.case, Case::HigherValue);
+        let average = stpc + (stpq - stpc) / 2.0;
+        assert_eq!(
+            d.stp.to_bits(),
+            average.to_bits(),
+            "step {} is not the average",
+            d.stp
+        );
+        assert_ne!(d.stp.to_bits(), stpc.to_bits(), "`<=` would return stpc");
     }
 
     #[test]

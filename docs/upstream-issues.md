@@ -697,6 +697,11 @@ The `scipy` column of the reference files is SciPy's value, and the parity compa
   `stp`, so the tie needs a cubic step that extrapolates backwards by exactly the quadratic
   step's distance. No run in the recorded reference data (SciPy's own test problems, the paper's
   tables, the edge cases) depends on it: they all replay identically with either comparison.
+  No valid MINPACK state is known to reach it. A tie exists for an input that is not a valid
+  state (`stx = 0`, `fx = 0`, `dx = +0.25`, `stp = 1`, `fp = 0.5`, `dp = 2.75` gives
+  `stpc = 0.5`, `stpq = -0.5`), and `dcstep.rs` pins the operator with it
+  (`case_one_tie_takes_the_average`: the strict `<` returns the average 0, `<=` would return
+  0.5); that test fails if the comparison is changed to `<=`.
 - **Upstream:** not reported.
 - **Here:** `crates/minimize/src/linesearch/dcstep.rs` uses the strict `<` of the paper and the
   Fortran. A run that hits the tie would take the averaged step here and the cubic step in
