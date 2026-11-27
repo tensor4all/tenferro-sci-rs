@@ -9,3 +9,6 @@ license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 keywords = ["optimization", "line-search", "wolfe", "scipy", "math"]
 categories = ["mathematics", "science"]
 publish = false
+
+[dependencies]
+thiserror.workspace = true
