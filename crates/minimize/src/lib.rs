@@ -43,8 +43,10 @@
 //! # Ok::<(), minimize::linesearch::Wolfe1Error>(())
 //! ```
 
+pub mod lbfgs;
 pub mod linesearch;
 mod real;
 pub mod vector;
 
+pub use lbfgs::minimize;
 pub use vector::Vector;
