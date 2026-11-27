@@ -25,9 +25,10 @@
 //! prose ("closest"), in Case 3 (the farther step, the bound fallback and the [1.1, 4] clamp, whose
 //! tables the code produced) and in the stage switch (`phi' >= 0`).
 //!
-//! Not replayed: the runs of group `nonfinite` (inf / NaN phi), because the maintainer's decision on
-//! non-finite values is open (issue #38, review section 9.1). `termination.rs` covers them with the
-//! claims every option shares.
+//! Not replayed: the runs of group `nonfinite` (inf / NaN phi). `minimize` stops on a non-finite phi
+//! or phi' with `Reason::NonFiniteValue` (option (b), decided on #38), where SciPy keeps going or
+//! warns about the step; SciPy's recorded behaviour is the known difference pinned in
+//! `nonfinite.rs`. On finite inputs the trajectory is SciPy's, which is what is replayed here.
 
 mod common;
 

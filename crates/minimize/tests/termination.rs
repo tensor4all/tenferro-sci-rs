@@ -1,6 +1,6 @@
 //! One pinned case per termination outcome of `minimize::linesearch`: every `Reason`, the driver's
 //! `MaxIter`, the driver's start-error outcomes, the priority of CONVERGENCE over the warnings, and
-//! non-finite values.
+//! priority of CONVERGENCE over the warnings.
 //!
 //! Validates: the task outcomes of `DCSRCH` in `scipy/optimize/_dcsrch.py` and the driver's
 //! `maxiter` counting and `isfinite(stp)` check in `_linesearch.py` (SciPy v1.16.3, commit
@@ -9,12 +9,8 @@
 //! here are SciPy's (the STPMIN / XTOL / ROUNDING ERRORS runs were found by the generator's small
 //! deterministic search and are recorded, not hand-built).
 //!
-//! Non-finite phi: the maintainer's decision is still pending (issue #38, review section 9.1). The
-//! tests assert only what every option shares: no panic, the result is not converged,
-//! evaluations <= maxiter. SciPy's actual behaviour is recorded in the data and checked as data:
-//! +inf beyond 0.5 gives a bare WARN after 1 trial, NaN beyond 0.5 burns all 100 iterations
-//! (`maxiter`), NaN phi' only gives a bare WARN after 2 trials. OPEN QUESTION: whether the port
-//! detects non-finite phi itself (a deviation that changes counts on those paths only).
+//! Non-finite phi or phi' ends the search with `Reason::NonFiniteValue` (option (b), decided on
+//! #38); that contract, and SciPy's different recorded behaviour, are in `nonfinite.rs`.
 
 mod common;
 
@@ -290,57 +286,4 @@ fn convergence_has_priority_over_the_stpmax_warning() {
     let (t, _) = done(via_state_machine(&case));
     assert!(matches!(t.reason, Reason::Converged), "{:?}", t.reason);
     assert_eq!((t.evaluations, t.alpha), (1, 4.0));
-}
-
-// ---- non-finite values: OPEN QUESTION (see the module comment) --------------------------------
-
-#[test]
-fn non_finite_values_terminate_and_do_not_converge() {
-    // What every option shares: no panic, not converged, evaluations <= maxiter (100).
-    for id in ["inf_half", "nan_half", "nan_dphi_only"] {
-        let case = case_by_id(id);
-        assert!(case.is_nonfinite_group());
-        let rep = via_driver(&case, 100);
-        assert!(
-            !matches!(rep.outcome, Wolfe1Outcome::Converged),
-            "{id}: {:?}",
-            rep.outcome
-        );
-        assert!(
-            rep.alpha.is_none(),
-            "{id}: a non-converged run returns no step"
-        );
-        assert!(
-            rep.phi_evals <= 100 && rep.dphi_evals <= 100,
-            "{id}: counts exceed maxiter"
-        );
-
-        // and straight through the state machine, with maxiter = 100 (phi0, dphi0 given)
-        let run = via_state_machine(&Case {
-            kind: "dcsrch".into(),
-            ..case.clone()
-        });
-        match run.ended {
-            Ended::Done(t) => {
-                assert!(!t.reason.is_converged(), "{id}: {:?}", t.reason);
-                assert!(t.evaluations <= 100, "{id}");
-            }
-            Ended::MaxIter => assert!(run.trace.len() <= 100, "{id}"),
-        }
-    }
-}
-
-#[test]
-fn scipys_non_finite_behaviour_is_recorded() {
-    // SciPy 1.16.3 (the recorded data, not a requirement on the port): OPEN QUESTION whether the
-    // port follows it. `_dcsrch.py` detects non-finite *steps* only, never non-finite phi.
-    let inf = case_by_id("inf_half"); // dcstep gives inf/inf = NaN: bare WARN
-    assert_eq!((inf.reason.as_str(), inf.n_trials), ("nonfinite_step", 1));
-    let nan = case_by_id("nan_half"); // every comparison false: stx moves onto the NaN point, the
-    assert_eq!((nan.reason.as_str(), nan.n_trials), ("maxiter", 100)); // search burns all 100 iterations
-    let nan_dphi = case_by_id("nan_dphi_only");
-    assert_eq!(
-        (nan_dphi.reason.as_str(), nan_dphi.n_trials),
-        ("nonfinite_step", 2)
-    );
 }

@@ -175,7 +175,8 @@ impl Case {
         cfg_with(self.ftol, self.gtol, self.xtol, self.stpmin, self.stpmax)
     }
 
-    /// Whether the open non-finite decision (issue #38, review 9.1) applies to this run.
+    /// Whether this run has non-finite values, where `minimize` departs from SciPy by design
+    /// (option (b), decided on #38; see `nonfinite.rs`).
     pub fn is_nonfinite_group(&self) -> bool {
         self.group == "nonfinite"
     }
@@ -474,8 +475,8 @@ pub struct Run {
 }
 
 /// Invariants every run of the suite must satisfy after every `tell`, checked by `drive`
-/// (P9, P10, P11 of `properties.rs`; they are skipped once a trial value is not finite, because
-/// the handling of non-finite phi is an open decision, issue #38 review 9.1).
+/// (P9, P10, P11 of `properties.rs`; they are skipped once a trial value is not finite: the search
+/// stops there with `Reason::NonFiniteValue`, option (b) of #38, pinned in `nonfinite.rs`).
 ///
 /// Sources (Moré & Thuente, ACM TOMS 20(3), 1994): invariant (2.1) and Theorem 2.1 (p. 290),
 /// Theorem 3.2 for the second stage (p. 297), the stage switch (p. 297-298), the 0.66 interval

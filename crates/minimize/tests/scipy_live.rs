@@ -17,8 +17,9 @@
 //! with the closed run; `closed_runs_agree_with_scipy_runs` shows the closed and numpy runs agree,
 //! and lists any difference with its reason (divergences.csv).
 //!
-//! Non-finite phi (group `nonfinite`) is not compared here: the maintainer's decision is open
-//! (issue #38, review 9.1); see `termination.rs`.
+//! Non-finite phi (group `nonfinite`) is not compared here: `minimize` stops on it with
+//! `Reason::NonFiniteValue` (option (b), decided on #38), a known difference from SciPy that
+//! `nonfinite.rs` pins.
 
 mod common;
 
