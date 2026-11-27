@@ -33,7 +33,7 @@ fn via_driver(case: &Case, maxiter: usize) -> Wolfe1Report {
     o.amax = case.stpmax;
     o.xtol = case.xtol;
     o.maxiter = maxiter;
-    scalar_search_wolfe1(
+    let rep = scalar_search_wolfe1(
         |a| phi_of(name, p, a),
         |a| dphi_of(name, p, a),
         case.phi0_given.then(|| phi_of(name, p, 0.0)),
@@ -41,7 +41,19 @@ fn via_driver(case: &Case, maxiter: usize) -> Wolfe1Report {
         case.dphi0_given.then(|| dphi_of(name, p, 0.0)),
         &o,
     )
-    .expect("valid options")
+    .expect("valid options");
+    if !case.is_nonfinite_group() {
+        // P12 (Thm 2.1, invariant (2.1), p. 290): `best` satisfies (1.1) on every termination of
+        // the driver, warnings and MaxIter included. Skipped for non-finite phi (open decision).
+        let (phi0, dphi0) = eval(name, p, 0.0);
+        assert!(
+            sufficient_decrease(phi0, dphi0, case.ftol, rep.best.alpha, rep.best.phi),
+            "{}: Wolfe1Report.best {:?} violates (1.1)",
+            case.id,
+            rep.best
+        );
+    }
+    rep
 }
 
 /// A recorded case through `MoreThuente` directly with SciPy's maxiter counting.

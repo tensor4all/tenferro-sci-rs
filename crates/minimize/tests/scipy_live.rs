@@ -102,6 +102,20 @@ fn live_wolfe1(case: &Case) {
         "{}: alpha None-ness",
         case.id
     );
+    // P12 (Thm 2.1, invariant (2.1), p. 290): the report's `best` satisfies (1.1), also on warnings,
+    // MaxIter and start errors (where it is the start point), although `alpha` is None there.
+    assert!(
+        sufficient_decrease(
+            phi_of(name, p, 0.0),
+            dphi_of(name, p, 0.0),
+            case.ftol,
+            rep.best.alpha,
+            rep.best.phi
+        ),
+        "{}: Wolfe1Report.best {:?} violates (1.1)",
+        case.id,
+        rep.best
+    );
     // phi(0) as in SciPy's third return value
     assert_fp_equal(rep.phi0, phi_of(name, p, 0.0), &case.id);
     if let Some(alpha) = rep.alpha {

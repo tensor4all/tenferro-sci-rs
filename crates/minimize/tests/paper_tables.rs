@@ -15,9 +15,11 @@
 //! 24 rows were checked against SciPy 1.16.3's DCSRCH when the data was generated: 23 agree on
 //! all of m, alpha_m and phi'(alpha_m); the one difference is Table II, alpha0 = 1e-3, below.
 //!
-//! The extracted Table values (the PDF text layer) are transcribed once, in `TABLES`; a
-//! transcription slip would show as a mismatch against SciPy on that row, which none of the 23
-//! non-exceptional rows has.
+//! The Table values are transcribed once, in `TABLES`, from the OCR text extraction `mt.txt`; they
+//! were not checked against a rendered page (the PDF at hand was not a PDF). OCR loses minus signs and
+//! decimal points, so a slip is possible; the check is the agreement with SciPy: 23 of the 24 rows
+//! match SciPy on m, alpha_m and phi'(alpha_m) including signs. The Table II row at alpha0 = 1e-3 is the
+//! one row where an OCR slip cannot be told apart from a real difference.
 
 mod common;
 

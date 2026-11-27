@@ -590,10 +590,13 @@ impl Checker {
                 self.widths.push(Some(hi - lo));
                 // P9d: invariant (2.1) of the bracket [best, u]. A terminating tell returns before
                 // dcstep updates the interval (while the stage may already have switched), so it
-                // is excluded. In the auxiliary stage the psi form holds in Thm 2.1's setting
-                // mu <= eta; for eta < mu before the switch it does not (counterexample: example
-                // (3.1) with mu = 0.25, eta = 0.05, where psi'(best) > 0 with u > best), and the
-                // paper claims it only for the second stage there (Thm 3.2).
+                // is excluded. In the auxiliary stage the psi form is asserted only
+                // for mu <= eta. That restriction is empirical: the form held in every mu <= eta run
+                // probed against SciPy 1.16.3 (MT1-MT6 x 4 alpha0, example (3.1) with eta >= mu, ...)
+                // and failed, structurally and not by rounding, for eta < mu before the stage switch
+                // (example (3.1) with mu = 0.25, eta = 0.05 at all four alpha0; example (3.3) with
+                // mu = 0.03, eta = 0.001 at alpha0 = 10 and 1e3: psi'(best) > 0 with u > best);
+                // checking with whichever function the update used also failed there.
                 let u = if best.alpha == lo { hi } else { lo };
                 assert!(
                     best.alpha == lo || best.alpha == hi,
