@@ -155,7 +155,7 @@ def beale_der(x):
     return np.array([g0, g1])
 
 
-def powell(x):  # Moré-Garbow-Hillstrom no. 13 (singular Hessian at the minimizer 0)
+def powell(x):  # Powell's singular function (singular Hessian at the minimizer 0)
     return (x[0] + 10 * x[1]) ** 2 + 5 * (x[2] - x[3]) ** 2 + (x[1] - 2 * x[2]) ** 4 + 10 * (x[0] - x[3]) ** 4
 
 

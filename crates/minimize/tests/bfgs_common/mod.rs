@@ -7,7 +7,7 @@
 //! Quadratics read `A` and `b` from `problems.csv`.
 //!
 //! Written for this repository; the formulas are the textbook ones (Rosenbrock; Himmelblau;
-//! Beale; Moré–Garbow–Hillstrom no. 13, Powell's singular function). Not a port.
+//! Beale; Powell's singular function). Not a port.
 
 #![allow(dead_code)]
 

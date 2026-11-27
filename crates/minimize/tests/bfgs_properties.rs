@@ -178,7 +178,8 @@ fn update_keeps_positive_definiteness() {
 }
 
 /// BFGS with exact line searches on `f = ½xᵀAx − bᵀx` (A symmetric positive definite) finishes in `n` steps:
-/// the directions are `A`-conjugate (Dixon 1972; Nocedal & Wright §6.1), so `gₙ = 0` and `Hₙ = A⁻¹`.
+/// the directions are `A`-conjugate (a classical property of BFGS with exact line searches, proved by induction
+/// over the iterations), so `gₙ = 0` and `Hₙ = A⁻¹`.
 /// The step `α = −gᵀp / pᵀAp` is exact; the iteration is written here, the update is `inverse_update`.
 ///
 /// Tolerances: in floating point the errors grow with the condition number `κ̂ = ‖A‖_F / μ ≥ κ(A)`
