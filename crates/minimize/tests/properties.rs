@@ -385,7 +385,7 @@ fn p6b_extrapolation_bounds() {
     let (t, trace) = run_named(&s, "mt1", &[], 1e-3);
     let (phi0, dphi0) = eval("mt1", &[], 0.0);
     assert!(check_extrapolation(&s, phi0, dphi0, &trace) >= 4);
-    // p. 304 (mt.txt line 1143): delta = 4 gives 0.005, 0.021, 0.085, 0.341, 1.365 "until the
+    // p. 304: delta = 4 gives 0.005, 0.021, 0.085, 0.341, 1.365 "until the
     // minimizer is bracketed or one of these iterates satisfies the termination conditions"
     assert_eq!(trace[0].0, 1e-3);
     for (got, printed) in trace[1..]

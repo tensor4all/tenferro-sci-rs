@@ -41,7 +41,8 @@ fn via_driver(case: &Case, maxiter: usize) -> Wolfe1Report {
     .expect("valid options");
     if !case.is_nonfinite_group() {
         // P12 (Thm 2.1, invariant (2.1), p. 290): `best` satisfies (1.1) on every termination of
-        // the driver, warnings and MaxIter included. Skipped for non-finite phi (open decision).
+        // the driver, warnings and MaxIter included. The non-finite group is
+        // checked in `nonfinite.rs`.
         let (phi0, dphi0) = eval(name, p, 0.0);
         assert!(
             sufficient_decrease(phi0, dphi0, case.ftol, rep.best.alpha, rep.best.phi),
@@ -171,7 +172,7 @@ fn non_finite_step_without_non_finite_phi() {
     // phi(a >= 0.5) = 1e308 is finite, but dcstep's cubic overflows (theta = 3 (fx - fp) / (stp - stx)
     // = -inf, theta / s = NaN), the next step is NaN, and SciPy's `isfinite(stp)` check ends the
     // search with its bare WARN. So the non-finite-step exit is *not* only about non-finite phi,
-    // and it does not depend on the pending decision for them.
+    // and it does not depend on the non-finite check of option (b).
     let case = case_by_id("overflow_finite");
     let (t, trace) = done(via_state_machine(&Case {
         kind: "dcsrch".into(),

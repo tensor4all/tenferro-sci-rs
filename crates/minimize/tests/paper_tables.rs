@@ -2,9 +2,8 @@
 //! Decrease", ACM TOMS 20(3):286-307, 1994, section 5, Tables I-VI, as ground truth, plus the
 //! variants its text states. Independent of SciPy: the numbers below are the paper's own.
 //!
-//! The paper text extracted for this suite is `mt.txt` (line numbers below refer to that
-//! extraction): Table I at line 1047, II 1061, III 1075, IV 1091, V 1107, VI 1125. The functions
-//! are (5.1) -(5.4); the search runs `MoreThuente` with the table's (mu, eta) = (ftol, gtol) and
+//! Tables I-VI are on pp. 304-305 of the paper; the text variants quoted below are on pp. 302, 303,
+//! 305 and 306, and the delta = 4 extrapolation sequence on p. 304. The functions are (5.1)-(5.4); the search runs `MoreThuente` with the table's (mu, eta) = (ftol, gtol) and
 //! alpha0 = 10^-3, 10^-1, 10^1, 10^3. The paper does not state stpmin, stpmax or xtol; this suite
 //! assumes stpmin = 0, stpmax = 1e10, xtol = 1e-14 (the results do not depend on them).
 //!
@@ -15,8 +14,8 @@
 //! 24 rows were checked against SciPy 1.16.3's DCSRCH when the data was generated: 23 agree on
 //! all of m, alpha_m and phi'(alpha_m); the one difference is Table II, alpha0 = 1e-3, below.
 //!
-//! The Table values are transcribed once, in `TABLES`. They were first read from the OCR text
-//! extraction `mt.txt` and the two differences from SciPy below were then checked against the
+//! The Table values are transcribed once, in `TABLES`. They were first read from an OCR text
+//! extraction of the paper and the two differences from SciPy below were then checked against the
 //! rendered PDF pages: both are genuine differences, not OCR slips. 23 of the 24 rows match SciPy on m,
 //! alpha_m and phi'(alpha_m) including signs; the other is Table II, alpha0 = 1e-3, whose printed
 //! phi' = 7.1e-9 (p. 304) differs from SciPy's 3.8e-9. The second difference is in the text: p. 303
@@ -31,7 +30,6 @@ use common::*;
 type Row = (usize, f64, i32, f64);
 struct Table {
     name: &'static str,
-    line: usize,
     func: &'static str,
     mu: f64,
     eta: f64,
@@ -42,17 +40,17 @@ const A0S: [f64; 4] = [1e-3, 1e-1, 1e1, 1e3];
 
 #[rustfmt::skip]
 const TABLES: [Table; 6] = [
-    Table { name: "Table I (mt1, (5.1) beta = 2)", line: 1047, func: "mt1", mu: 1e-3, eta: 1e-1,
+    Table { name: "Table I (mt1, (5.1) beta = 2)", func: "mt1", mu: 1e-3, eta: 1e-1,
         rows: [(6, 1.4, 1, -9.2e-3), (3, 1.4, 1, 4.7e-3), (1, 10.0, 0, 9.4e-3), (4, 37.0, 0, 7.3e-4)] },
-    Table { name: "Table II (mt2, (5.2) beta = 0.004)", line: 1061, func: "mt2", mu: 1e-1, eta: 1e-1,
+    Table { name: "Table II (mt2, (5.2) beta = 0.004)", func: "mt2", mu: 1e-1, eta: 1e-1,
         rows: [(12, 1.6, 1, 7.1e-9), (8, 1.6, 1, 1.0e-10), (8, 1.6, 1, -5.0e-9), (11, 1.6, 1, -2.3e-8)] },
-    Table { name: "Table III (mt3, (5.3) beta = 0.01, l = 39)", line: 1075, func: "mt3", mu: 1e-1, eta: 1e-1,
+    Table { name: "Table III (mt3, (5.3) beta = 0.01, l = 39)", func: "mt3", mu: 1e-1, eta: 1e-1,
         rows: [(12, 1.0, 1, -5.1e-5), (12, 1.0, 1, -1.9e-4), (10, 1.0, 1, -2.0e-6), (13, 1.0, 1, -1.6e-5)] },
-    Table { name: "Table IV (mt4, (5.4) beta1 = beta2 = 0.001)", line: 1091, func: "mt4", mu: 1e-3, eta: 1e-3,
+    Table { name: "Table IV (mt4, (5.4) beta1 = beta2 = 0.001)", func: "mt4", mu: 1e-3, eta: 1e-3,
         rows: [(4, 0.08, 2, -6.9e-5), (1, 0.10, 2, -4.9e-5), (3, 0.35, 2, -2.9e-6), (4, 0.83, 2, 1.6e-5)] },
-    Table { name: "Table V (mt5, (5.4) beta1 = 0.01, beta2 = 0.001)", line: 1107, func: "mt5", mu: 1e-3, eta: 1e-3,
+    Table { name: "Table V (mt5, (5.4) beta1 = 0.01, beta2 = 0.001)", func: "mt5", mu: 1e-3, eta: 1e-3,
         rows: [(6, 0.075, 3, 1.9e-4), (3, 0.078, 3, 7.4e-4), (7, 0.073, 3, -2.6e-4), (8, 0.076, 3, 4.5e-4)] },
-    Table { name: "Table VI (mt6, (5.4) beta1 = 0.001, beta2 = 0.01)", line: 1125, func: "mt6", mu: 1e-3, eta: 1e-3,
+    Table { name: "Table VI (mt6, (5.4) beta1 = 0.001, beta2 = 0.01)", func: "mt6", mu: 1e-3, eta: 1e-3,
         rows: [(13, 0.93, 2, 5.2e-4), (11, 0.93, 2, 8.4e-5), (8, 0.92, 2, -2.4e-4), (11, 0.92, 2, -3.2e-4)] },
 ];
 
@@ -78,7 +76,10 @@ fn tables_i_to_vi() {
     for t in &TABLES {
         let setup = cfg(t.mu, t.eta);
         for (a0, &(m, alpha_p, decimals, dphi_p)) in A0S.iter().zip(&t.rows) {
-            let ctx = format!("{} (mt.txt line {}), alpha0 = {a0:e}", t.name, t.line);
+            let ctx = format!(
+                "{} (Moré & Thuente 1994, pp. 304-305), alpha0 = {a0:e}",
+                t.name
+            );
             let (term, trace) = run_named(&setup, t.func, &[], *a0);
             assert!(
                 term.reason.is_converged(),
@@ -142,7 +143,7 @@ fn tables_i_to_vi() {
 #[test]
 fn table_iv_alpha_is_a_half_unit_tie() {
     // Table IV, alpha0 = 1e-3 prints alpha_m = 0.08, but the iterates are 0.005, 0.021, 0.085 (the
-    // extrapolation sequence quoted on p. 304, mt.txt line 1143) and the 4th evaluation is accepted at 0.085:
+    // extrapolation sequence quoted on p. 304) and the 4th evaluation is accepted at 0.085:
     // exactly half a unit of the printed digit. The paper rounded 0.085 down; `alpha_tol` allows the tie.
     let (term, trace) = run_named(&cfg(1e-3, 1e-3), "mt4", &[], 1e-3);
     assert_eq!(term.evaluations, 4);
@@ -154,7 +155,7 @@ fn table_iv_alpha_is_a_half_unit_tie() {
 
 #[test]
 fn function_1_with_mu_eta_equal_to_0_1() {
-    // p. 302 (mt.txt line 978): with mu = eta = 0.1 the search "terminates with alpha_m = 1.6 when
+    // p. 302: with mu = eta = 0.1 the search "terminates with alpha_m = 1.6 when
     // alpha0 = 10 and with alpha_m = 1.6 when alpha0 = 10^3. There is no change in the behavior of
     // the algorithm from the other two starting points", i.e. Table I's m = 6 and 3, alpha_m = 1.4.
     // SciPy: alpha_m = 1.6496 (m = 3) and 1.6278 (m = 7), within the printed one decimal
@@ -185,7 +186,7 @@ fn function_1_with_mu_eta_equal_to_0_1() {
 
 #[test]
 fn function_1_with_eta_0_001() {
-    // p. 303 (mt.txt lines 1034-1038): mu = 0.1, eta = 0.001: "the final iterate alpha_m is near
+    // p. 303: mu = 0.1, eta = 0.001: "the final iterate alpha_m is near
     // alpha* for all starting points. ... 6 function evaluations for alpha0 = 10 and ten for
     // alpha0 = 10^3. The number ... for alpha0 = 10^-3 and 10^-1 is, respectively, 8 and 4."
     // alpha* = sqrt(2) = 1.4142 (the minimizer of (5.1) with beta = 2).
@@ -213,7 +214,7 @@ fn function_1_with_eta_0_001() {
 
 #[test]
 fn function_6_with_mu_0_001_and_eta_0_1() {
-    // p. 306 (mt.txt lines 1204-1207): "the number of function evaluations needed to obtain an
+    // p. 306: "the number of function evaluations needed to obtain an
     // acceptable alpha from the starting points alpha0 = 10^i for i = -3, -1, 1, and 3 would be,
     // respectively, 2, 1, 3, and 4" (function 6 = Figure 8, mu = 0.001, eta = 0.1).
     let s = cfg(1e-3, 1e-1);
@@ -226,7 +227,7 @@ fn function_6_with_mu_0_001_and_eta_0_1() {
 
 #[test]
 fn function_2_is_unchanged_for_any_mu_below_eta() {
-    // p. 305 (mt.txt line 1161): "these results remain unchanged if we set eta = 0.1 and choose any
+    // p. 305: "these results remain unchanged if we set eta = 0.1 and choose any
     // mu < eta", i.e. Table II (m = 12, 8, 8, 11 and alpha_m = 1.6) for mu = 0.01 and 0.001.
     // SciPy 1.16.3 reproduces the counts and steps (1.596) for both.
     let ms = [12, 8, 8, 11];
