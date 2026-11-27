@@ -108,9 +108,11 @@ fn driver_requires_c1_below_c2() {
         (1e-4, 1.5), // c2 > 1
     ];
     for (c1, c2) in bad {
-        let mut o = Wolfe1Options::default();
-        o.c1 = c1;
-        o.c2 = c2;
+        let o = Wolfe1Options {
+            c1,
+            c2,
+            ..Wolfe1Options::default()
+        };
         let r = scalar_search_wolfe1(phi, dphi, Some(25.0), None, Some(-10.0), &o);
         assert!(r.is_err(), "c1 = {c1}, c2 = {c2} must be rejected");
     }
@@ -137,10 +139,12 @@ fn driver_rejects_an_invalid_config() {
         (10.0, 1.0, 1e-14),
         (1e-8, 50.0, -1e-14),
     ] {
-        let mut o = Wolfe1Options::default();
-        o.amin = amin;
-        o.amax = amax;
-        o.xtol = xtol;
+        let o = Wolfe1Options {
+            amin,
+            amax,
+            xtol,
+            ..Wolfe1Options::default()
+        };
         let r = scalar_search_wolfe1(phi, dphi, Some(25.0), None, Some(-10.0), &o);
         assert!(r.is_err(), "amin = {amin}, amax = {amax}, xtol = {xtol}");
     }

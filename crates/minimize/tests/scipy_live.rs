@@ -65,13 +65,14 @@ fn check_converged(case: &Case, alpha: f64, phi_alpha: f64) {
 fn live_wolfe1(case: &Case) {
     let (name, p) = (case.func.as_str(), case.p.as_slice());
     let (nphi, ndphi) = (Cell::new(0usize), Cell::new(0usize));
-    let mut opts = Wolfe1Options::default();
-    opts.c1 = case.ftol;
-    opts.c2 = case.gtol;
-    opts.amin = case.stpmin;
-    opts.amax = case.stpmax;
-    opts.xtol = case.xtol;
-    opts.maxiter = case.maxiter;
+    let opts = Wolfe1Options {
+        c1: case.ftol,
+        c2: case.gtol,
+        amin: case.stpmin,
+        amax: case.stpmax,
+        xtol: case.xtol,
+        maxiter: case.maxiter,
+    };
     let rep = scalar_search_wolfe1(
         |a| {
             nphi.set(nphi.get() + 1);

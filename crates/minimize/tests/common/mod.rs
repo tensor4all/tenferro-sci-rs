@@ -354,6 +354,8 @@ pub fn curvature(dphi0: f64, eta: f64, dphi_a: f64) -> bool {
 }
 
 /// Both strong-Wolfe inequalities, exactly (no tolerance).
+// One argument per quantity of (1.1) and (1.2), so call sites read like the formulas.
+#[allow(clippy::too_many_arguments)]
 pub fn assert_strong_wolfe(
     phi0: f64,
     dphi0: f64,
@@ -615,19 +617,18 @@ impl Checker {
                 // point (_dcsrch.py: `abs(sty - stx) >= p66 * width1` => midpoint). Other legitimate
                 // exits: the step reset to stx before a warning, and the clamp to [stpmin, stpmax].
                 let w = hi - lo;
-                if k >= 2 {
-                    if let Some(w2) = self.widths[k - 2] {
-                        if w > 0.66 * w2 {
-                            let nxt = next.expect("non-terminal");
-                            let bis = lo + 0.5 * (hi - lo);
-                            let near = (nxt - bis).abs() <= 4.0 * spacing(nxt.abs().max(bis.abs()));
-                            assert!(
-                                near || nxt == best.alpha || nxt == self.stpmin || nxt == self.stpmax,
-                                "P11: width {w:e} > 0.66 * {w2:e} at tell {k} but next {nxt:e} is not the \
-                                 bisection point {bis:e}"
-                            );
-                        }
-                    }
+                if k >= 2
+                    && let Some(w2) = self.widths[k - 2]
+                    && w > 0.66 * w2
+                {
+                    let nxt = next.expect("non-terminal");
+                    let bis = lo + 0.5 * (hi - lo);
+                    let near = (nxt - bis).abs() <= 4.0 * spacing(nxt.abs().max(bis.abs()));
+                    assert!(
+                        near || nxt == best.alpha || nxt == self.stpmin || nxt == self.stpmax,
+                        "P11: width {w:e} > 0.66 * {w2:e} at tell {k} but next {nxt:e} is not the \
+                         bisection point {bis:e}"
+                    );
                 }
             }
             _ => self.widths.push(None),

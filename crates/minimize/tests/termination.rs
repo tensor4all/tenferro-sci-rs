@@ -26,13 +26,14 @@ use minimize::linesearch::{
 /// A recorded `wolfe1` case through the driver, with the closures' call counts checked.
 fn via_driver(case: &Case, maxiter: usize) -> Wolfe1Report {
     let (name, p) = (case.func.as_str(), case.p.as_slice());
-    let mut o = Wolfe1Options::default();
-    o.c1 = case.ftol;
-    o.c2 = case.gtol;
-    o.amin = case.stpmin;
-    o.amax = case.stpmax;
-    o.xtol = case.xtol;
-    o.maxiter = maxiter;
+    let o = Wolfe1Options {
+        c1: case.ftol,
+        c2: case.gtol,
+        amin: case.stpmin,
+        amax: case.stpmax,
+        xtol: case.xtol,
+        maxiter,
+    };
     let rep = scalar_search_wolfe1(
         |a| phi_of(name, p, a),
         |a| dphi_of(name, p, a),
