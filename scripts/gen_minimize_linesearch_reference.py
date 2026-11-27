@@ -512,11 +512,15 @@ def driver_cases():
     go("above_stpmax", "edge", "shiftq", (5.0,), True, None, True, "alpha1 = 1 > amax = 1e-3", amax=1e-3)
     # monotone phi: STPMAX
     go("monotone_stpmax", "edge", "lin_neg", (), True, None, True, "trials 1, 5, 21, 50")
-    # inf / NaN: the maintainer's decision on non-finite phi is open (issue #38, review 9.1).
-    # SciPy's behaviour recorded here: inf -> bare WARN after 1 trial, NaN -> maxiter after 100.
-    go("inf_half", "nonfinite", "inf_half", (), True, None, True, "OPEN QUESTION: SciPy = bare WARN, 1 trial")
-    go("nan_half", "nonfinite", "nan_half", (), True, None, True, "OPEN QUESTION: SciPy = maxiter, 100 trials")
-    go("nan_dphi_only", "nonfinite", "nan_dphi", (), True, None, True, "OPEN QUESTION: phi' NaN only")
+    # inf / NaN: SciPy's behaviour is recorded here (inf -> bare WARN after 1 trial, NaN -> maxiter
+    # after 100); minimize stops with Reason::NonFiniteValue instead (option (b), decided on #38;
+    # tests/nonfinite.rs pins the difference).
+    go("inf_half", "nonfinite", "inf_half", (), True, None, True,
+       "SciPy behaviour recorded (bare WARN, 1 trial); minimize stops with Reason::NonFiniteValue (option (b); #38)")
+    go("nan_half", "nonfinite", "nan_half", (), True, None, True,
+       "SciPy behaviour recorded (maxiter, 100 trials); minimize stops with Reason::NonFiniteValue (option (b); #38)")
+    go("nan_dphi_only", "nonfinite", "nan_dphi", (), True, None, True,
+       "SciPy behaviour recorded (phi' NaN only; bare WARN, 2 trials); minimize stops with Reason::NonFiniteValue (option (b); #38)")
     # finite phi where dcstep itself overflows: NonFiniteStep without any non-finite phi
     go("overflow_finite", "edge", "big_half", (), True, None, True, "phi = 1e308 is finite; theta overflows")
 
@@ -791,6 +795,10 @@ def check(data_dir: Path) -> int:
             problems.append(f"{name}: not found in {data_dir}")
             continue
         problems += diff_table(name, path.read_text(), fresh, stats)
+    cases_path = data_dir / "cases.csv"
+    if cases_path.exists():
+        _, rows = parse_csv(cases_path.read_text())
+        problems += coverage_problems({r["reason"] for r in rows}, f"committed runs in {data_dir}")
     print("per-column comparison (values compared / bitwise equal / max abs diff / max rel diff"
           " [/ max diff over bound for dphi]):")
     for (name, col), st in stats.items():
@@ -811,6 +819,12 @@ def check(data_dir: Path) -> int:
     return 0
 
 
+def coverage_problems(reasons: set[str], what: str) -> list[str]:
+    """Every SciPy task outcome must be reached by at least one run."""
+    missing = set(REASONS.values()) - reasons
+    return [f"coverage: {what}: outcomes never reached: {sorted(missing)}"] if missing else []
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true", help="compare with the committed CSVs, write nothing")
@@ -823,6 +837,11 @@ def main():
     paper_cases()
     lbfgsb_cases()
     nan_late_case()
+    problems = coverage_problems({r["reason"] for r in CASES}, "regenerated runs")
+    if problems:
+        raise SystemExit("\n".join(problems))
+    print(f"coverage OK: all {len(set(REASONS.values()))} outcomes reached: "
+          f"{sorted({r['reason'] for r in CASES})}")
     if args.check:
         return check(args.data)
     write()
@@ -838,12 +857,6 @@ def main():
             print(f"  {r['id']:<22} {r['reason']:<17} trials={r['n_trials']:<3} stp={r['stp']:<24} "
                   f"phi_evals={r['phi_evals']} dphi_evals={r['dphi_evals']}  [{r['task']}]")  # fmt: skip
 
-    # --- coverage: every task outcome reached at least once
-    seen = {r["reason"] for r in CASES}
-    want = set(REASONS.values())
-    missing = want - seen
-    assert not missing, f"outcomes never reached: {sorted(missing)}"
-    print(f"coverage OK: all {len(want)} outcomes reached: {sorted(seen)}")
     print("hook tasks seen:", sorted({r["task"] for r in CASES}))
 
 
