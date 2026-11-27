@@ -102,8 +102,11 @@ pub enum Reason {
     /// trial; the non-finite next step is not reported.
     NonFiniteStep,
     /// φ or φ' at the last trial is NaN or infinite. Detected in `tell` before the trial is used,
-    /// so `best` is untouched and still satisfies (1.1). `alpha`/`phi`/`dphi` are that trial.
-    /// SciPy does not check this (a NaN φ burns the remaining iterations).
+    /// so the search state is untouched: [`Termination::best`] is the last finite best point
+    /// (still satisfying (1.1)), and `alpha`/`phi`/`dphi` are the offending trial itself.
+    /// SciPy never inspects φ (a NaN φ burns the remaining iterations); this is the deliberate
+    /// departure decided on #38 (`tests/nonfinite.rs`). On finite inputs the trajectory is
+    /// identical to SciPy's.
     NonFiniteValue,
 }
 
