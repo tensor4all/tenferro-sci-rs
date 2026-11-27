@@ -1,12 +1,22 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.13"
 # dependencies = ["scipy==1.16.3", "numpy==2.3.5", "pytest"]
 # ///
 """Generate the SciPy reference data for `minimize::linesearch` (Moré-Thuente / DCSRCH).
 
 Run from the repository root:
 
-    uv run scripts/gen_minimize_linesearch_reference.py
+    uv run scripts/gen_minimize_linesearch_reference.py            # regenerate the CSVs
+    uv run scripts/gen_minimize_linesearch_reference.py --check    # CI: compare, write nothing
+
+``--check`` regenerates everything in memory and compares it with the committed CSVs (or with
+``--data DIR``); it writes nothing and exits non-zero with a readable diff on a mismatch. It does
+not compare bytes: run ids, outcomes, tasks, counts, None-ness and the number of trials per run
+must be identical, every float must agree within 1e-12 relative (or be exactly equal, including
+both zero, both inf, both nan). The closed-form runs use libm ``exp``/``sin``/``cos``/``pow``,
+which Linux glibc and macOS libm may round one ulp apart, and that ulp is invisible to the
+Rust tests' tolerance but not to a byte compare. The ``#`` header lines (date, versions) are
+ignored.
 
 Outputs (committed; regenerating them is a separate commit), all in
 crates/minimize/tests/data/linesearch/:
@@ -38,6 +48,7 @@ reads back exactly; ``inf``/``-inf``/``nan`` and ``none`` are spelled out.
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import math
 import platform
@@ -113,6 +124,10 @@ def nan_dphi(a, p):
     return ((a - 1) * (a - 1), 2 * (a - 1) if a == 0 else NAN)
 
 
+def nan_late(a, p):  # finite and monotone below 10, NaN from there on
+    return ((-a, -1.0) if a < 10 else (NAN, NAN))
+
+
 def big_half(a, p):  # finite but huge: dcstep's cubic overflows (theta = -inf), step becomes NaN
     return (((a - 1) * (a - 1), 2 * (a - 1)) if a < 0.5 else (1e308, 1.0))
 
@@ -175,7 +190,7 @@ mt6 = _yanai(1e-3, 1e-2)
 FUNCS = {
     "sf1": sf1, "sf2": sf2, "sf3": sf3, "wt": wt, "quad": quad, "shiftq": shiftq,
     "lin_neg": lin_neg, "lin_pos": lin_pos, "inf_half": inf_half, "nan_half": nan_half,
-    "nan_dphi": nan_dphi, "big_half": big_half,
+    "nan_dphi": nan_dphi, "big_half": big_half, "nan_late": nan_late,
     "mt1": mt1, "mt2": mt2, "mt3": mt3, "mt4": mt4, "mt5": mt5, "mt6": mt6,
 }  # fmt: skip
 
@@ -396,6 +411,13 @@ def driver_cases():
     go("overflow_finite", "edge", "big_half", (), True, None, True, "phi = 1e308 is finite; theta overflows")
 
 
+def nan_late_case():
+    """First non-finite value after finite trials: -a for a < 10, NaN beyond (trials 1, 5, 21)."""
+    phi, dphi = closed("nan_late")
+    wolfe1("nan_late", "closed", "nonfinite", "nan_late", (), phi, dphi, 0.0, None, -1.0,
+           amax=1e10, note="first NaN at the third trial (alpha = 21)")  # fmt: skip
+
+
 def dcsrch_cases():
     # maxiter = 2: trial 2 (alpha = 5) satisfies strong Wolfe but is never tested.
     r = dcsrch("maxiter2", "edge", "shiftq", (20.0,), 1e-4, 0.9, 1.0, maxiter=2, stpmax=50.0, stpmin=1e-8,
@@ -464,6 +486,21 @@ PAPER_VARIANTS = [
 ]
 
 
+# The parameters L-BFGS-B passes to DCSRCH: scipy/optimize/__lbfgsb.c (SciPy v1.16.3),
+# `lnsrlb`, line 2578: ftol = 1e-3, gtol = 0.9, xtol = 0.1; stpmin = 0 at the dcsrch call
+# (line 2651); stpmax = stpmx, 1e10 when the iterate is unconstrained (line 2585).
+# Recorded through DCSRCH directly, not through scalar_search_wolfe1.
+LBFGSB = dict(ftol=1e-3, gtol=0.9, xtol=0.1, stpmin=0.0, stpmax=1e10)
+
+
+def lbfgsb_cases():
+    for fn in MT_FUNCS:
+        for a0 in A0S:
+            dcsrch(f"lbfgsb_{fn}_{a0:g}", "lbfgsb_params", fn, (), LBFGSB["ftol"], LBFGSB["gtol"], a0,
+                   xtol=LBFGSB["xtol"], stpmin=LBFGSB["stpmin"], stpmax=LBFGSB["stpmax"],
+                   note="__lbfgsb.c:2578 ftol 1e-3, gtol 0.9, xtol 0.1")  # fmt: skip
+
+
 def paper_cases():
     for fn, (mu, eta, rows) in PAPER_TABLES.items():
         for a0 in A0S:
@@ -506,35 +543,120 @@ def paper_diff():
 # ----------------------------------------------------------------------------------------------
 
 
+def texts() -> dict[str, str]:
+    """The three CSV files as text, in memory."""
+    cols = list(CASES[0].keys())
+    cases = HEADER + "# one row per run; 'none' = absent; reason is the SciPy task mapped to a Rust Reason\n"
+    cases += ",".join(cols) + "\n"
+    for r in CASES:
+        cases += ",".join(str(r[c]).replace(",", ";") for c in cols) + "\n"
+    trials = HEADER + "# every trial SciPy evaluated: id,k,alpha,phi,dphi\n" + "id,k,alpha,phi,dphi\n"
+    for cid, k, a, p, d in TRIALS:
+        trials += f"{cid},{k},{fmt(a)},{fmt(p)},{fmt(d)}\n"
+    div = HEADER + "# scipy run vs closed-form run; the live test compares against the closed run for these\n"
+    div += "id,what,scipy,closed,why\n"
+    for row in divergences:
+        div += ",".join(row) + "\n"
+    return {"cases.csv": cases, "trials.csv": trials, "divergences.csv": div}
+
+
 def write():
     DATA.mkdir(parents=True, exist_ok=True)
-    cols = list(CASES[0].keys())
-    with open(DATA / "cases.csv", "w") as f:
-        f.write(HEADER)
-        f.write("# one row per run; 'none' = absent; reason is the SciPy task mapped to a Rust Reason\n")
-        f.write(",".join(cols) + "\n")
-        for r in CASES:
-            f.write(",".join(str(r[c]).replace(",", ";") for c in cols) + "\n")
-    with open(DATA / "trials.csv", "w") as f:
-        f.write(HEADER)
-        f.write("# every trial SciPy evaluated: id,k,alpha,phi,dphi\n")
-        f.write("id,k,alpha,phi,dphi\n")
-        for cid, k, a, p, d in TRIALS:
-            f.write(f"{cid},{k},{fmt(a)},{fmt(p)},{fmt(d)}\n")
-    with open(DATA / "divergences.csv", "w") as f:
-        f.write(HEADER)
-        f.write("# scipy run vs closed-form run; the live test compares against the closed run for these\n")
-        f.write("id,what,scipy,closed,why\n")
-        for row in divergences:
-            f.write(",".join(row) + "\n")
+    for name, text in texts().items():
+        (DATA / name).write_text(text)
+
+
+# ----------------------------------------------------------------------------------------------
+# --check: compare the regenerated data with the committed CSVs, write nothing
+# ----------------------------------------------------------------------------------------------
+
+REL_TOL = 1e-12
+# columns compared as text: identities, outcomes, tasks, counts, flags (exact)
+EXACT_COLS = {"id", "run", "kind", "group", "fn", "reason", "task", "note", "k", "what",
+              "phi0_given", "dphi0_given", "maxiter", "phi_evals", "dphi_evals", "n_trials"}  # fmt: skip
+
+
+def parse_csv(text: str) -> tuple[list[str], list[dict[str, str]]]:
+    lines = [l for l in text.splitlines() if l and not l.startswith("#")]
+    header = lines[0].split(",")
+    return header, [dict(zip(header, l.split(","))) for l in lines[1:]]
+
+
+def floats_agree(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    try:
+        x, y = float(a), float(b)
+    except ValueError:
+        return False
+    if math.isnan(x) or math.isnan(y):
+        return math.isnan(x) and math.isnan(y)
+    if math.isinf(x) or math.isinf(y):
+        return x == y
+    return x == y or abs(x - y) <= REL_TOL * max(abs(x), abs(y))
+
+
+def diff_table(name: str, committed: str, fresh: str) -> list[str]:
+    h1, rows1 = parse_csv(committed)
+    h2, rows2 = parse_csv(fresh)
+    out: list[str] = []
+    if h1 != h2:
+        return [f"{name}: columns differ: committed {h1} vs regenerated {h2}"]
+    key = (lambda r: (r["id"], r["k"])) if "k" in h1 else (lambda r: (r["id"], r.get("what", "")))
+    m1 = {key(r): r for r in rows1}
+    m2 = {key(r): r for r in rows2}
+    if len(m1) != len(rows1) or len(m2) != len(rows2):
+        out.append(f"{name}: duplicate keys")
+    for k in sorted(m1.keys() - m2.keys()):
+        out.append(f"{name}: row {k} is committed but not regenerated")
+    for k in sorted(m2.keys() - m1.keys()):
+        out.append(f"{name}: row {k} is regenerated but not committed")
+    for k in sorted(m1.keys() & m2.keys()):
+        for col in h1:
+            a, b = m1[k][col], m2[k][col]
+            if col in EXACT_COLS or name == "divergences.csv":
+                same = a == b
+            else:
+                same = floats_agree(a, b)
+            if not same:
+                out.append(f"{name}: {k} column {col}: committed {a!r} vs regenerated {b!r}")
+    return out
+
+
+def check(data_dir: Path) -> int:
+    problems: list[str] = []
+    for name, fresh in texts().items():
+        path = data_dir / name
+        if not path.exists():
+            problems.append(f"{name}: not found in {data_dir}")
+            continue
+        problems += diff_table(name, path.read_text(), fresh)
+    if problems:
+        print(f"--check FAILED: {len(problems)} difference(s) against {data_dir}")
+        for p in problems[:50]:
+            print("  " + p)
+        if len(problems) > 50:
+            print(f"  ... and {len(problems) - 50} more")
+        return 1
+    print(f"--check OK: {len(CASES)} runs, {len(TRIALS)} trials agree with {data_dir} "
+          f"(floats within {REL_TOL:g} relative)")
+    return 0
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--check", action="store_true", help="compare with the committed CSVs, write nothing")
+    ap.add_argument("--data", type=Path, default=DATA, help="directory of the CSVs for --check")
+    args = ap.parse_args()
     print(f"scipy {scipy.__version__}, numpy {np.__version__}, python {platform.python_version()}")
     scipy_test_cases()
     driver_cases()
     dcsrch_cases()
     paper_cases()
+    lbfgsb_cases()
+    nan_late_case()
+    if args.check:
+        return check(args.data)
     write()
 
     print(f"{len(CASES)} runs, {len(TRIALS)} trials, {len(divergences)} divergences")
