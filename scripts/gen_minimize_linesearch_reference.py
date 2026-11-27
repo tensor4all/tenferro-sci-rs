@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
-# dependencies = ["scipy==1.16.3", "numpy==2.3.5", "pytest"]
+# dependencies = ["scipy==1.16.3", "numpy==2.3.5", "pytest==9.2.0"]
 # ///
 """Generate the SciPy reference data for `minimize::linesearch` (Moré-Thuente / DCSRCH).
 
