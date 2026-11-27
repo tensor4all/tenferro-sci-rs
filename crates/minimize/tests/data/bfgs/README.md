@@ -40,27 +40,33 @@ separate commit. Produced on macOS 15.6.1 arm64, Python 3.12.11, SciPy 1.16.3, N
   1 to `MaxIter`, 2 to `LineSearchFailed` or `NonFiniteValue`. `MaxIter` wins over convergence on the last
   allowed iteration, as SciPy's `k >= maxiter` is tested after the loop (run `rosen2_maxiter_eq_nit`).
 
-### The wolfe2 runs are constructed
+### The wolfe2 runs
 
 No problem in the probed set (an uncommitted probe: Rosenbrock with gtol from 1e-5 to 1e-14 and scaled by 1e-8 to 1e12,
-noisy and perturbed variants, 136 runs in all, plus Powell) made `wolfe1` fail on a *smooth, consistent* objective: the fallback only
-fires where the objective or its gradient is not what SciPy's line search assumes, so the four `fallback` runs
-are constructed (SciPy 1.16.3 does call `wolfe2` on each, and in the probed fallbacks of finite objectives
-`wolfe2` returned no step either, so SciPy also ends with status 2 there; only `nfev` differs from a Rust stop at
-the failed `wolfe1`):
+noisy and perturbed variants, 136 runs in all, plus Powell, Beale, Himmelblau) made `wolfe1` fail on a *smooth,
+consistent, bounded-below* objective. The fallback fires only where the objective is not what SciPy's line search assumes,
+so every `fallback` run is **constructed** (the problem is chosen to make `wolfe1` fail; SciPy 1.16.3 does call `wolfe2`
+on each):
 
-| Run | Why `wolfe1` gives up | `wolfe2` began at evaluation |
-|---|---|---|
-| `w2_neggrad` | the gradient has the wrong sign, so φ'(α) never matches φ: `ROUNDING ERRORS PREVENT PROGRESS` after 48 trials, on the **first** line search (no iterate has moved) | 49 |
-| `w2_l1` | nonsmooth ‖x‖₁: `XTOL TEST SATISFIED` | 65 |
-| `w2_noisy` | `f` plus 1e-12·sin(1e7 x₀): `dcsrch did not converge within max iterations` | 83 |
-| `w2_pert` | the gradient is off by the constant 1e-3·(1, −1): `ROUNDING ERRORS PREVENT PROGRESS` | 55 |
+| Run | Why `wolfe1` gives up | `wolfe2` began at evaluation | `wolfe2` found a step |
+|---|---|---|---|
+| `w2_unbounded` | `f = −x₀` is unbounded below, so the curvature condition never holds and `wolfe1` ends at its limit of 100 trials (`dcsrch did not converge within max iterations`) on the **first** line search. Exact arithmetic (`g = (−1, 0)`), no rounding noise. `maxiter = 1` keeps the run short | 101 (x₀ and 100 trials) | **yes**: SciPy takes the step and continues |
+| `w2_neggrad` | the gradient has the wrong sign: `ROUNDING ERRORS PREVENT PROGRESS` after 48 trials on the first line search, in the noise regime α ≈ 10⁻¹⁹ | 49 | no |
+| `w2_l1` | nonsmooth ‖x‖₁: `XTOL TEST SATISFIED` | 65 | no |
+| `w2_noisy` | `f` plus 1e-12·sin(1e7 x₀): `dcsrch did not converge within max iterations` | 83 | no |
+| `w2_pert` | the gradient is off by the constant 1e-3·(1, −1): `ROUNDING ERRORS PREVENT PROGRESS` | 55 | no |
 
-The test of the boundary replays `w2_neggrad`, whose failure does not depend on a trajectory (first line search).
-The other three fail after 14 to 33 iterations, through effects at rounding level, so which DCSRCH warning ends
-`wolfe1` can change with the last bits of the direction: they are data (`wolfe2_calls > 0`), not asserted.
+**The asserted boundary case is `w2_unbounded`**: it is deterministic (no summation order or libm call can change a
+decision), the fallback **succeeds** in SciPy, and the Rust port stops at the same place with `LineSearchFailed`
+and no step: this is the exact point where the two differ, and the test (`bfgs_termination.rs`) asserts
+that the state asks for exactly the 101 evaluations SciPy made before `wolfe2`, then stops. The other four runs fail
+through effects at rounding level (the number of trials before DCSRCH gives up changes with the last bits of the
+direction: replaying `w2_neggrad` through a correct state stops it after 24 trials, SciPy after 48, both with
+`ROUNDING ERRORS`), so they are data (`wolfe2_calls > 0`), not asserted. Of the five fallbacks on finite objectives, `wolfe2`
+failed on four (SciPy ends with status 2 there, after more evaluations than a Rust stop at the failed `wolfe1`) and
+succeeded on the unbounded one; in the uncommitted probe all 43 fallbacks on bounded objectives failed.
 
-`nan_region` and `inf_region` (`f`, `g` NaN or +inf for `x₀ > 0.5`) are the only runs where SciPy's `wolfe2`
+`nan_region` and `inf_region` (`f`, `g` NaN or +inf for `x₀ > 0.5`) are the other runs where SciPy's `wolfe2`
 **found** a step (`wolfe2_found` = `1`, `11110`): the fallback is not only a failure path. Under the #38 rule the
 Rust port stops at the last finite iterate instead.
 
