@@ -254,7 +254,7 @@ def _build_problems():
     f, g = quadratic(A, b)
     ps["quad5"] = Problem("quad5", 5, f, g, A=A, b=b, x_star=np.linalg.solve(A, b),
                           mu=float(np.linalg.eigvalsh(A)[0]),
-                          note="default_rng(0): A = G G^T + 5 I with G standard normal 5x5, b standard normal; SciPy probe of draft 12 section 2.2 row 6")
+                          note="default_rng(0): A = G G^T + 5 I with G standard normal 5x5, b standard normal; the probe on which SciPy's BFGS finishes a 5-dim SPD quadratic in n = 5 iterations")
     for kappa, name in ((1e2, "quad10_k1e2"), (1e4, "quad10_k1e4")):
         A = np.diag(np.logspace(0.0, math.log10(kappa), 10))
         b = np.ones(10)
@@ -300,11 +300,11 @@ def _specs():
         Spec("rosen2_b", "finite", "rosen2", [0.0, 0.0]),
         Spec("rosen2_c", "finite", "rosen2", [2.0, -1.0]),
         Spec("rosen2_tight", "finite", "rosen2", [-1.2, 1.0], gtol=1e-10),
-        Spec("rosen5", "finite", "rosen5", ROSEN5_X0, note="the 5-dim start of draft 12 probe 1"),
+        Spec("rosen5", "finite", "rosen5", ROSEN5_X0, note="the 5-dim Rosenbrock start (-1.2, 1, -1.2, 1, -1.2)"),
         Spec("himmelblau", "finite", "himmelblau", [1.0, 1.0]),
         Spec("beale", "finite", "beale", [1.0, 1.0]),
         Spec("powell", "finite", "powell", [3.0, -1.0, 0.0, 1.0], note="singular Hessian at the minimizer"),
-        Spec("quad5", "finite", "quad5", [0.0] * 5, gtol=1e-10, note="draft 12 section 2.2 row 6: SciPy finishes in n = 5 iterations"),
+        Spec("quad5", "finite", "quad5", [0.0] * 5, gtol=1e-10, note="SciPy finishes this 5-dim SPD quadratic in n = 5 iterations (11 evaluations)"),
         Spec("quad10_k1e2", "finite", "quad10_k1e2", [0.0] * 10, gtol=1e-8),
         Spec("quad10_k1e4", "finite", "quad10_k1e4", [0.0] * 10, gtol=1e-8),
         Spec("stationary", "finite", "halfsq3", [0.0, 0.0, 0.0], note="x0 is stationary: GradTol after one evaluation, no line search"),

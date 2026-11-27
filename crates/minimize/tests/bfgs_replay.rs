@@ -219,7 +219,7 @@ fn data_is_consistent() {
             r.id
         );
     }
-    // the SciPy probe of draft 12 (§2.2 row 6): BFGS finishes the 5-dim quadratic in n = 5 iterations
+    // the SciPy probe: BFGS finishes the 5-dim quadratic in n = 5 iterations
     let q = runs.iter().find(|r| r.id == "quad5").expect("quad5");
     assert_eq!((q.nit, q.nfev), (5, 11));
     assert_eq!(q.expected_termination(), Termination::GradTol);

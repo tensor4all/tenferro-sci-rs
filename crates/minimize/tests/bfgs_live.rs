@@ -5,7 +5,7 @@
 //! stops with `GradTol`. The objectives are evaluated here (`bfgs_common`), so counts and paths may
 //! differ from SciPy in the last bits of Rosenbrock-type valleys; they are therefore **reported**
 //! (`cargo test --test bfgs_live -- --nocapture` prints a table next to SciPy's), not asserted,
-//! except for the quadratic probe of draft 12 §2.2 row 6 (5 iterations on a 5-dim quadratic), where
+//! except for the quadratic probe (SciPy's BFGS finishes a 5-dim SPD quadratic in 5 iterations), where
 //! the path is the exact-ish one and SciPy's recorded counts are the claim.
 //!
 //! Solution bounds, all consequences of strong convexity with modulus `μ` on the segment `[x, x*]`
@@ -146,7 +146,7 @@ solution_tests!(
     quad10_k1e4,
 );
 
-/// SciPy's own probe (draft 12 §2.2 row 6): BFGS with its Moré–Thuente search finishes a 5-dim
+/// SciPy's own probe: BFGS with its Moré–Thuente search finishes a 5-dim
 /// SPD quadratic in n = 5 iterations and 11 evaluations. The claim here is SciPy's recorded counts.
 #[test]
 fn quadratic_probe_finishes_in_n_iterations() {
