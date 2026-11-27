@@ -1,10 +1,24 @@
-//! `dcstep`: the safeguarded step and interval update of Moré–Thuente §4.
+//! `dcstep`: the safeguarded step and interval update of Moré–Thuente §4 (p. 299–300).
 //!
-//! Stub: the step computation lands next.
+//! Ported from SciPy v1.16.3 (b9105ccc2237f57acb1060202cd77f6dd264fb34)
+//! scipy/optimize/_dcsrch.py (`dcstep`), a 2023 translation of MINPACK-2 dcstep (Argonne National
+//! Laboratory / University of Minnesota; see LICENSE-NOTICE-minpack2). Deviations:
+//!
+//! - Case 1 takes the cubic step on a strict `<` (`|stpc - stx| < |stpq - stx|`), as the paper
+//!   (p. 299), the MINPACK Fortran and SciPy's C copy in `__lbfgsb.c` do; `_dcsrch.py` has `<=`.
+//!   The two differ only on an exact tie with `stpc != stpq` (docs/upstream-issues.md).
+//! - Case 3 follows the MINPACK code (the farther step, the bound when the cubic is unsuitable,
+//!   the clip into `[stpmin, stpmax]`), not the paper's text, which says "closest" (§4, p. 300);
+//!   the paper's tables were produced by the code (p. 304).
+//! - The test `sgnd < 0` is `(dp < 0 && dx > 0) || (dp > 0 && dx < 0)`, not `np.sign(dp) *
+//!   np.sign(dx) < 0`: false for zeros and NaN, and independent of `signum(0.0) == 1`.
+//! - NaN propagates: `min`, `max` and `clip` pass it through (`crate::real`), where Python's
+//!   `min`/`max` and `np.clip` do whatever their argument order dictates. The caller turns a
+//!   non-finite step into `Reason::NonFiniteStep`.
+//! - No `mul_add`, squares are `x * x`, and the scaling by `s = max(|theta|, |dx|, |dp|)` against
+//!   overflow is kept.
 
-#![allow(dead_code)] // stub commit; removed when dcstep lands
-
-use crate::real::Real;
+use crate::real::{clip, max, min, Real};
 
 /// A point `(α, φ(α), φ'(α))` in the units of the caller (also the ψ form of §3).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -17,43 +31,189 @@ pub(crate) struct Pt<T> {
 /// Which branch of §4 (p. 299–300) produced the step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Case {
-    /// Case 1: a higher function value.
+    /// Case 1: a higher function value, `f(stp) > f(stx)`. The minimizer is bracketed.
     HigherValue,
-    /// Case 2: a lower value and derivatives of opposite sign.
+    /// Case 2: a lower value and derivatives of opposite sign. The minimizer is bracketed.
     OppositeSlopes,
-    /// Case 3: a lower value, same sign, the magnitude of the derivative decreases.
+    /// Case 3: a lower value, derivatives of the same sign, `|g(stp)| < |g(stx)|`.
     DecreasingSlope,
-    /// Case 4: a lower value, same sign, the magnitude does not decrease.
+    /// Case 4: a lower value, derivatives of the same sign, `|g(stp)| >= |g(stx)|`.
     SteepSlope,
 }
 
 /// Result of [`dcstep`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DcStep<T> {
+    /// The updated best point (stx, fx, gx).
     pub x: Pt<T>,
+    /// The updated other endpoint (sty, fy, gy).
     pub y: Pt<T>,
+    /// The new trial step (not yet bisected or clipped to the caller's bounds).
     pub stp: T,
+    /// Whether a minimizer is now bracketed.
     pub brackt: bool,
+    /// The branch taken.
     pub case: Case,
 }
 
-/// One safeguarded step (stub: returns its inputs).
+/// `(θ, s, γ² / s²)`-style scaled quantities of the cubic through two points, shared by Cases 1–4.
+/// `theta = 3 (f_a - f_b) / (a_b - a_a) + g_a + g_b` and `s = max(|theta|, |g_a|, |g_b|)`.
+fn theta_s<T: Real>(a: Pt<T>, b: Pt<T>) -> (T, T) {
+    let theta = T::from_f64(3.0) * (a.f - b.f) / (b.a - a.a) + a.g + b.g;
+    (theta, max(max(theta.abs(), a.g.abs()), b.g.abs()))
+}
+
+/// One safeguarded step and the interval update (§4, p. 299–300).
+///
+/// `x` is the best point (least function value), `y` the other endpoint of the interval, `t` the
+/// trial point; if `brackt`, `t` lies between `x` and `y`. `stpmin`/`stpmax` bound the step in
+/// Case 3 (extrapolation) and Case 4. Pure: nothing is mutated.
 pub(crate) fn dcstep<T: Real>(
     x: Pt<T>,
     y: Pt<T>,
     t: Pt<T>,
     brackt: bool,
-    _stpmin: T,
-    _stpmax: T,
+    stpmin: T,
+    stpmax: T,
 ) -> DcStep<T> {
+    let zero = T::from_f64(0.0);
+    let two = T::from_f64(2.0);
+    let (stx, fx, dx) = (x.a, x.f, x.g);
+    let (stp, fp, dp) = (t.a, t.f, t.g);
+    // sgnd < 0 of MINPACK: dp and dx have strictly opposite signs.
+    let opposite = (dp < zero && dx > zero) || (dp > zero && dx < zero);
+
+    let (case, stpf, brackt) = if fp > fx {
+        // Case 1: a higher function value. The minimum is bracketed. If the cubic step is closer
+        // to stx than the quadratic step, the cubic step is taken, otherwise the average of the
+        // two. Both lie within 2/3 and 1/2 of |stp - stx| of stx, so the result is within 7/12
+        // (p. 299), which implements the safeguard (2.5).
+        let (theta, s) = theta_s(x, t);
+        let mut gamma = s * ((theta / s) * (theta / s) - (dx / s) * (dp / s)).sqrt();
+        if stp < stx {
+            gamma = -gamma;
+        }
+        let p = (gamma - dx) + theta;
+        let q = ((gamma - dx) + gamma) + dp;
+        let r = p / q;
+        let stpc = stx + r * (stp - stx); // minimizer of the cubic interpolant (p. 299)
+        let stpq = stx + ((dx / ((fx - fp) / (stp - stx) + dx)) / two) * (stp - stx);
+        // strict `<`: the paper, MINPACK and the C copy (not `<=` of _dcsrch.py)
+        let stpf = if (stpc - stx).abs() < (stpq - stx).abs() {
+            stpc
+        } else {
+            stpc + (stpq - stpc) / two
+        };
+        (Case::HigherValue, stpf, true)
+    } else if opposite {
+        // Case 2: a lower value and derivatives of opposite sign. The minimum is bracketed. If the
+        // cubic step is farther from stp than the secant step, the cubic step is taken, otherwise
+        // the secant step (p. 299).
+        let (theta, s) = theta_s(x, t);
+        let mut gamma = s * ((theta / s) * (theta / s) - (dx / s) * (dp / s)).sqrt();
+        if stp > stx {
+            gamma = -gamma;
+        }
+        let p = (gamma - dp) + theta;
+        let q = ((gamma - dp) + gamma) + dx;
+        let r = p / q;
+        let stpc = stp + r * (stx - stp);
+        let stpq = stp + (dp / (dp - dx)) * (stx - stp);
+        let stpf = if (stpc - stp).abs() > (stpq - stp).abs() {
+            stpc
+        } else {
+            stpq
+        };
+        (Case::OppositeSlopes, stpf, true)
+    } else if dp.abs() < dx.abs() {
+        // Case 3: a lower value, derivatives of the same sign, and the magnitude of the derivative
+        // decreases (p. 300). The cubic step is computed only if the cubic tends to infinity in
+        // the direction of the step or if its minimum is beyond stp; otherwise it is the bound.
+        let (theta, s) = theta_s(x, t);
+        // gamma = 0 only arises if the cubic does not tend to infinity in the direction of the step
+        let radicand = (theta / s) * (theta / s) - (dx / s) * (dp / s);
+        let mut gamma = s * (if radicand < zero { zero } else { radicand }).sqrt();
+        if stp > stx {
+            gamma = -gamma;
+        }
+        let p = (gamma - dp) + theta;
+        let q = (gamma + (dx - dp)) + gamma;
+        let r = p / q;
+        let stpc = if r < zero && gamma != zero {
+            stp + r * (stx - stp)
+        } else if stp > stx {
+            stpmax
+        } else {
+            stpmin
+        };
+        let stpq = stp + (dp / (dp - dx)) * (stx - stp);
+        let stpf = if brackt {
+            // The paper's text says "closest" here and below; the code takes the cubic when it
+            // is closer to stp than the secant step if a minimizer is bracketed, and the farther
+            // one when it is not, which is what produced the paper's tables (p. 304).
+            let stpf = if (stpc - stp).abs() < (stpq - stp).abs() {
+                stpc
+            } else {
+                stpq
+            };
+            // never beyond 66% of the way to sty (the bisection safeguard of §2, p. 293)
+            let cap = stp + T::from_f64(BISECT_FRACTION) * (y.a - stp);
+            if stp > stx {
+                min(cap, stpf)
+            } else {
+                max(cap, stpf)
+            }
+        } else {
+            let stpf = if (stpc - stp).abs() > (stpq - stp).abs() {
+                stpc
+            } else {
+                stpq
+            };
+            clip(stpf, stpmin, stpmax)
+        };
+        (Case::DecreasingSlope, stpf, brackt)
+    } else {
+        // Case 4: a lower value, derivatives of the same sign, and the magnitude of the
+        // derivative does not decrease. If the minimum is not bracketed, the step is stpmin or
+        // stpmax, otherwise the cubic through stp and sty (p. 300).
+        let stpf = if brackt {
+            let (theta, s) = theta_s(t, y);
+            let mut gamma = s * ((theta / s) * (theta / s) - (y.g / s) * (dp / s)).sqrt();
+            if stp > y.a {
+                gamma = -gamma;
+            }
+            let p = (gamma - dp) + theta;
+            let q = ((gamma - dp) + gamma) + y.g;
+            let r = p / q;
+            stp + r * (y.a - stp)
+        } else if stp > stx {
+            stpmax
+        } else {
+            stpmin
+        };
+        (Case::SteepSlope, stpf, brackt)
+    };
+
+    // Update the interval which contains a minimizer.
+    let (x, y) = if fp > fx {
+        (x, t)
+    } else if opposite {
+        (t, x)
+    } else {
+        (t, y)
+    };
     DcStep {
         x,
         y,
-        stp: t.a,
+        stp: stpf,
         brackt,
-        case: Case::SteepSlope,
+        case,
     }
 }
+
+/// Case 3 never steps beyond this fraction of the way from stp to sty (δ = 0.66, p. 293; the
+/// same constant drives the bisection rule of `DCSRCH`).
+pub(crate) const BISECT_FRACTION: f64 = 0.66;
 
 #[cfg(test)]
 mod tests {
@@ -179,18 +339,17 @@ mod tests {
 
     #[test]
     fn case_one_takes_the_cubic_when_it_is_closer() {
-        // phi = a^3 - 3a^2 ... chosen so that |a_c - a_l| < |a_q - a_l|: a steep cubic rise.
-        // x = (0, 0, -1), t = (2, 8, 4): a_c < a_q.
+        // x = (0, 0, -1), t = (2, 8, 4) rises steeply: a_c = 0.289 < a_q = 0.667.
         let x = pt(0.0, 0.0, -1.0);
         let t = pt(2.0, 8.0, 4.0);
         let ac = cubic_min(x, t);
         let aq = quad_min(x, 2.0, 8.0);
         assert!(ac.abs() < aq.abs(), "test setup: {ac} vs {aq}");
         assert!(close(run(x, x, t, false).stp, ac, 1e-12));
-        // and the average when it is not: x = (0, 0, -1), t = (2, 1, 5): the cubic is farther
-        let t = pt(2.0, 1.0, -0.5);
+        // and the average when it is not: t = (2, 0.1, 3) has a_c = 1.187 > a_q = 0.952
+        let t = pt(2.0, 0.1, 3.0);
         let ac = cubic_min(x, t);
-        let aq = quad_min(x, 2.0, 1.0);
+        let aq = quad_min(x, 2.0, 0.1);
         assert!(ac.abs() >= aq.abs(), "test setup: {ac} vs {aq}");
         assert!(close(run(x, x, t, false).stp, 0.5 * (ac + aq), 1e-12));
     }
@@ -270,7 +429,7 @@ mod tests {
     fn case_four_bracketed_is_the_cubic_through_stp_and_y() {
         // Case 4 needs a lower value with a slope that does not shrink: phi(a) = -(a^3 - 3a) on
         // x = 2, stp = 2.5 (phi' = -9, -15.75), with y = 4 beyond. The step is the stationary
-        // point of the cubic through (stp, fp, dp) and (sty, fy, dy), here phi itself: a = sqrt(1).
+        // point of the cubic through (stp, fp, dp) and (sty, fy, dy), here phi itself: a = +-1.
         let f = |a: f64| -(a * a * a - 3.0 * a);
         let g = |a: f64| -(3.0 * a * a - 3.0);
         let (x, t, y) = (
@@ -283,7 +442,8 @@ mod tests {
         assert!(d.brackt);
         let want = cubic_min(t, y);
         assert!(close(d.stp, want, 1e-12), "{} vs {want}", d.stp);
-        assert!(close(d.stp, 1.0, 1e-12), "phi is the cubic: {}", d.stp);
+        // phi is itself a cubic, so the step is a stationary point of phi (phi' = 0 at a = +-1)
+        assert!(g(d.stp).abs() < 1e-12, "phi'({}) = {}", d.stp, g(d.stp));
     }
 
     #[test]
