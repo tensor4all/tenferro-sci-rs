@@ -88,6 +88,7 @@
 //! # Ok::<(), minimize::linesearch::Wolfe1Error>(())
 //! ```
 
+pub mod bfgs;
 pub mod lbfgs;
 pub mod linesearch;
 mod real;

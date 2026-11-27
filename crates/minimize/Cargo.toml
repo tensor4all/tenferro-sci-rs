@@ -11,4 +11,5 @@ categories = ["mathematics", "science"]
 publish = false
 
 [dependencies]
+colmat.workspace = true
 thiserror.workspace = true
