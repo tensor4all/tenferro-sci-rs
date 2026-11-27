@@ -23,13 +23,14 @@ compares, and writes nothing.
 |---|---|---|
 | ids, run/kind/group/fn, `task`, `reason`, `n_trials`, `phi_evals`, `dphi_evals`, flags, `dphi_n`, None-ness of every column | exact | they pin the path of every search |
 | steps (`alpha`, `stp`, `alpha1`), `phi`, inputs and coefficients | within 1e-12 relative | last bits of libm (`exp`, `sin`, `pow`) and BLAS (`np.dot`) differ by platform, and feed the next step; bitwise steps would pin them |
-| `dphi` (trials) | within max(1e-12 \|dphi\|, 4 n ε `dphi_scale`), ε = 2⁻⁵² | cancellation noise, below |
+| `dphi` (trials) | within max(1e-12 \|dphi\|, 4 n ε `dphi_scale`), ε = 2⁻⁵²: 4× the dot-product error bound | cancellation noise, below |
 
 The runs that converge at trial 1 (`lw1_line*`) have φ'(α) = ∇f·p ≈ 1e-15: pure cancellation noise
 of a BLAS dot product, whose sign and size depend on the summation order. A sum of n terms is
-computed to within γₙ Σ|terms|, γₙ = nε/(1 − nε) (Higham, *Accuracy and Stability of Numerical
-Algorithms*, 2nd ed., §3.1), so `dphi_scale` is Σ|terms| of φ' at that trial and `dphi_n` the
-number of terms and operations; the tolerance uses the committed values. The scale is:
+computed to within the dot-product error bound γₙ Σ|terms|, γₙ = nε/(1 − nε) ≈ nε (Higham,
+*Accuracy and Stability of Numerical Algorithms*, 2nd ed., §3.1). `dphi_scale` is Σ|terms| of φ' at
+that trial and `dphi_n` the number of terms and operations; the check allows 4× that bound,
+4·n·ε·`dphi_scale` (a margin for the platform differences), using the committed values. The scale is:
 
 - SciPy line runs: |p|ᵀ|M|(|x| + |α||p|) with M = 2I or A + Aᵀ, n = 42 (matrix-vector product, dot);
 - the closed quadratic of a line: 2|α|·S_A + S_B, the absolute sums of the dot-product terms

@@ -68,7 +68,9 @@ fn data_dir() -> PathBuf {
 }
 
 /// Read a CSV file of the data directory: `#` lines are comments, the first other line is the
-/// header. Returns the rows as column-name maps.
+/// header. Returns the rows as column-name maps. The format is unquoted by construction (the
+/// generator replaces commas in free text), so a quote or a backslash in a cell means a broken
+/// file and panics instead of being parsed leniently.
 pub fn read_csv(name: &str) -> Vec<HashMap<String, String>> {
     let path = data_dir().join(name);
     let text = std::fs::read_to_string(&path)
@@ -79,6 +81,10 @@ pub fn read_csv(name: &str) -> Vec<HashMap<String, String>> {
     let header: Vec<&str> = lines.next().expect("empty csv").split(',').collect();
     lines
         .map(|l| {
+            assert!(
+                !l.contains('"') && !l.contains('\\'),
+                "quote or escape in {name} (the format is unquoted): {l}"
+            );
             let cells: Vec<&str> = l.split(',').collect();
             assert_eq!(cells.len(), header.len(), "bad row in {name}: {l}");
             header
@@ -117,7 +123,7 @@ pub fn load_cases() -> Vec<Case> {
             (f(&row, "alpha"), f(&row, "phi"), f(&row, "dphi")),
         ));
     }
-    read_csv("cases.csv")
+    let cases: Vec<Case> = read_csv("cases.csv")
         .into_iter()
         .map(|row| {
             let id = row["id"].clone();
@@ -132,10 +138,7 @@ pub fn load_cases() -> Vec<Case> {
                 kind: row["kind"].clone(),
                 group: row["group"].clone(),
                 func: row["fn"].clone(),
-                p: ["p0", "p1", "p2"]
-                    .iter()
-                    .filter_map(|k| opt_f(&row, k))
-                    .collect(),
+                p: coefficients(&row),
                 phi0: f(&row, "phi0"),
                 old_phi0: opt_f(&row, "old_phi0"),
                 dphi0: f(&row, "dphi0"),
@@ -160,7 +163,37 @@ pub fn load_cases() -> Vec<Case> {
             assert_eq!(case.trials.len(), case.n_trials, "{}: trial count", case.id);
             case
         })
-        .collect()
+        .collect();
+    // every trial id must belong to a case row
+    let mut orphans: Vec<&String> = trials.keys().collect();
+    orphans.sort();
+    assert!(
+        orphans.is_empty(),
+        "trials.csv has trial rows for ids without a case row: {orphans:?}"
+    );
+    cases
+}
+
+/// The parameters p0..p2 of a row: exactly the number its function takes (`quad`: three,
+/// `shiftq`: one, every other function: none), as a gap-free prefix. Anything else is a broken
+/// row (a function's parameters are all-or-none, not a subset).
+fn coefficients(row: &HashMap<String, String>) -> Vec<f64> {
+    let p: Vec<Option<f64>> = ["p0", "p1", "p2"].iter().map(|k| opt_f(row, k)).collect();
+    let want = match row["fn"].as_str() {
+        "quad" => 3,
+        "shiftq" => 1,
+        _ => 0,
+    };
+    let present: Vec<f64> = p.iter().map_while(|v| *v).collect();
+    let total = p.iter().filter(|v| v.is_some()).count();
+    assert!(
+        present.len() == want && total == want,
+        "{}: function {} takes {want} parameter(s), the row has {total} of p0..p2 ({} as a prefix)",
+        row["id"],
+        row["fn"],
+        present.len()
+    );
+    present
 }
 
 pub fn case_by_id(id: &str) -> Case {

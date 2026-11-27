@@ -242,6 +242,9 @@ fn non_finite_config_values_are_rejected() {
     assert!(matches!(e, ConfigError::NonFinite), "stpmin -inf: {e:?}");
     let e = MoreThuenteConfig::new(1e-4, 0.9, 1e-14, 1e-8, f64::NAN).unwrap_err();
     assert!(matches!(e, ConfigError::NonFinite), "stpmax NaN: {e:?}");
+    // stpmax = -inf is rejected too: only +inf is the "no upper bound" special case
+    let e = MoreThuenteConfig::new(1e-4, 0.9, 1e-14, 1e-8, f64::NEG_INFINITY).unwrap_err();
+    assert!(matches!(e, ConfigError::NonFinite), "stpmax -inf: {e:?}");
 }
 
 #[test]
