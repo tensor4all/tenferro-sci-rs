@@ -170,6 +170,15 @@ pub struct Run {
     pub nfev: usize,
     pub wolfe2_calls: usize,
     pub wolfe2_first_eval: Option<usize>,
+    /// One `0`/`1` per `wolfe2` call: it returned a step.
+    pub wolfe2_found: String,
+    /// One `0`/`1` per `wolfe2` call: it warned (an exhausted `maxiter` returns the last trial, not a Wolfe step).
+    pub wolfe2_warned: String,
+    /// Trials minus evaluations: SciPy's `ScalarFunction` skips the evaluation at the previous point.
+    pub cache_hits: usize,
+    /// Applied updates with `yᵀs == 0` (SciPy's `ρ = 1000`) and with `yᵀs <= 0`.
+    pub n_rho1000: usize,
+    pub n_ys_nonpos: usize,
     pub wolfe1_fail: String,
     pub termination: String,
     pub parity: bool,
@@ -265,6 +274,11 @@ pub fn load_runs() -> Vec<Run> {
                 wolfe2_calls: count(&r, "wolfe2_calls"),
                 wolfe2_first_eval: (r["wolfe2_first_eval"] != "none")
                     .then(|| count(&r, "wolfe2_first_eval")),
+                wolfe2_found: r["wolfe2_found"].clone(),
+                wolfe2_warned: r["wolfe2_warned"].clone(),
+                cache_hits: count(&r, "cache_hits"),
+                n_rho1000: count(&r, "n_rho1000"),
+                n_ys_nonpos: count(&r, "n_ys_nonpos"),
                 wolfe1_fail: r["wolfe1_fail"].clone(),
                 termination: r["termination"].clone(),
                 parity: r["parity"] == "true",

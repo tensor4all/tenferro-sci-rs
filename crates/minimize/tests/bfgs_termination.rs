@@ -19,15 +19,17 @@
 //! curvature condition and ends at its limit of 100 trials on the first line search, in exact arithmetic, so no
 //! rounding can change a decision) and asserts that the state asks for exactly the 101 evaluations SciPy made
 //! before it called `wolfe2` (x₀ and 100 trials), then stops: no further request, no step, the starting
-//! iterate reported. **SciPy's `wolfe2` finds a step there and the run goes on**: this is the recorded place
-//! where the port and SciPy diverge for good. The other fallback runs of the data (`w2_neggrad`, `w2_l1`,
-//! `w2_noisy`, `w2_pert`) fail through effects at rounding level, so the number of trials before DCSRCH gives up
-//! depends on the last bits of the direction (a correct state stops `w2_neggrad` after 24 trials, SciPy after
-//! 48): they are data, not asserted. The fallback runs are constructed problems (data README).
+//! iterate reported. **SciPy's `wolfe2` returns a step there and the run goes on**: not a Wolfe step but its last
+//! trial after ten doublings (it warns, and `_line_search_wolfe12` silences the warning); with `y = 0` after that
+//! step SciPy even reaches its `ρ = 1000` branch. This is the recorded place where the port and SciPy part for
+//! good. The other fallback runs of the data (`w2_neggrad`, `w2_l1`, `w2_noisy`, `w2_pert`) fail in the rounding
+//! regime, where SciPy's `ScalarFunction` skips the evaluation at a point equal to the previous one, so its
+//! recorded evaluations are fewer than its trials (`cache_hits` in the data) and cannot be matched to trials one
+//! to one: they are data, not asserted. The fallback runs are constructed problems (data README).
 //!
 //! Open question for the maintainer, deliberately **not** pinned here: what an iteration does with
-//! `yᵀs <= 0` (SciPy: `ρ = 1000` at exactly 0, a negative `ρ` otherwise; the plan proposes a skip or
-//! a stop). With a strong Wolfe step `yᵀs > 0` (`bfgs_properties.rs`), so SciPy's branch is dead code in
+//! `yᵀs <= 0` (SciPy: `ρ = 1000` at exactly 0, a negative `ρ` otherwise; a skip or a stop are the
+//! alternatives). With a strong Wolfe step `yᵀs > 0` (`bfgs_properties.rs`), so SciPy's branch is dead code in
 //! exact arithmetic.
 //!
 //! Status in the red stage: every test here fails (the stub ends every run before the first evaluation).
@@ -178,6 +180,13 @@ fn line_search_failed_replays_scipy_fallback_case() {
         run.wolfe1_fail
     );
     assert_eq!(run.nit, 1, "SciPy took a wolfe2 step; the port must not");
+    // the step SciPy took is wolfe2's exhausted-maxiter return: found, but with a warning (not a Wolfe step)
+    assert_eq!(
+        (run.wolfe2_found.as_str(), run.wolfe2_warned.as_str()),
+        ("1", "1")
+    );
+    // and its pair has yᵀs = 0 exactly, so SciPy applied its ρ = 1000 branch
+    assert_eq!((run.n_rho1000, run.cache_hits), (1, 0));
     assert!(run.nfev > n0, "SciPy went on to evaluate wolfe2's trials");
 
     let r = replay(&run, None);
@@ -209,10 +218,14 @@ fn line_search_failed_replays_scipy_fallback_case() {
     // the trials were the extrapolation sequence of DCSRCH on a linear function: the 100th is evaluated
     // but never told (SciPy's `for i in range(maxiter)` counts START as an iteration)
     for (i, x) in r.asked.iter().enumerate() {
-        assert_eq!(
-            x, &run.evals[i].x,
-            "request {i}: the data is exact arithmetic, so the points are equal"
-        );
+        // exact arithmetic on both sides; a relative 1e-12 allows a reordered expression without hiding a
+        // different step
+        for (j, (a, b)) in x.iter().zip(&run.evals[i].x).enumerate() {
+            assert!(
+                (a - b).abs() <= 1e-12 * (1.0 + b.abs()),
+                "request {i}[{j}]: {a:e} vs SciPy {b:e}"
+            );
+        }
     }
 }
 

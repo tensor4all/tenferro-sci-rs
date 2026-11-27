@@ -17,9 +17,10 @@
 //! of Nocedal & Wright, `scalar_search_wolfe2`) when `wolfe1` returns `None`; this crate has no
 //! zoom search yet, so there the run stops with [`Termination::LineSearchFailed`] and takes no step,
 //! where SciPy would try `wolfe2`. In the recorded cases `wolfe2` fails as well on noisy, nonsmooth
-//! and inconsistent objectives (SciPy ends with status 2, after more evaluations), but it **finds
-//! a step** on an objective that is unbounded below (SciPy takes it and goes on): there the runs
-//! diverge for good, and the recorded case `w2_unbounded` pins where. The data in
+//! and inconsistent objectives (SciPy ends with status 2, after more evaluations), but it **returns
+//! a step** on an objective that is unbounded below (its last trial after `maxiter`, with a
+//! `LineSearchWarning` that SciPy silences, so not a Wolfe step; SciPy takes it and goes on): there the
+//! runs diverge for good, and the recorded case `w2_unbounded` pins where. The data in
 //! `tests/data/bfgs/README.md` records, per run, whether the fallback fired.
 //!
 //! **Red stage:** the types and the Vec-based plumbing exist; the algorithm is not written, so

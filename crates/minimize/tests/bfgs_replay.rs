@@ -208,6 +208,9 @@ fn data_is_consistent() {
             r.id
         );
         if r.parity {
+            // one evaluation per trial, and every update the run applied had yᵀs > 0 (strong Wolfe steps only)
+            assert_eq!(r.cache_hits, 0, "{}: SciPy skipped evaluations", r.id);
+            assert_eq!((r.n_rho1000, r.n_ys_nonpos), (0, 0), "{}", r.id);
             assert!(r.hess.is_some(), "{}: parity runs record the final H", r.id);
             assert!(r.evals.iter().all(|e| e.x_scale.is_some()), "{}", r.id);
         }
