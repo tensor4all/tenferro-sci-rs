@@ -1,15 +1,37 @@
-//! The L-BFGS iteration as an ask/tell state machine.
+//! The L-BFGS iteration as an ask/tell state machine on [`MoreThuente`].
 //!
-//! The driver semantics are derived from reading SciPy v1.16.3 (commit `b9105ccc2237f57acb1060202cd77f6dd264fb34`)
-//! `scipy/optimize/__lbfgsb.c` (`mainlb`, `lnsrlb`) and `scipy/optimize/_lbfgsb_py.py` (`_minimize_lbfgsb`); see the
-//! module docs of [`super`] and `tests/data/lbfgs/README.md`. The shape (`new`/`ask`/`tell`, `Step`) is the design
-//! sketch of tensor4all-meta `docs/design/tenferro-sci.md` § Optimizers.
+//! Driver semantics derived from reading SciPy `__lbfgsb.c` `mainlb`/`lnsrlb` (v1.16.3, b9105ccc2237f57acb1060202cd77f6dd264fb34)
+//! and `_lbfgsb_py.py` (`_minimize_lbfgsb`): the order of the tests after an accepted step (maxiter, maxfun, gradient,
+//! function), the counting of trials against `maxls`, the reset to steepest descent with a unit step after a failed
+//! search, the first trial step `min(1/‖d‖, 1e10)`, and the acceptance of a Moré–Thuente warning as the new iterate.
+//! The Rust control flow follows SciPy's but is not a line-by-line translation (SciPy works in the compact
+//! representation with bounds; this is the two-loop recursion on the unconstrained path). SciPy is BSD-3-Clause, and
+//! the L-BFGS-B code it translates is by Zhu, Byrd, Lu, Nocedal and Morales: see `LICENSE-NOTICE-lbfgsb` and
+//! `LICENSE-BSD-3-Clause-scipy` in the crate. The two-loop recursion and the ring buffer are written independently
+//! (`twoloop.rs`, `memory.rs`). The shape (`new`/`ask`/`tell`, `Step`) is the design sketch of tensor4all-meta
+//! `docs/design/tenferro-sci.md` § Optimizers.
 //!
-//! **Red stage:** [`LbfgsState::ask`] returns [`Step::Converged`] immediately and [`LbfgsState::tell`] ignores its
-//! arguments, so every behavioural test fails.
+//! Departures from SciPy, each listed in the crate docs: non-finite values stop the run at the last finite iterate
+//! (decision (b) of #38); the trial point is always `x + α d` (SciPy copies a precomputed `z` when `α = 1`); no
+//! restart when SciPy's Cholesky factorization of the middle matrix fails (the two-loop form has none).
+//!
+//! # Order of work in `tell`
+//!
+//! 1. the first evaluation (at `x0`) is checked for finiteness and the gradient test, then the first search starts
+//!    with `d = −g` and the step `min(1/‖d‖, 1e10)`;
+//! 2. later evaluations go to the line search (φ = f, φ' = gᵀd). If it asks for another trial and `maxls` trials have
+//!    been evaluated, the search fails (the next trial is never requested); a non-finite φ or φ' ends the run;
+//! 3. if it ends in a convergence or a warning, the last trial is the new iterate and the tests run in SciPy's order:
+//!    `maxiter`, `maxfun` (strict), `‖g‖∞ ≤ gtol`, one-sided `ftol`; then the pair `(s, y)` is offered to the memory
+//!    and the next direction and search start;
+//! 4. a failed search (or a direction with `gᵀd ≥ 0`) restores nothing (the accepted iterate was never overwritten)
+//!    and either ends the run (empty memory) or empties the memory and retries with `d = −g` and the unit step.
 
 use super::config::LbfgsConfig;
-use super::memory::Memory;
+use super::config::H0;
+use super::memory::{Memory, Push};
+use super::twoloop::twoloop;
+use crate::linesearch::{MoreThuente, Reason, Step as LsStep};
 use crate::vector::Vector;
 
 /// Why the iteration stopped.
@@ -93,14 +115,16 @@ pub struct LbfgsState<V: Vector> {
     f: f64,
     g: V,
     // Workspace of the iteration, allocated in `new` (cloned from `x0`).
-    #[allow(dead_code)]
     x_trial: V,
-    #[allow(dead_code)]
     d: V,
-    #[allow(dead_code)]
+    s: V,
+    y: V,
     mem: Memory<V>,
-    #[allow(dead_code)]
     alpha: Vec<f64>,
+    // The search in progress, `φ'(0) = gᵀd` of its start and the trials evaluated in it.
+    ls: Option<MoreThuente>,
+    gd0: f64,
+    trials: usize,
     iterations: usize,
     evaluations: usize,
     skipped: usize,
@@ -129,16 +153,20 @@ impl<V: Vector> LbfgsState<V> {
             g: x0.clone(),
             x_trial: x0.clone(),
             d: x0.clone(),
+            s: x0.clone(),
+            y: x0.clone(),
             mem: Memory::new(cfg.m(), &x0),
             alpha: vec![0.0; cfg.m()],
             x: x0,
             f: f64::NAN,
+            ls: None,
+            gd0: 0.0,
+            trials: 0,
             iterations: 0,
             evaluations: 0,
             skipped: 0,
             restarts: 0,
-            // Stub: ends at once.
-            terminated: Some(Termination::LineSearchFailed),
+            terminated: None,
         }
     }
 
@@ -175,8 +203,16 @@ impl<V: Vector> LbfgsState<V> {
     /// assert_eq!((state.evaluations(), state.iterations()), (1, 0));
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
-    pub fn tell(&mut self, _cfg: &LbfgsConfig, _ctx: &mut V::Ctx, _f: f64, _grad: &V) {
-        // Stub: ignores the evaluation.
+    pub fn tell(&mut self, cfg: &LbfgsConfig, ctx: &mut V::Ctx, f: f64, grad: &V) {
+        if self.terminated.is_some() {
+            return;
+        }
+        self.evaluations += 1;
+        if self.evaluations == 1 {
+            self.tell_start(cfg, ctx, f, grad);
+        } else {
+            self.tell_trial(cfg, ctx, f, grad);
+        }
     }
 
     /// The current accepted iterate (the starting point before the first iteration; after
@@ -304,5 +340,145 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     pub fn restarts(&self) -> usize {
         self.restarts
+    }
+}
+
+impl<V: Vector> LbfgsState<V> {
+    /// The evaluation at `x0`: finiteness, gradient test, first search.
+    fn tell_start(&mut self, cfg: &LbfgsConfig, ctx: &mut V::Ctx, f: f64, grad: &V) {
+        // `norm_inf` is NaN for a NaN entry and infinite for an infinite one.
+        let gnorm = grad.norm_inf(ctx);
+        if !(f.is_finite() && gnorm.is_finite()) {
+            self.terminated = Some(Termination::NonFiniteValue);
+            return;
+        }
+        self.f = f;
+        self.g.clone_from(grad);
+        if gnorm <= cfg.gtol() {
+            self.terminated = Some(Termination::GradTol);
+            return;
+        }
+        self.start_search(cfg, ctx);
+    }
+
+    /// An evaluation at a trial point of the search in progress.
+    fn tell_trial(&mut self, cfg: &LbfgsConfig, ctx: &mut V::Ctx, f: f64, grad: &V) {
+        let dphi = grad.dot(ctx, &self.d);
+        self.trials += 1;
+        let step = match self.ls.as_mut() {
+            Some(ls) => ls.tell(cfg.line_search(), f, dphi),
+            None => return,
+        };
+        match step {
+            LsStep::Evaluate { alpha } => {
+                if self.trials >= cfg.maxls() {
+                    // SciPy's `iback >= maxls`: the next trial is not requested.
+                    self.search_failed(cfg, ctx);
+                } else {
+                    self.set_trial(ctx, alpha);
+                }
+            }
+            LsStep::Done(t) => match t.reason {
+                Reason::NonFiniteValue => self.terminated = Some(Termination::NonFiniteValue),
+                Reason::NonFiniteStep => self.search_failed(cfg, ctx),
+                // convergence and every warning: the last trial is the new iterate
+                _ => self.accept(cfg, ctx, f, grad, t.alpha, t.dphi),
+            },
+        }
+    }
+
+    /// `x_trial = x + α d`.
+    fn set_trial(&mut self, ctx: &mut V::Ctx, alpha: f64) {
+        self.x_trial.clone_from(&self.x);
+        self.x_trial.axpy(ctx, alpha, &self.d);
+    }
+
+    /// Takes the last trial `(x_trial, f, grad)` as the iterate, runs the termination tests in SciPy's order, offers the
+    /// pair to the memory and starts the next search. `alpha` and `dphi` are the step and `gᵀd` of that trial.
+    fn accept(
+        &mut self,
+        cfg: &LbfgsConfig,
+        ctx: &mut V::Ctx,
+        f: f64,
+        grad: &V,
+        alpha: f64,
+        dphi: f64,
+    ) {
+        // y = g_new − g_old, s = α d (before g and x are overwritten)
+        self.y.clone_from(grad);
+        self.y.axpy(ctx, -1.0, &self.g);
+        self.s.clone_from(&self.d);
+        self.s.scale(ctx, alpha);
+        let f_old = self.f;
+        self.x.clone_from(&self.x_trial);
+        self.g.clone_from(grad);
+        self.f = f;
+        self.ls = None;
+        self.iterations += 1;
+
+        if self.iterations >= cfg.maxiter() {
+            self.terminated = Some(Termination::MaxIter);
+            return;
+        }
+        if self.evaluations > cfg.maxfun() {
+            self.terminated = Some(Termination::MaxEval);
+            return;
+        }
+        if self.g.norm_inf(ctx) <= cfg.gtol() {
+            self.terminated = Some(Termination::GradTol);
+            return;
+        }
+        if f_old - f <= cfg.ftol() * f_old.abs().max(f.abs()).max(1.0) {
+            self.terminated = Some(Termination::FTol);
+            return;
+        }
+
+        // SciPy: dr = (gd − gdold) stp, ddum = −gdold stp, rr = yᵀy.
+        let dr = (dphi - self.gd0) * alpha;
+        let ddum = -self.gd0 * alpha;
+        let rr = self.y.dot(ctx, &self.y);
+        if self.mem.push(&self.s, &self.y, dr, ddum, rr) == Push::Skipped {
+            self.skipped += 1;
+        }
+        self.start_search(cfg, ctx);
+    }
+
+    /// Computes `d = −H g` from the memory and starts a line search from the current iterate; if that is impossible
+    /// (`gᵀd ≥ 0`, or a non-finite start), it is a failed search.
+    fn start_search(&mut self, cfg: &LbfgsConfig, ctx: &mut V::Ctx) {
+        let gamma = match cfg.h0() {
+            H0::ScaledGamma => self.mem.gamma(),
+            H0::FixedIdentity => 1.0,
+        };
+        twoloop(&self.mem, ctx, gamma, &self.g, &mut self.d, &mut self.alpha);
+        self.d.scale(ctx, -1.0);
+        self.gd0 = self.g.dot(ctx, &self.d);
+        self.trials = 0;
+        // SciPy: the first search of a run starts at min(1/‖d‖, stpmax), every other one (a retry included) at 1.
+        let alpha0 = if self.iterations == 0 {
+            (1.0 / self.d.norm(ctx)).min(cfg.line_search().stpmax())
+        } else {
+            1.0
+        };
+        match MoreThuente::start(cfg.line_search(), self.f, self.gd0, alpha0) {
+            Ok((ls, LsStep::Evaluate { alpha })) => {
+                self.ls = Some(ls);
+                self.set_trial(ctx, alpha);
+            }
+            Ok((_, LsStep::Done(_))) | Err(_) => self.search_failed(cfg, ctx),
+        }
+    }
+
+    /// A failed search: the iterate was never overwritten, so nothing is restored. With an empty memory the run ends;
+    /// otherwise the memory is emptied and the search restarts from steepest descent without counting an iteration.
+    fn search_failed(&mut self, cfg: &LbfgsConfig, ctx: &mut V::Ctx) {
+        self.ls = None;
+        if self.mem.len() == 0 {
+            self.terminated = Some(Termination::LineSearchFailed);
+        } else {
+            self.mem.clear();
+            self.restarts += 1;
+            self.start_search(cfg, ctx);
+        }
     }
 }

@@ -1,8 +1,5 @@
 //! Limited-memory BFGS: the unconstrained path of SciPy's `L-BFGS-B` (`bounds=None`), as an ask/tell state machine.
 //!
-//! **Red stage (tensor4all/tenferro-sci-rs#40).** This module holds the public types and stubs the tests are
-//! written against; the iteration itself is not implemented yet, so the behavioural tests fail by design.
-//!
 //! # Scalar type
 //!
 //! Everything is `f64` for now, and `LbfgsConfig` is not generic. This is provisional: it becomes generic over the
@@ -24,16 +21,13 @@
 //! `lnsrlb`) and `scipy/optimize/_lbfgsb_py.py` (`_minimize_lbfgsb`), and the code is validated against recorded runs
 //! of that version. The Rust control flow follows SciPy's, but it is not a line-by-line translation: SciPy works in the
 //! compact representation with bounds, this is the two-loop recursion on the unconstrained path. SciPy is BSD-3-Clause
-//! and the L-BFGS-B code it translates is by Zhu, Byrd, Lu, Nocedal and Morales; the NOTICE for that chain is added
-//! with the implementation. Optim.jl and LineSearches.jl were read as references only; nothing is ported.
+//! and the L-BFGS-B code it translates is by Zhu, Byrd, Lu, Nocedal and Morales; the NOTICE for that chain is
+//! `LICENSE-NOTICE-lbfgsb`. Optim.jl and LineSearches.jl were read as references only; nothing is ported.
 
 mod config;
 mod driver;
-// Red stage: the stubs of `memory` and `twoloop` are not called by the (still stubbed) state machine yet.
-#[allow(dead_code)]
 pub(crate) mod memory;
 mod state;
-#[allow(dead_code)]
 pub(crate) mod twoloop;
 
 pub use config::{ConfigError, LbfgsConfig, H0};
