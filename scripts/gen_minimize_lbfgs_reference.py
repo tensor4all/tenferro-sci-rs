@@ -189,8 +189,8 @@ def wa_layout(n, m):
 
 # cap (line searches) of the capped runs = the minimum over the platforms checked so far of the largest prefix inside
 # the bounds: macOS arm64 (Accelerate) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (OpenBLAS), CI run 46132168523 of
-# PR #41: 7, 16, 15, 29, 26 (m1_rosen5, m1_quad10_k1e2, m1_powell4, m3_rosen5, m3_quad10_k1e2).
-FIXED_CAPS = {"m1_rosen5": 7, "m1_quad10_k1e2": 15, "m1_powell4": 15, "m3_rosen5": 26, "m3_quad10_k1e2": 26}
+# PR #41: 7, 16, 15, 29, 26 (earlier selection code; superseded for m3_rosen5 by CI run 46133315711: first search outside = 25, so 25) (m1_rosen5, m1_quad10_k1e2, m1_powell4, m3_rosen5, m3_quad10_k1e2).
+FIXED_CAPS = {"m1_rosen5": 7, "m1_quad10_k1e2": 15, "m1_powell4": 15, "m3_rosen5": 25, "m3_quad10_k1e2": 26}
 TIGHT_GTOL = {"quad5_k1": 1e-9, "quad5_k1e2": 1e-6, "quad5_k1e4": 1e-9, "quad10_k1e2": 1e-5}
 SEARCH_PICKS = {"restart_f_tol": ("rosen5", 3), "restart_grad_tol": ("rosen2", 2), "restart_line_search_failed": ("rosen2_far", 2)}
 # live rows outside the replay bounds on macOS (SciPy's own direction is inaccurate there): counts only, on every platform
@@ -443,6 +443,8 @@ SEARCHES: list[dict] = []
 PAIRS: list[dict] = []
 CAPS: list[dict] = []
 LAST_SERIES: list = []
+CHECK_MODE = False
+BOUND_FAILURES: list[str] = []  # in --check mode: bound violations on this platform, reported with the summary
 DIVERGENCES: list[tuple[str, str, str, str, str]] = []
 
 
@@ -468,16 +470,16 @@ def rollback(snap):
     del CAPS[snap[5]:]
 
 
-def run(rid, group, problem, note="", x0=None, cap=None, replayable=True, **overrides):
+def run(rid, group, problem, note="", x0=None, cap=None, replayable=True, probe=False, **overrides):
     snap = snapshot()
     try:
-        return run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides)
+        return run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **overrides)
     except OutOfRegime:
         rollback(snap)
         raise
 
 
-def run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides):
+def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **overrides):
     opts = dict(DEFAULTS)
     opts.update(overrides)
     if cap is not None:
@@ -610,6 +612,9 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides):
         replay = 0
         del EVALS[snap[1]:], SEARCHES[snap[2]:], PAIRS[snap[3]:]
         local_pairs.clear()
+    elif bad and CHECK_MODE and not probe:
+        # --check: report and go on, so that one violation never hides the other comparisons
+        BOUND_FAILURES.append(f"{rid}: line search {bad[0]} is outside the bounds on this platform (mirror {series[bad[0]][0]:.2f} > {C_X // 4} or direction {series[bad[0]][1]:.2f} > {C_DIR // 2})")
     elif bad:
         raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 4}"
                           f" or direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
@@ -662,14 +667,17 @@ def capped(rid, group, problem, **kw):
     if rid not in FIXED_CAPS:
         return run(rid, group, problem, **kw)  # never capped: must stay inside the bounds
     cap = FIXED_CAPS[rid]
-    first_bad = None
     try:
-        run(rid, group, problem, **kw)
+        run(rid, group, problem, probe=True, **kw)
         raise CapOutside(f"{rid}: the uncapped run is inside the bounds here; the committed cap {cap} is stale")
     except OutOfRegime as e:
         first_bad, series = e.first_bad, e.series
     if first_bad is None or first_bad < cap:
-        raise CapOutside(f"{rid}: the committed cap {cap} is outside the bounds here (first search outside: {first_bad})")
+        msg = f"{rid}: the committed cap {cap} is outside the bounds here (first search outside: {first_bad})"
+        if not CHECK_MODE:
+            raise CapOutside(msg)
+        BOUND_FAILURES.append(msg)  # --check: report, and build the row with the largest prefix inside the bounds here
+        cap = max(first_bad or 1, 1)
     return run(rid, group, problem, cap=(cap, series, first_bad), **kw)
 
 
@@ -1012,8 +1020,12 @@ def check(new, data):
         print(f"  {name:13s} {col:7s} compared {st['n']:6d}  outside tolerance {st['bad']:5d}  largest |diff| {st['maxabs']:.3e}  largest rel diff {st['maxrel']:.3e}  largest ratio {st['maxratio']:.3f}")  # fmt: skip
     for l in sample:
         print("  FLOAT MISMATCH", l)
-    failed = n_exact + bad_total
-    print("check:", "FAILED" if failed else "ok", f"({n_exact} exact, {bad_total} trajectory outside tolerance)")
+    print("== bounds on this platform (mirror ratio <= C_X/4, SciPy direction <= C_DIR/2, every search up to a cap)")
+    for l in BOUND_FAILURES:
+        print("  OUT OF BOUNDS", l)
+    print(f"  {len(BOUND_FAILURES)} violations" if BOUND_FAILURES else "  all inside")
+    failed = n_exact + bad_total + len(BOUND_FAILURES)
+    print("check:", "FAILED" if failed else "ok", f"({n_exact} exact, {bad_total} trajectory outside tolerance, {len(BOUND_FAILURES)} out of bounds)")
     return 1 if failed else 0
 
 
@@ -1042,14 +1054,9 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--data", type=Path, default=DATA)
     args = ap.parse_args()
-    try:
-        cases()
-    except (CapOutside, OutOfRegime) as e:
-        if not args.check:
-            raise
-        print(f"OUT OF BOUNDS on this platform: {e}")
-        print("check: FAILED (the committed data leave the replay bounds here; shorten the prefix, never raise the constant)")
-        sys.exit(1)
+    global CHECK_MODE
+    CHECK_MODE = args.check
+    cases()
     coverage()
     scripted_checks()
     new = texts()
