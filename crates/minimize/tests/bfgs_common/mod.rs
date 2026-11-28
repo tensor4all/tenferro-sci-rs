@@ -179,6 +179,11 @@ pub struct Run {
     /// Applied updates with `yᵀs == 0` (SciPy's `ρ = 1000`) and with `yᵀs <= 0`.
     pub n_rho1000: usize,
     pub n_ys_nonpos: usize,
+    /// Observed maxima of the generator's replay mirror (README, "Calibration"); NaN for non-parity runs.
+    pub x_ratio_max: f64,
+    pub x_env_max: f64,
+    pub dir_ratio_max: f64,
+    pub dir_env_max: f64,
     pub wolfe1_fail: String,
     pub termination: String,
     pub parity: bool,
@@ -279,6 +284,10 @@ pub fn load_runs() -> Vec<Run> {
                 cache_hits: count(&r, "cache_hits"),
                 n_rho1000: count(&r, "n_rho1000"),
                 n_ys_nonpos: count(&r, "n_ys_nonpos"),
+                x_ratio_max: r["x_ratio_max"].parse().unwrap_or(f64::NAN),
+                x_env_max: r["x_env_max"].parse().unwrap_or(f64::NAN),
+                dir_ratio_max: r["dir_ratio_max"].parse().unwrap_or(f64::NAN),
+                dir_env_max: r["dir_env_max"].parse().unwrap_or(f64::NAN),
                 wolfe1_fail: r["wolfe1_fail"].clone(),
                 termination: r["termination"].clone(),
                 parity: r["parity"] == "true",

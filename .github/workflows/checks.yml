@@ -113,6 +113,11 @@ jobs:
       - name: Compare the regenerated L-BFGS data with the committed CSVs
         run: uv run scripts/gen_minimize_lbfgs_reference.py --check
 
+      # The BFGS data (SciPy 1.16.3, NumPy 2.3.5, mpmath 1.3.0): counts, decisions and text exactly, floats within the replay
+      # envelope (1e-8 relative to the run's maximum), diagnostic ratios against their bounds; a per-column summary on failure.
+      - name: Compare the regenerated BFGS data with the committed CSVs
+        run: uv run scripts/gen_minimize_bfgs_reference.py --check
+
   msrv:
     name: msrv
     if: inputs.tenferro == 'release'

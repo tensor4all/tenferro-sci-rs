@@ -212,6 +212,17 @@ fn data_is_consistent() {
             assert_eq!(r.cache_hits, 0, "{}: SciPy skipped evaluations", r.id);
             assert_eq!((r.n_rho1000, r.n_ys_nonpos), (0, 0), "{}", r.id);
             assert!(r.hess.is_some(), "{}: parity runs record the final H", r.id);
+            // the calibration is data: the observed maxima of the generator's mirror stay a quarter of the constants
+            assert!(
+                r.x_ratio_max <= REPLAY_C / 4.0 && r.dir_ratio_max <= REPLAY_C / 4.0,
+                "{}: ratio maxima",
+                r.id
+            );
+            assert!(
+                r.x_env_max <= ENVELOPE / 4.0 && r.dir_env_max <= ENVELOPE / 4.0,
+                "{}: envelope maxima",
+                r.id
+            );
             assert!(r.evals.iter().all(|e| e.x_scale.is_some()), "{}", r.id);
         }
         // the fallback runs record where wolfe2 began; the others do not

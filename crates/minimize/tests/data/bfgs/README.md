@@ -9,7 +9,7 @@ SciPy 1.16.3 runs of `scipy.optimize.minimize(fun, x0, jac=True, method="BFGS", 
 | File | Contents |
 |---|---|
 | `problems.csv` | the test functions: dimension, quadratic data `A`, `b` (numpy's generator is not mirrored in Rust), minimizer, a strong-convexity bound `mu` |
-| `runs.csv` | one row per run: the exact SciPy call and every option, `status`, `message`, `nit`, `nfev`, `njev`, `wolfe2_calls`, where the fallback began, whether it returned a step and whether it warned, why `wolfe1` failed, `cache_hits`, the number of updates with `yᵀs == 0` and `<= 0`, the expected Rust termination, `parity` |
+| `runs.csv` | one row per run (with the observed `x_ratio_max`, `x_env_max`, `dir_ratio_max`, `dir_env_max` of the replay mirror): the exact SciPy call and every option, `status`, `message`, `nit`, `nfev`, `njev`, `wolfe2_calls`, where the fallback began, whether it returned a step and whether it warned, why `wolfe1` failed, `cache_hits`, the number of updates with `yᵀs == 0` and `<= 0`, the expected Rust termination, `parity` |
 | `evals.csv` | every `(x, f, g)` SciPy asked for, in order, with the rounding scale `x_scale` of the requested point |
 | `iters.csv` | every line search: `x_k`, `f_k`, `g_k`, SciPy's direction `p_k`, the exact (mpmath) direction `d_exact` and its scale, the step, `yᵀs` of the pair and whether the update was applied, the evaluation range |
 | `hess_final.csv` | SciPy's final `hess_inv`, the exact (mpmath) matrix from SciPy's pairs, and the scale |
@@ -124,22 +124,49 @@ tolerance for the replay's end-to-end difference: measured 2·10⁻¹² on the e
 branch, a wrong step or a wrong update does (those move the next iterate by O(α‖p‖) or change the evaluation count). The README does not claim the envelope is a theorem; it is an observed envelope with a margin. **Do not loosen
 either term without writing why.**
 
+## Calibration of the constants
+
+`C = 64` (`REPLAY_C`) and `ENVELOPE = 1e-8` are **calibrated constants**, not derived ones: the generator measures them on
+every run of this data (`runs.csv` columns `x_ratio_max`, `x_env_max`, `dir_ratio_max`, `dir_env_max`, one per parity run;
+the replay failure messages print the observed maxima and the bounds for the run under test) and refuses to write data whose
+maxima exceed a quarter of the constant.
+
+| Quantity | Observed maximum over the 16 parity runs | Run | Bound | Margin |
+|---|---|---|---|---|
+| requested point, `\|diff\| / (n ε x_scale)` | 10.3 | `quad10_k1e4` | C = 64 | 6× |
+| requested point, `\|diff\| / (1 + ‖x‖∞)` | 2.0·10⁻¹² | `rosen2_c` | 1e-8 | 5000× |
+| direction, `\|diff\| / (n ε d_scale)` | 0.235 | `himmelblau` | C = 64 | 270× |
+| direction, `\|diff\| / ‖d‖∞` | 4.5·10⁻¹¹ | `rosen5` | 1e-8 | 220× |
+| final `H`, `\|diff\| / (n ε h_scale)` | 0.0116 | `quad5` | C = 64 | 5500× |
+| final `H`, `\|diff\| / ‖H‖∞` | 9.1·10⁻¹⁴ | (all) | 1e-8 | 10⁵× |
+
+Nothing is capped: every parity run is replayed from its first evaluation to its last, with the whole of its recorded
+path (no `maxiter` prefix); the only "cap" is the minimum of the two terms in the formula above, and both terms are
+computed from data columns (`x_scale`, `d_scale`, `h_scale`). Where the strict term is vacuous (`x_scale` up to 10³⁶
+after many updates) the envelope is what binds, and that is visible in the table: the observed `\|diff\| / env` is orders
+of magnitude below 1 on every run. If the replay turns out brittle across platforms, the remedy is to drop the affected
+run from `parity` (with the reason in `runs.csv`), not to raise a constant.
+
 ## What `--check` compares
 
-`uv run scripts/gen_minimize_bfgs_reference.py --check` regenerates everything in memory, repeats the measurement
-above, compares with the committed CSVs and writes nothing.
+`uv run scripts/gen_minimize_bfgs_reference.py --check` regenerates everything in memory, repeats the measurement above,
+compares with the committed CSVs and writes nothing. SciPy's float trajectory differs between platforms at rounding level
+(libm, BLAS summation order, FMA), so the check is not a byte compare and does not use constants chosen on one machine:
 
 | Field | Rule | Why |
 |---|---|---|
-| ids, `group`, `problem`, `n`, options, `status`, `message`, counts, `wolfe2_*`, `wolfe1_fail`, `termination`, `parity`, `n_ls`, `cache_hits`, `n_updates`, `n_rho1000`, `n_ys_nonpos`, `applied`, `ev_start`, `ev_end`, problem data | exact | they pin the path of every run |
-| `x`, `f`, `g`, `p`, `alpha`, `ys`, `d_exact`, `final_*`, `gnorm_inf`, `h_scipy`, `h_exact` | within 1e-8 relative + 1e-10 absolute | last bits of libm (`sin`, `pow`) and BLAS (`@`, `np.dot`) differ by platform and feed the next step: bitwise would pin them |
-| `x_scale`, `d_scale`, `h_scale`, `x_ratio`, `dir_ratio_*`, `ratio`, `note`, `scipy_call` | not compared | derived diagnostics and text |
+| ids, `group`, `problem`, `n`, options (`x0`, `gtol`, `xrtol`, `c1`, `c2`, `maxiter`), `status`, `message`, `nit`, `nfev`, `njev`, `n_ls`, `wolfe2_*`, `wolfe1_fail`, `cache_hits`, `n_updates`, `n_rho1000`, `n_ys_nonpos`, `termination`, `parity`, `ev_start`, `ev_end`, `applied` | exact | they pin the path and the decisions of every run |
+| every float SciPy computed: `x`, `f`, `g`, `p`, `alpha`, `ys`, `d_exact`, `h_scipy`, `h_exact`, `final_x`, `final_f`, `gnorm_inf`, and the problem data from BLAS/LAPACK (`A`, `b`, `x_star`, `f_star`, `mu`) | within `ENVELOPE · (1 + max \|value\| of that column over the run)` | the replay's own envelope: a difference of this size is already what the replay tolerates, so the check cannot be tighter than what the tests claim |
+| `x_scale`, `d_scale`, `h_scale`, `x_ratio`, `dir_ratio_*`, `ratio`, the `*_max` columns, `scipy_call`, `note` | not compared | diagnostics and text; the committed ratios are checked against the bounds `C / 4`, and the regenerated ones are re-measured against them |
 
-CI wiring of this check (the `minimize-reference` job) is not part of this stage.
+A failing check prints a summary per file and column (rows differing, rows compared, the worst difference in units of the
+tolerance) and up to three examples per column; nothing is cut at a fixed number of lines. The check is wired into the
+`minimize-reference` job of `.github/workflows/checks.yml`. A count that differs on Ubuntu/OpenBLAS (the open question of
+#41's review) shows up as an exact-column failure naming the run: that run is chaotic and leaves `parity`.
 
 ## Open points
 
-- The envelope is measured on one platform (macOS arm64, Accelerate); the platform check on ubuntu-24.04 x86_64
-  (OpenBLAS) has not been run. If a count differs there, that run is chaotic and is dropped from `parity`.
+- The constants are calibrated on one platform (macOS arm64, Accelerate); the first ubuntu-24.04 x86_64 (OpenBLAS) run of
+  `--check` and of the replay has not happened yet. The expected failure mode is a count that differs for one chaotic run.
 - SciPy's `rho = 1000` branch (`yᵀs == 0`) is reached by `w2_unbounded` only (after a `wolfe2` step); no parity run
   reaches it, and no test pins what the port does with such a pair (open question 1 of the PR).
