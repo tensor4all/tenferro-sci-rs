@@ -187,10 +187,20 @@ def wa_layout(n, m):
 # another platform regenerates the same rows and only has to verify that the bounds still hold there.
 # ----------------------------------------------------------------------------------------------
 
-# cap (line searches) of the capped runs = the minimum over the platforms checked so far of the largest prefix inside
-# the bounds: macOS arm64 (Accelerate) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (OpenBLAS), CI run 46132168523 of
-# PR #41: 7, 16, 15, 29, 26 (earlier selection code; superseded for m3_rosen5 by CI run 46133315711: first search outside = 25, so 25) (m1_rosen5, m1_quad10_k1e2, m1_powell4, m3_rosen5, m3_quad10_k1e2).
-FIXED_CAPS = {"m1_rosen5": 7, "m1_quad10_k1e2": 15, "m1_powell4": 15, "m3_rosen5": 25, "m3_quad10_k1e2": 26}
+# Caps (line searches) of the capped runs. Evidence of the first search outside the bounds: macOS arm64 (Accelerate) 25, 15, 15, 26, 26 and
+# Ubuntu 24.04 x86_64 (OpenBLAS): CI run 46132168523 7, 16, 15, 29, 26 (earlier selection code) and run 46133315711 m3_rosen5 25
+# (order: m1_rosen5, m1_quad10_k1e2, m1_powell4, m3_rosen5, m3_quad10_k1e2).
+# MARGIN RULE (uniform): every committed cap and comparison prefix = (smallest first-outside index observed on any checked
+# platform) - PREFIX_MARGIN, never longer. Runner variance showed why: the same image and code gave a prefix of 15 line searches
+# for quad5_k1e4 on one GitHub runner and 14 on another (CI runs 46134596827 vs 46135341702), so a value at margin 0 on one
+# machine is fragile everywhere. Searches are numbered from 0; a cap/prefix of n keeps searches 0 .. n-1.
+PREFIX_MARGIN = 2
+# first search outside the bounds observed on the Ubuntu runners (CI runs 46132168523 / 46133315711 for the caps, selection by the
+# earlier mirror scale; 46134596827 and 46135341702 for the comparison prefixes): index of the first search outside
+LINUX_FIRST_OUTSIDE = {"default_quad5_k1e4": 14, "tight_quad5_k1e4": 14, "live_quad5_k1e4": 14}
+# caps: the smallest first-outside index observed on any platform (above): min(25, 7), min(15, 16), min(15, 15), min(25 (run 46133315711), 26), min(26, 26)
+OBSERVED_CAP_OUTSIDE = {"m1_rosen5": 7, "m1_quad10_k1e2": 15, "m1_powell4": 15, "m3_rosen5": 25, "m3_quad10_k1e2": 26}
+FIXED_CAPS = {k: v - PREFIX_MARGIN for k, v in OBSERVED_CAP_OUTSIDE.items()}
 TIGHT_GTOL = {"quad5_k1": 1e-9, "quad5_k1e2": 1e-6, "quad5_k1e4": 1e-9, "quad10_k1e2": 1e-5}
 SEARCH_PICKS = {"restart_f_tol": ("rosen5", 3), "restart_grad_tol": ("rosen2", 2), "restart_line_search_failed": ("rosen2_far", 2)}
 # live rows outside the replay bounds on macOS (SciPy's own direction is inaccurate there): counts only, on every platform
@@ -607,7 +617,11 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
     # are compared (replay and --check alike).
     covered = len({e["search"] for e in run_evals if e["search"] >= 0 and e["k"] < len(ratios) + 0})
     first_over = next((j for j, (m_, _) in enumerate(series) if m_ > C_X / 4), nsearch)
-    cmp_nsearch = min(first_over, nsearch if ok else max(covered - 1, 0))
+    # the committed prefix keeps PREFIX_MARGIN line searches below the smallest first-outside index seen on any platform
+    seen = [x for x in (first_over if first_over < nsearch else None, LINUX_FIRST_OUTSIDE.get(rid)) if x is not None]
+    cmp_nsearch = nsearch if not seen else max(min(seen) - PREFIX_MARGIN, 0)
+    if not ok:
+        cmp_nsearch = min(cmp_nsearch, max(covered - 1, 0))
     if not ok and cmp_nsearch >= nsearch:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
     replay = 1
@@ -639,7 +653,8 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
         nrequests=nreq, nskip=rep["nskip"], nrestart=nrestart, nsearch=search + 1,
         f=official.fun, ginf=float(np.max(np.abs(official.jac))), x=official.x,
         dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2),
-        cmp_nsearch=cmp_nsearch if replay else "none", replay=replay, maxiter_cap="none" if cap is None else cap[0],
+        cmp_nsearch=cmp_nsearch if replay else "none",
+        first_outside=("none" if first_over >= nsearch else first_over) if replay else "none", replay=replay, maxiter_cap="none" if cap is None else cap[0],
         cap_first_bad="none" if cap is None else cap[2],
         uncapped_nsearch="none" if cap is None else len(cap[1]), note=note,
     ))  # fmt: skip
@@ -871,7 +886,7 @@ EXACT_FILES_KEYS = {"runs.csv": ("id",), "evals.csv": ("run", "k"), "searches.cs
 TRAJECTORY = {"runs.csv": {"x", "f", "ginf"}, "evals.csv": {"x", "f", "g"}, "searches.csv": {"x_base", "g_base"},
               "pairs.csv": {"s", "y"}}  # fmt: skip
 DIAGNOSTIC = {
-    "runs.csv": {"dir_ratio", "mirror_ratio", "cap_first_bad", "uncapped_nsearch", "cmp_nsearch"},
+    "runs.csv": {"dir_ratio", "mirror_ratio", "cap_first_bad", "uncapped_nsearch", "cmp_nsearch", "first_outside"},
     "evals.csv": {"x_scale", "x_slack"},
     "searches.csv": {"gamma_scipy", "gamma_exact", "stp0", "d", "d_exact", "d_scale"},
     "pairs.csv": set(),
@@ -1029,10 +1044,24 @@ def check(new, data):
     print(f"  observed maximum over all columns {worst:.3e}; constant {SCIPY_REPRO_RTOL:g} (margin {('%.3gx' % (SCIPY_REPRO_RTOL / worst)) if worst > 0 else 'n/a, identical'})")
     for l in sample:
         print("  FLOAT MISMATCH", l)
+    margins = []
     for r in regenerated["runs.csv"][1]:
         c = runs_c.get(r["id"], {}).get("cmp_nsearch", "none")
-        if c != "none" and r["cmp_nsearch"] != "none" and int(r["cmp_nsearch"]) < int(c):
-            BOUND_FAILURES.append(f"{r['id']}: the committed comparison prefix ({c} line searches) is longer than the prefix inside the bound here ({r['cmp_nsearch']})")  # fmt: skip
+        if c == "none" or r["cmp_nsearch"] == "none":
+            continue
+        out_here = r["first_outside"]  # first search outside the mirror bound on THIS platform, or none
+        if out_here != "none":
+            margin = int(out_here) - int(c)
+            margins.append((margin, r["id"], f"comparison prefix {c}, first search outside here {out_here}"))
+            if margin < 0:
+                BOUND_FAILURES.append(f"{r['id']}: the committed comparison prefix ({c} line searches) is longer than the prefix inside the bound here ({out_here})")  # fmt: skip
+    for r in regenerated["runs.csv"][1]:
+        if r["maxiter_cap"] != "none":
+            margins.append((int(r["cap_first_bad"]) - int(r["maxiter_cap"]), r["id"], f"cap {r['maxiter_cap']}, first search outside the direction bound here {r['cap_first_bad']}"))  # fmt: skip
+    print(f"== margins on this platform (first search outside the bound minus the committed prefix/cap; the rule keeps >= {PREFIX_MARGIN}): smallest first")  # fmt: skip
+    for m_, rid, txt in sorted(margins)[:60]:
+        print(f"  margin {m_:3d}  {rid:34s} {txt}")
+    print(f"  {len(margins)} prefixes/caps with a finite first-outside index; smallest margin {min((m for m, _, _ in margins), default='n/a')}")  # fmt: skip
     print("== bounds on this platform (SciPy direction <= C_DIR/2 up to a cap; comparison prefix not shorter than committed)")
     for l in BOUND_FAILURES:
         print("  OUT OF BOUNDS", l)
