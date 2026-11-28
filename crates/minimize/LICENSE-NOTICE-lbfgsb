@@ -1,0 +1,63 @@
+Notice for the driver semantics of `minimize::lbfgs` (the order of the stopping tests, the counting of
+line-search trials, the reset after a failed search, the first trial step, the scaling of the initial matrix),
+which were derived by reading SciPy's translation of L-BFGS-B. No source code of either was copied: the two-loop
+recursion and the ring buffer are written independently (see the headers of `src/lbfgs/`), and the Rust control flow
+is not a line-by-line translation (L-BFGS-B works in the compact representation with bounds; this crate uses the
+two-loop recursion on the unconstrained path). The notice is kept because the behaviour is taken from that code and
+the crate's tests replay its recorded runs.
+
+Provenance chain
+----------------
+
+1. L-BFGS-B version 3.0 (Fortran 77), April 2011, by Ciyou Zhu, Richard Byrd, P. Lu ("P. Lu-Chen" in the
+   routine headers of lbfgsb.f), Jorge Nocedal and Jose Luis Morales (Northwestern University; Instituto Tecnologico
+   Autonomo de Mexico). Distribution file `Lbfgsb.3.0.tar.gz`,
+   https://users.iems.northwestern.edu/~nocedal/lbfgsb.html ("released under the New BSD License"); the license text
+   is `License.txt` in that archive, reproduced below. Version 3.0 is the revision of Algorithm 778 described in
+   J. L. Morales and J. Nocedal, Remark on "Algorithm 778: L-BFGS-B" (2011, the reference of the file headers).
+2. SciPy shipped the Fortran code as scipy/optimize/lbfgsb_src/lbfgsb.f, wrapped with f2py, until commit cc90c0083b
+   (2024-09-14), "MAINT:optimize: Remove LBFGSB FORTRAN code".
+3. scipy/scipy#21314 (merged 2024-09-17; commit 24b0522831, 2024-09-16, "ENH:optimize: Rewrite L-BFGS-B Fortran code in
+   C") added SciPy's C translation, scipy/optimize/__lbfgsb.c ("a C translation of the Fortran code written by Ciyou Zhu,
+   Richard Byrd, Jorge Nocedal and Jose Luis Morales"), Copyright (C) 2024 SciPy developers, under the 3-clause BSD
+   license of SciPy; its header points to the original Fortran code as "BSD-3 licensed".
+4. SciPy v1.16.3 (b9105ccc2237f57acb1060202cd77f6dd264fb34), scipy/optimize/__lbfgsb.c (`mainlb`, `lnsrlb`) and
+   scipy/optimize/_lbfgsb_py.py (`_minimize_lbfgsb`): the sources that were read. The 3-clause BSD license of SciPy
+   is LICENSE-BSD-3-Clause-scipy in this directory; the license of the C file's header is the same license with the
+   clauses lettered a, b, c and "SciPy developers" as the holder.
+
+What the license text of L-BFGS-B 3.0 says, and does not say
+-------------------------------------------------------------
+
+`License.txt` of the 3.0 distribution is a generic text of the 3-clause BSD license (with the commentary and
+footnotes of an encyclopedia article on it, which are not reproduced below): its copyright line,
+warranty disclaimer and name clause still hold the placeholders `<year>`, `<copyright holder>` and `<organization>`. It names no copyright holder; the authors are named in the source headers
+and in the accompanying README ("L-BFGS-B is released under the New BSD License"). The text below is the license
+part of that file, unchanged (the placeholders are the file's, not ours):
+
+----------------------------------------------------------------------------
+Copyright (c) <year>, <copyright holder>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the <organization> nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+----------------------------------------------------------------------------
