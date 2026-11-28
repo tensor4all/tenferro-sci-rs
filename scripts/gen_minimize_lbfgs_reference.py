@@ -398,22 +398,23 @@ class Mirror:
 
 
 def mirror_replay(row, evals):
-    """Replay SciPy's (f, g) through the mirror; returns (counts and termination agree, worst
-    ratio of (|x_mirror - x_scipy| - x_slack) / (eps x_scale) over all requests)."""
+    """Replay SciPy's (f, g) through the mirror; returns (counts and termination agree, the ratio
+    (|x_mirror - x_scipy| - x_slack) / (eps x_scale) of every request, as the worst over components)."""
     M = Mirror(row["x0"], row["maxcor"], row["gtol"], row["ftol"], row["maxiter"], row["maxfun"], row["maxls"])
-    x, worst, i = M.req, 0.0, 0
+    x, ratios, i = M.req, [], 0
     while True:
         if i >= len(evals):
-            return False, worst
+            return False, ratios
         e = evals[i]
         over = np.maximum(np.abs(x - e["x"]) - e["x_slack"], 0.0)
-        worst = max(worst, float(np.max(over / np.maximum(EPS * e["x_scale"], 1e-300))))
+        ratios.append(float(np.max(over / np.maximum(EPS * e["x_scale"], 1e-300))))
         x = M.tell(e["f"], e["g"])
         i += 1
         if x is None:
             break
     ok = i == len(evals) and M.term == row["termination"] and M.nit == row["nit"] and M.nfev == row["nfev"]
-    return ok, worst
+    return ok, ratios
+
 
 # ----------------------------------------------------------------------------------------------
 # Runs
@@ -423,6 +424,7 @@ RUNS: list[dict] = []
 EVALS: list[dict] = []
 SEARCHES: list[dict] = []
 PAIRS: list[dict] = []
+CAPS: list[dict] = []
 DIVERGENCES: list[tuple[str, str, str, str, str]] = []
 
 
@@ -431,29 +433,37 @@ def options_text(opts):
 
 
 class OutOfRegime(Exception):
-    """A run whose direction error or mirror replay exceeds the stated bounds (README.md)."""
+    """A run whose direction error or mirror replay exceeds the stated bounds (README.md). `first_bad` is the index of
+    the first line search that leaves the bounds; `series` the per-search (mirror ratio, direction ratio) of the run."""
+
+    def __init__(self, msg, first_bad=None, series=None):
+        super().__init__(msg)
+        self.first_bad, self.series = first_bad, series
 
 
 def snapshot():
-    return len(RUNS), len(EVALS), len(SEARCHES), len(PAIRS), len(DIVERGENCES)
+    return len(RUNS), len(EVALS), len(SEARCHES), len(PAIRS), len(DIVERGENCES), len(CAPS)
 
 
 def rollback(snap):
     del RUNS[snap[0]:], EVALS[snap[1]:], SEARCHES[snap[2]:], PAIRS[snap[3]:], DIVERGENCES[snap[4]:]
+    del CAPS[snap[5]:]
 
 
-def run(rid, group, problem, note="", x0=None, **overrides):
+def run(rid, group, problem, note="", x0=None, cap=None, **overrides):
     snap = snapshot()
     try:
-        return run_(rid, group, problem, note, x0, snap, **overrides)
+        return run_(rid, group, problem, note, x0, snap, cap, **overrides)
     except OutOfRegime:
         rollback(snap)
         raise
 
 
-def run_(rid, group, problem, note, x0, snap, **overrides):
+def run_(rid, group, problem, note, x0, snap, cap, **overrides):
     opts = dict(DEFAULTS)
     opts.update(overrides)
+    if cap is not None:
+        opts["maxiter"] = cap[0]
     pfun, px0 = PROBLEMS[problem]
     x0 = px0 if x0 is None else np.asarray(x0, dtype=float)
 
@@ -550,23 +560,33 @@ def run_(rid, group, problem, note, x0, snap, **overrides):
             cum = cum + abs(q["stp"]) * d_scale_vec + np.abs(q["x"])
             cum_slack = cum_slack + abs(q["stp"]) * d_err
     PAIRS.extend(local_pairs)
-    # direction accuracy of SciPy itself, and the float64 mirror's replay against the data
+    # per line search: SciPy's own direction error and the float64 mirror's replay against the data
     run_evals = EVALS[snap[1]:]
-    dir_ratio = 0.0
+    nsearch = search + 1
+    dir_by = []
     for srow in SEARCHES[snap[2]:]:
         sc = np.array(srow["d_scale"])
         err = np.abs(np.array(srow["d"]) - np.array(srow["d_exact"]))
-        dir_ratio = max(dir_ratio, float(np.max(np.where(sc > 0, err / np.maximum(EPS * sc, 1e-300), 0.0))))
-    if dir_ratio > C_DIR / 2:
-        raise OutOfRegime(f"{rid}: SciPy direction {dir_ratio:.1f} eps scale > {C_DIR // 2} (half of {C_DIR})")
+        dir_by.append(float(np.max(np.where(sc > 0, err / np.maximum(EPS * sc, 1e-300), 0.0))))
     mrow = dict(x0=x0, maxcor=opts["maxcor"], gtol=opts["gtol"], ftol=opts["ftol"], maxiter=opts["maxiter"],
                 maxfun=opts["maxfun"], maxls=opts["maxls"], termination=termination, nit=official.nit,
                 nfev=official.nfev)  # fmt: skip
-    ok, mirror_ratio = mirror_replay(mrow, run_evals)
-    if not ok:
+    ok, ratios = mirror_replay(mrow, run_evals)
+    mirror_by = [0.0] * nsearch
+    for e, r in zip(run_evals, ratios):
+        if e["search"] >= 0:
+            mirror_by[e["search"]] = max(mirror_by[e["search"]], r)
+    series = list(zip(mirror_by, dir_by))
+    bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 2 or d_ > C_DIR / 2]
+    if not ok and not bad:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
-    if mirror_ratio > C_X / 2:
-        raise OutOfRegime(f"{rid}: mirror replay {mirror_ratio:.1f} eps scale > {C_X // 2} (half of {C_X})")
+    if bad:
+        raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 2}"
+                          f" or direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
+    mirror_ratio, dir_ratio = max(mirror_by, default=0.0), max(dir_by, default=0.0)
+    if cap is not None:
+        # the cap is data: the largest prefix of line searches inside the bounds
+        CAPS.extend(dict(run=rid, j=j, mirror_ratio=m_, dir_ratio=d_) for j, (m_, d_) in enumerate(cap[1]))
     RUNS.append(dict(
         id=rid, group=group, problem=problem, n=n, x0=x0, maxcor=opts["maxcor"], ftol=opts["ftol"],
         gtol=opts["gtol"], maxfun=opts["maxfun"], maxiter=opts["maxiter"], maxls=opts["maxls"],
@@ -576,7 +596,9 @@ def run_(rid, group, problem, note, x0, snap, **overrides):
         termination=termination, nit=official.nit, nfev=official.nfev, njev=official.njev,
         nrequests=nreq, nskip=rep["nskip"], nrestart=nrestart, nsearch=search + 1,
         f=official.fun, ginf=float(np.max(np.abs(official.jac))), x=official.x,
-        dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2), note=note,
+        dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2),
+        maxiter_cap="none" if cap is None else cap[0],
+        uncapped_nsearch="none" if cap is None else len(cap[1]), note=note,
     ))  # fmt: skip
     return RUNS[-1]
 
@@ -596,17 +618,18 @@ def free_nit(problem, **kw):
     return r
 
 
-def capped(rid, group, problem, caps, **kw):
-    """The run with the first `maxiter` cap (None = default) that stays inside the stated bounds: past
-    some iteration rounding differences between independent implementations are amplified by the
-    problem (README.md), and the replay claim stops there."""
-    for cap in caps:
-        try:
-            extra = {} if cap is None else dict(maxiter=cap)
-            return run(rid, group, problem, **kw, **extra)
-        except OutOfRegime as e:
-            print("  out of regime:", e)
-    raise SystemExit(f"{rid}: no cap in {caps} stays inside the bounds")
+def capped(rid, group, problem, **kw):
+    """The run, capped (`maxiter` = the cap, recorded in the `maxiter_cap` column and in caps.csv) at the largest prefix
+    of line searches that stays inside the bounds: past some iteration rounding differences between independent
+    implementations are amplified by the problem (README.md), and the replay claim stops there. A run that never
+    leaves the bounds is recorded uncapped."""
+    try:
+        return run(rid, group, problem, **kw)
+    except OutOfRegime as e:
+        if not e.first_bad or e.first_bad < 5:
+            raise SystemExit(f"{rid}: the bounds fail after {e.first_bad} searches; no useful cap")
+        print(f"  {rid}: capped at {e.first_bad} of {len(e.series)} line searches")
+        return run(rid, group, problem, cap=(e.first_bad, e.series), **kw)
 
 
 def cases():
@@ -617,10 +640,9 @@ def cases():
     for p in ("rosen2", "rosen5", "beale", "himmelblau"):
         run(f"ftol0_{p}", "ftol0", p, ftol=0.0, note="ftol = 0: only gtol, maxiter, maxfun, line search can stop")
     # memory sizes: m = 1 (every iteration drops a pair), 3, and unlimited-in-practice
-    caps = [None, 60, 50, 40, 35, 30, 25, 20, 15, 12, 10, 8, 6]
     for m in (1, 3):
         for p in ("rosen5", "quad10_k1e2", "powell4"):
-            capped(f"m{m}_{p}", "memory", p, caps, maxcor=m)
+            capped(f"m{m}_{p}", "memory", p, maxcor=m)
     run("m50_quad10_k1e2", "memory", "quad10_k1e2", maxcor=50)
     # quadratics, tight gtol: the stopping point is determined by gtol alone
     for p in ("quad5_k1", "quad5_k1e2", "quad5_k1e4", "quad10_k1e2"):
@@ -772,6 +794,11 @@ def texts() -> dict[str, str]:
     for row in DIVERGENCES:
         t += ",".join(row) + "\n"
     out["divergences.csv"] = t
+    t = HEADER + "# per line search of the uncapped run behind every capped row: the float64 mirror's replay ratio and SciPy's direction ratio (README.md)\n"
+    t += "run,j,mirror_ratio,dir_ratio\n"
+    for c in CAPS:
+        t += f"{c['run']},{c['j']},{c['mirror_ratio']:.4f},{c['dir_ratio']:.4f}\n"
+    out["caps.csv"] = t
     return out
 
 
@@ -784,6 +811,7 @@ ABS_TOL = 1e-12
 # pinned exactly, the values loosely.
 FLOAT_COLS = {
     "runs.csv": {"ftol", "gtol", "f", "ginf", "x0", "x", "dir_ratio", "mirror_ratio"},
+    "caps.csv": {"mirror_ratio", "dir_ratio"},
     "evals.csv": {"x", "f", "g", "x_scale", "x_slack"},
     "searches.csv": {"gamma_scipy", "gamma_exact", "stp0", "x_base", "g_base", "d", "d_exact", "d_scale"},
     "pairs.csv": {"s", "y"},
