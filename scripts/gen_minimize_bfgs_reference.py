@@ -898,6 +898,9 @@ def assert_derivation(out):  # noqa
 #
 # * exact: every column that is not listed below (ids, options, call, message, status, every count, wolfe2_*, termination,
 #   parity, search/ev ranges, applied, the number of rows per file); for `repro = class` runs only CLASS_EXACT;
+# * runs.csv scalars (final_x, final_f, gnorm_inf) use as scale the largest magnitude of the same quantity over the run's committed
+#   evaluations (x, f, or the largest |g| component): the gradient norm at convergence is noise relative to itself (CI run 46136919000:
+#   quad5 7.0e-15 vs 2.5e-14);
 # * trajectory (SciPy's floats): evals x f g; iters x f g p alpha ys d_exact; runs final_x final_f gnorm_inf; hess h_scipy
 #   h_exact; problems A b x_star f_star mu. Per component |a - b| <= SCIPY_REPRO_RTOL * max(|a|, |b|, scale), scale = the largest
 #   |component| of that column over the run's compared rows (committed values); only rows inside the committed comparison
@@ -979,6 +982,15 @@ def check(data_dir: Path) -> int:
         if len(a_rows) != len(b_rows):
             exact_bad.append((name, "-", "rows", str(len(a_rows)), str(len(b_rows))))
             continue
+        ev_scale = {}  # run -> {runs.csv column: largest magnitude of that quantity over the run's committed evaluations}
+        if name == "runs.csv" and "evals.csv" in committed:
+            for e in committed["evals.csv"][1]:
+                d = ev_scale.setdefault(e["run"], {})
+                for col, src in (("final_x", "x"), ("final_f", "f"), ("gnorm_inf", "g")):
+                    for v in e[src].split(";"):
+                        t = _num(v)
+                        if t is not None and math.isfinite(t):
+                            d[col] = max(d.get(col, 0.0), abs(t))
         runmax = {}
         for a_ in a_rows:
             for col in TRAJ.get(name, ()):
@@ -1014,6 +1026,10 @@ def check(data_dir: Path) -> int:
                 st = traj.setdefault((name, col), [0, 0, 0.0, 0.0])
                 la, lb = va.split(";"), vb.split(";")
                 scale = runmax.get((rid, col), 0.0)
+                if name == "runs.csv":
+                    # a run's final scalars are rounding noise relative to themselves (the gradient norm at convergence, f near its
+                    # minimum): they are compared on the scale of the same quantity over the run, from the committed evaluations
+                    scale = max(scale, ev_scale.get(rid, {}).get(col, 0.0))
                 if not inside:
                     skipped[(name, col)] = skipped.get((name, col), 0) + 1
                     if name == "steps.csv" and len(la) == len(lb):  # informational: how far SciPy's recorded states drift past the prefix

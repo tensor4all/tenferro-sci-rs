@@ -152,7 +152,9 @@ asserts `cache_hits == 0` for every parity run (all have 0).
    data come from macOS/Accelerate). Counts, termination, message, call, options and row keys are **exact**; SciPy's recorded float
    states (`x f g p`, and in `steps.csv` `H_k s y H_{k+1} g_{k+1} p_{k+1}`) are compared with **one named constant,
    `SCIPY_REPRO_RTOL = 1e-6`**, per component, `|a − b| ≤ SCIPY_REPRO_RTOL · max(|a|, |b|, scale)`, `scale` = the largest absolute
-   component of that column over the run's compared rows, on the comparison prefix (rows past it: exact columns only), and the
+   component of that column over the run's compared rows (for the final scalars of `runs.csv`, which are noise relative to
+   themselves: the largest magnitude of the *same quantity over the run's evaluations*: `final_x` against the largest |x|, `final_f`
+   against the largest |f|, `gnorm_inf` against the largest |g| component; CI run 46136919000 on Ubuntu had `quad5` `gnorm_inf` 7.0e-15 vs 2.5e-14), on the comparison prefix (rows past it: exact columns only), and the
    observed maximum over the rows past the prefix is *reported* per column, never failing: past the prefix SciPy's recorded
    `H_k` may differ between platforms by more than the constant, and that is exactly why the per-step replay compares Rust against
    the **committed** states, which is platform-independent by construction (the replay never regenerates SciPy).
