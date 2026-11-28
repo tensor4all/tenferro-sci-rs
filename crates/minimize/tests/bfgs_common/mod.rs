@@ -313,7 +313,9 @@ pub fn tol(scale: &[f64], j: usize, n: usize, env: f64) -> f64 {
     (REPLAY_C * n as f64 * EPS * scale[j]).min(ENVELOPE * env)
 }
 
-/// `None` if `got` is within the README's bound of `want` componentwise, else a message.
+/// `None` if `got` is within the README's bound of `want` componentwise, else a message that names the first
+/// failing component and prints, over **all** components, the observed maxima next to the bounds: the largest
+/// `|diff| / (n ε scale)` (bound `REPLAY_C`) and the largest `|diff| / env` (bound `ENVELOPE`).
 pub fn mismatch(
     label: &str,
     got: &[f64],
@@ -325,17 +327,32 @@ pub fn mismatch(
     if got.len() != want.len() {
         return Some(format!("{label}: length {} vs {}", got.len(), want.len()));
     }
+    let (mut strict_max, mut env_max) = (0.0_f64, 0.0_f64);
+    let mut first_bad: Option<usize> = None;
     for j in 0..want.len() {
-        let t = tol(scale, j, n, env);
         let d = (got[j] - want[j]).abs();
-        if d.is_nan() || d > t {
-            return Some(format!(
-                "{label}[{j}]: got {:e}, want {:e}, |diff| {:e} > tol {:e}",
-                got[j], want[j], d, t
-            ));
+        let s_ratio = d / (n as f64 * EPS * scale[j].max(f64::MIN_POSITIVE));
+        let e_ratio = d / env.max(f64::MIN_POSITIVE);
+        if d.is_nan() || s_ratio.is_nan() {
+            strict_max = f64::NAN;
+        } else {
+            strict_max = strict_max.max(s_ratio);
+            env_max = env_max.max(e_ratio);
+        }
+        if first_bad.is_none() && (d.is_nan() || d > tol(scale, j, n, env)) {
+            first_bad = Some(j);
         }
     }
-    None
+    first_bad.map(|j| {
+        format!(
+            "{label}[{j}]: got {:e}, want {:e}, |diff| {:e} > tol {:e}; observed max |diff|/(n ε scale) = {strict_max:.3e} \
+             (bound C = {REPLAY_C}), observed max |diff|/env = {env_max:.3e} (bound ENVELOPE = {ENVELOPE:e})",
+            got[j],
+            want[j],
+            (got[j] - want[j]).abs(),
+            tol(scale, j, n, env)
+        )
+    })
 }
 
 pub fn norm_inf(v: &[f64]) -> f64 {
