@@ -450,16 +450,16 @@ def rollback(snap):
     del CAPS[snap[5]:]
 
 
-def run(rid, group, problem, note="", x0=None, cap=None, **overrides):
+def run(rid, group, problem, note="", x0=None, cap=None, replayable=True, **overrides):
     snap = snapshot()
     try:
-        return run_(rid, group, problem, note, x0, snap, cap, **overrides)
+        return run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides)
     except OutOfRegime:
         rollback(snap)
         raise
 
 
-def run_(rid, group, problem, note, x0, snap, cap, **overrides):
+def run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides):
     opts = dict(DEFAULTS)
     opts.update(overrides)
     if cap is not None:
@@ -580,7 +580,14 @@ def run_(rid, group, problem, note, x0, snap, cap, **overrides):
     bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 4 or d_ > C_DIR / 2]
     if not ok and not bad:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
-    if bad:
+    replay = 1
+    if bad and not replayable:
+        # counts-only row (the live tests compare their counts with it): outside the replay bounds, so no
+        # evaluations, searches or pairs are emitted and the replay tests skip it (`replay` = 0)
+        replay = 0
+        del EVALS[snap[1]:], SEARCHES[snap[2]:], PAIRS[snap[3]:]
+        local_pairs.clear()
+    elif bad:
         raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 4}"
                           f" or direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
     mirror_ratio, dir_ratio = max(mirror_by, default=0.0), max(dir_by, default=0.0)
@@ -597,7 +604,7 @@ def run_(rid, group, problem, note, x0, snap, cap, **overrides):
         nrequests=nreq, nskip=rep["nskip"], nrestart=nrestart, nsearch=search + 1,
         f=official.fun, ginf=float(np.max(np.abs(official.jac))), x=official.x,
         dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2),
-        maxiter_cap="none" if cap is None else cap[0],
+        replay=replay, maxiter_cap="none" if cap is None else cap[0],
         uncapped_nsearch="none" if cap is None else len(cap[1]), note=note,
     ))  # fmt: skip
     return RUNS[-1]
@@ -654,6 +661,11 @@ def cases():
                 print("  out of regime:", e)
         else:
             print(f"  tight_{p}: no gtol stays inside the bounds; not recorded")
+    # the live tests of tests/lbfgs_live.rs: exactly their options (gtol = 1e-8, ftol = 0), so the counts they print
+    # are compared with the SciPy run of the same call
+    for p in ("rosen2", "rosen2_far", "rosen5", "beale", "quad5_k1", "quad5_k1e2", "quad5_k1e4", "quad10_k1e2"):
+        run(f"live_{p}", "live", p, gtol=1e-8, ftol=0.0, replayable=False,
+            note="options of tests/lbfgs_live.rs; replay=0 where SciPy's own direction leaves the replay bounds")
     # --- terminations -----------------------------------------------------------------------
     run("stationary_start", "termination", "quad5_k1e2", x0=np.arange(1.0, 6.0),
         note="x0 is the minimizer: GradTol at the start, one evaluation, zero iterations")  # fmt: skip
