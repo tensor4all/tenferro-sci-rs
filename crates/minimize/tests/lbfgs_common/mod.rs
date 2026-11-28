@@ -4,8 +4,9 @@
 //!
 //! The replay feeds SciPy's recorded `(f, g)` to the ask/tell state and compares the points the state asks for with
 //! the points SciPy evaluated. The tolerance is derived in `tests/data/lbfgs/README.md` ("How the tolerance was
-//! derived"): per component `|x_rust − x_scipy| ≤ C_X · ε · x_scale + x_slack`, with the recorded `x_scale` (the
-//! absolute-value scale of the computation that produced the point, Higham §3.1) and `x_slack` (SciPy's own measured
+//! derived"): per component `|x_rust − x_scipy| ≤ C_X · ε · x_scale + 2 · x_slack`, with the recorded `x_scale` (the
+//! running sum of the magnitudes whose rounding enters the point: |x₀| + Σ(|α d| + |x_new|) + the current |x_base| + |α d|;
+//! no compounding recursion) and `x_slack` (SciPy's own measured
 //! deviation from the exact direction, accumulated).
 //!
 //! Written for tensor4all/tenferro-sci-rs#40. SciPy v1.16.3, commit b9105ccc2237f57acb1060202cd77f6dd264fb34,
@@ -102,6 +103,10 @@ pub struct Run {
     /// 0 for a counts-only row: outside the replay bounds, no evaluations are recorded, the replay skips it.
     pub replay: bool,
     /// The `maxiter` the generator imposed because the run leaves the bounds after that many line searches (data).
+    /// The number of line searches whose requested points are compared (the rest only by counts and termination);
+    /// `None` for counts-only rows.
+    pub cmp_nsearch: Option<usize>,
+    pub nsearch: usize,
     pub maxiter_cap: Option<usize>,
     /// First line search outside the bounds on the platform that generated the data (diagnostic, platform-dependent).
     pub cap_first_bad: Option<usize>,
@@ -168,6 +173,8 @@ pub fn load_runs() -> Vec<Run> {
             replay: r["replay"] == "1",
             maxiter_cap: (r["maxiter_cap"] != "none").then(|| int(r, "maxiter_cap")),
             cap_first_bad: (r["cap_first_bad"] != "none").then(|| int(r, "cap_first_bad")),
+            cmp_nsearch: (r["cmp_nsearch"] != "none").then(|| int(r, "cmp_nsearch")),
+            nsearch: int(r, "nsearch"),
             nit: int(r, "nit"),
             nfev: int(r, "nfev"),
             nskip: int(r, "nskip"),
@@ -310,7 +317,7 @@ pub fn config_of(run: &Run) -> LbfgsConfig {
 #[derive(Debug, Default)]
 pub struct Replay {
     pub run: String,
-    /// Largest `(|Δx| − x_slack) / (ε x_scale)` over every request (the tolerance is `C_X`).
+    /// Largest `(|Δx| − 2 x_slack) / (ε x_scale)` over every request (the tolerance is `C_X`).
     pub max_ratio: f64,
     /// Requests that left the tolerance, or other path differences (counts, termination).
     pub path_errors: Vec<String>,
@@ -354,14 +361,20 @@ pub fn replay(run: &Run, evals: &[Eval], searches: &[Search]) -> Replay {
             ));
             break Termination::MaxEval; // not used: path_errors is non-empty
         };
-        // 1. the requested point against SciPy's, within the derived tolerance
+        // 1. the requested point against SciPy's, within the derived tolerance, inside the run's comparison prefix
+        //    (past it only counts and termination are compared, below)
+        let in_prefix = e.search < run.cmp_nsearch.map_or(0, |c| c as i64);
         for (c, ((xr, xs), (sc, sl))) in requested
             .iter()
             .zip(&e.x)
             .zip(e.x_scale.iter().zip(&e.x_slack))
             .enumerate()
         {
-            let over = ((xr - xs).abs() - sl).max(0.0);
+            if !in_prefix {
+                break;
+            }
+            // the same claim as `--check`: |Δx| ≤ C_X ε x_scale + 2 x_slack (each implementation is within x_slack of exact)
+            let over = ((xr - xs).abs() - 2.0 * sl).max(0.0);
             let ratio = over / (EPS * sc).max(f64::MIN_POSITIVE);
             out.max_ratio = out.max_ratio.max(ratio);
             if ratio.is_nan() || ratio > C_X {
@@ -455,6 +468,8 @@ pub fn replay(run: &Run, evals: &[Eval], searches: &[Search]) -> Replay {
     }
     // the final iterate is the last accepted one (or x0); f and g are the values SciPy handed over there
     let last = evals.iter().rfind(|e| e.accepted).unwrap_or(&evals[0]);
+    // the final x only when the whole run is inside the comparison prefix
+    let whole = run.cmp_nsearch.is_some_and(|c| c >= run.nsearch);
     for (c, ((xr, xs), (sc, sl))) in state
         .x()
         .iter()
@@ -462,8 +477,8 @@ pub fn replay(run: &Run, evals: &[Eval], searches: &[Search]) -> Replay {
         .zip(last.x_scale.iter().zip(&last.x_slack))
         .enumerate()
     {
-        let over = ((xr - xs).abs() - sl).max(0.0);
-        if over.is_nan() || over > C_X * EPS * sc {
+        let over = ((xr - xs).abs() - 2.0 * sl).max(0.0);
+        if whole && (over.is_nan() || over > C_X * EPS * sc) {
             out.final_errors
                 .push(format!("final x[{c}]: rust {xr:e}, scipy {xs:e}"));
         }

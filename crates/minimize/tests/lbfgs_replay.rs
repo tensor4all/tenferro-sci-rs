@@ -223,26 +223,31 @@ fn only_a_recorded_cap_shortens_a_run() {
 
 #[test]
 fn caps_cannot_hide_a_disagreement() {
-    // The cap of a run is the minimum, over the platforms checked so far, of the largest prefix of line searches inside
-    // the bounds (macOS: 25, 15, 15, 26, 26; Ubuntu/OpenBLAS: 7, 16, 15, 29, 26 from CI run 46132168523, then m3_rosen5 25 from run 46133315711). For each capped row:
-    // (1) the replay agrees on every request up to the cap; (2) every recorded line search before the cap is inside the
-    // bounds (mirror ratio <= C_X/4, SciPy direction error <= C_DIR/2); (3) the generating platform's first search
-    // outside the bounds (`cap_first_bad`) is at or after the cap, and the recorded series really leaves a bound
-    // there. A cap lowered below that platform's largest prefix is thus visible (`cap < cap_first_bad`) and justified
-    // by another platform, not by "we stopped before it got worse".
+    // The run length of a capped row (`maxiter_cap`) is fixed by SciPy's own direction error: every recorded line search
+    // before the cap has direction error <= C_DIR/2 (the minimum over the checked platforms of the largest such prefix;
+    // CI runs 46132168523, 46133315711). The float comparison prefix `cmp_nsearch` is separate and shorter or equal:
+    // the first line search whose float64-mirror ratio exceeds C_X/4. For each capped row: (1) the replay agrees on
+    // every request of the prefix; (2) every search before the cap has direction error inside the bound, and the
+    // generating platform's first search outside it (`cap_first_bad`) is at or after the cap and really is outside;
+    // (3) the recorded mirror series is inside C_X/4 for every search of the comparison prefix, and the prefix ends at
+    // the cap or at a search that exceeds C_X/4: a prefix is never shortened silently. Rows between the prefix and the
+    // cap are compared by counts and termination only.
     //
-    // Monotonicity of the per-search ratio does NOT hold in the data (it goes up and down: several decreases before the
-    // cap in every capped run, printed below); only its running maximum is monotone, which proves nothing.
+    // Monotonicity of the per-search ratio does NOT hold in the data (it goes up and down); only its running maximum is
+    // monotone, which proves nothing (decreases printed below).
     let (runs, evals, searches, caps) = (load_runs(), load_evals(), load_searches(), load_caps());
     for r in runs.iter().filter(|r| r.maxiter_cap.is_some()) {
         let cap = r.maxiter_cap.expect("filtered");
+        let cmp = r
+            .cmp_nsearch
+            .expect("a replayed row has a comparison prefix");
         let bad = r
             .cap_first_bad
             .expect("a capped row records where the bounds were first exceeded");
         let rep = replay(r, &evals[&r.id], &searches[&r.id]);
         assert!(
             rep.path_errors.is_empty(),
-            "{}: disagreement within the cap: {:?}",
+            "{}: disagreement within the prefix: {:?}",
             r.id,
             &rep.path_errors[..1.min(rep.path_errors.len())]
         );
@@ -254,8 +259,8 @@ fn caps_cannot_hide_a_disagreement() {
         );
         let series = &caps[&r.id];
         assert!(
-            cap <= bad,
-            "{}: the cap {cap} is beyond the first search outside the bounds ({bad})",
+            cap <= bad && cmp <= cap,
+            "{}: cmp {cmp} <= cap {cap} <= first search outside {bad} must hold",
             r.id
         );
         assert!(
@@ -265,18 +270,30 @@ fn caps_cannot_hide_a_disagreement() {
         );
         for c in &series[..cap] {
             assert!(
-                c.mirror_ratio <= CAP_MIRROR_BOUND && c.dir_ratio <= CAP_DIR_BOUND,
-                "{}: line search {} inside the cap is outside the bounds ({:.2}, {:.2})",
+                c.dir_ratio <= CAP_DIR_BOUND,
+                "{}: line search {} inside the cap has direction error {:.2}",
                 r.id,
                 c.j,
-                c.mirror_ratio,
                 c.dir_ratio
             );
         }
-        let next = &series[bad];
         assert!(
-            next.mirror_ratio > CAP_MIRROR_BOUND || next.dir_ratio > CAP_DIR_BOUND,
-            "{}: line search {bad} is inside the bounds, so cap_first_bad is wrong",
+            series[bad].dir_ratio > CAP_DIR_BOUND,
+            "{}: cap_first_bad {bad} is inside the direction bound",
+            r.id
+        );
+        for c in &series[..cmp] {
+            assert!(
+                c.mirror_ratio <= CAP_MIRROR_BOUND,
+                "{}: line search {} inside the prefix has mirror ratio {:.2}",
+                r.id,
+                c.j,
+                c.mirror_ratio
+            );
+        }
+        assert!(
+            cmp == cap || series[cmp].mirror_ratio > CAP_MIRROR_BOUND,
+            "{}: the prefix {cmp} ends before the cap {cap} but line search {cmp} is inside the mirror bound",
             r.id
         );
         let decreases = series[1..cap]
@@ -284,14 +301,33 @@ fn caps_cannot_hide_a_disagreement() {
             .filter(|w| w[1].mirror_ratio < w[0].mirror_ratio)
             .count();
         eprintln!(
-            "{}: cap {cap} (first search outside the bounds on the generating platform: {bad}) of {} searches; prefix max {:.2}; search {bad}: mirror {:.2}, direction {:.2}; {decreases} decreases before the cap",
+            "{}: cap {cap}, comparison prefix {cmp}, first search outside the direction bound {bad} (direction {:.2}); {decreases} decreases of the mirror ratio before the cap",
             r.id,
-            series.len(),
-            series[..cap].iter().map(|c| c.mirror_ratio).fold(0.0, f64::max),
-            next.mirror_ratio,
-            next.dir_ratio
+            series[bad].dir_ratio
         );
     }
+}
+
+#[test]
+fn rows_past_the_comparison_prefix_are_compared_by_counts_only() {
+    // Data only. A run whose comparison prefix ends before its last line search (the Rosenbrock problems: rounding
+    // differences are amplified by the problem) still replays to the same counts and termination (the replay tests
+    // check that for every run); only the requested points past the prefix are not compared.
+    let runs = load_runs();
+    let short: Vec<&Run> = runs
+        .iter()
+        .filter(|r| r.cmp_nsearch.is_some_and(|c| c < r.nsearch))
+        .collect();
+    assert!(!short.is_empty());
+    for r in runs.iter().filter(|r| r.replay) {
+        let c = r.cmp_nsearch.expect("replayed rows have a prefix");
+        assert!(c <= r.nsearch, "{}", r.id);
+    }
+    eprintln!(
+        "{} of {} replayed runs have a comparison prefix shorter than the run",
+        short.len(),
+        runs.iter().filter(|r| r.replay).count()
+    );
 }
 
 #[test]

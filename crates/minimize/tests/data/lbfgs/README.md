@@ -95,25 +95,42 @@ final `ginf` of the same run differs in the 7th digit, and the platform-dependen
 |---|---|---|
 | exact | ids, options (`ftol`, `gtol`, `x0` as floats), `call`, `message`, `termination`, `nit`, `nfev`, `njev`, `nrequests`, `nskip`, `nrestart`, `nsearch`, `maxiter`, `maxiter_cap`, `replay`, the keys and the number of rows of every file, `accepted`, `search`, `ifun`, `col`, `iter`, `restart` | string equality. A difference means the path of a recorded run changed on that platform: the run leaves the parity set with a documented reason; the check is never loosened |
 | trajectory (SciPy's own values) | `evals.csv` `x`, `f`, `g`; `runs.csv` `x`, `f`, `ginf`; `searches.csv` `x_base`, `g_base`; `pairs.csv` `s`, `y` | within a tolerance **derived from the committed scales** (below) |
-| diagnostic | `x_scale`, `x_slack`, `d`, `d_exact`, `d_scale`, `gamma_*`, `stp0`, `dir_ratio`, `mirror_ratio`, `cap_first_bad`, `uncapped_nsearch`, `caps.csv` | not compared; the generator checks the regenerated ones against their bounds (a run, or a committed cap, outside the bounds on the running platform aborts with a message) |
+| diagnostic | `x_scale`, `x_slack`, `d`, `d_exact`, `d_scale`, `gamma_*`, `stp0`, `dir_ratio`, `mirror_ratio`, `cap_first_bad`, `uncapped_nsearch`, `cmp_nsearch` (checked: not shorter on the running platform), `caps.csv` | not compared; the generator checks the regenerated ones against their bounds (a run, or a committed cap, outside the bounds on the running platform aborts with a message) |
 
 Tolerances of the trajectory columns (ε = 2⁻⁵², `C_X = 32`, the committed `x_scale`, `x_slack`; `L` = largest ‖y‖/‖s‖ over the
 recorded pairs of the run, n the dimension), as #39 derives `dphi_scale`:
 
-* `|Δxᵢ| ≤ C_X ε x_scaleᵢ + 2 x_slackᵢ`: the replay bound of two correct implementations; both SciPy runs deviate from the
-  exact direction by at most `x_slack`.
-* `|Δgᵢ| ≤ 4 L ‖tol_x‖₂ + 8 n ε (|gᵢ| + L ‖x‖₂)`: `g` is `L`-Lipschitz along the path (mean value theorem; `L` from the
-  secant ratios, the factor 4 is a margin for segments the other path took), plus the rounding of evaluating `g`.
+* `|Δxᵢ| ≤ C_X ε x_scaleᵢ + 2 x_slackᵢ` (same formula as the Rust replay): `x_scale` is the running sum of the magnitudes
+  whose rounding enters the point, `x_scaleᵢ = |x₀ᵢ| + Σⱼ (|αⱼ dⱼᵢ| + |x_{j+1,i}|) + |x_base,i| + |α dᵢ|`, so one fused update
+  `x + α d` (one product, one sum: error ≤ ε|α d| + ε|x_new| per implementation, two implementations) is covered by
+  construction, and a 1-ulp difference of an iterate always passes. `x_slackᵢ` is the accumulated deviation of SciPy's direction
+  from the exact one (measured against mpmath), counted twice (two SciPy runs).
+* `|Δgᵢ| ≤ 4 L ‖tol_x‖₂ + 8 n ε (|gᵢ| + L ‖x‖₂)`: `g` is `L`-Lipschitz along the path (mean value theorem; `L` is an estimate
+  from the secant ratios, the factor 4 a margin for it and for segments the other path took), plus the rounding of evaluating
+  `g`.
 * `|Δf| ≤ ‖g‖₂ ‖tol_x‖₂ + 2 L ‖tol_x‖₂² + 8 n ε (|f| + ‖g‖₂ ‖x‖₂)`: first-order Taylor.
-* `pairs`: `s` differs by at most `2 max_k tol_x`, `y` by at most `2 max_k tol_g` (a difference of two iterates/gradients);
-  `runs.csv` `x`, `f`, `ginf` use the tolerance of the last accepted (last) evaluation of the run.
+* `pairs`: `s` differs by at most `2 max_k tol_x`, `y` by at most `2 max_k tol_g` over the evaluations of the comparison prefix.
 
-**Caveat found while deriving them:** `x_scale` is the absolute-value recursion of the two-loop (Σ|terms| with every sign
-positive), which compounds along the recursion: on `default_rosen2` it grows from 1 to 4.6e15 over 36 iterations. A tolerance
-of `C_X ε x_scale` is therefore vacuous late in such runs (about 1 in x at the end of `default_rosen2`), for the replay as well
-as for this check, while it is tight early. The bounds are valid but pessimistic; a tighter forward-error measure (per
-operation `Σ|terms|` with the actual values, not the abs-recursion) would make both claims sharper. Reported to the
-maintainer, not changed here (it would change every recorded ratio).
+**What is compared, row by row: the comparison prefix.** The bound models rounding, not its *amplification* by the problem
+(the line search and the matrix `H` respond to a perturbation of an iterate). So every run carries `cmp_nsearch`: the number of
+line searches whose requested points stay within `C_X / 4 · ε x_scale + 2 x_slack` of SciPy's for the independent float64 mirror
+(the generator's `Mirror`); the first search that exceeds it ends the prefix. **Only rows inside the prefix are compared by value**
+(`evals.csv` rows with `search < cmp_nsearch`, `searches.csv` rows with `j < cmp_nsearch`, pairs formed by such searches,
+`runs.csv` `x`, `f`, `ginf` only if the whole run is inside the prefix). **Rows past it, and counts-only rows, are compared by
+counts, termination and the other exact columns only**; the summary of `--check` prints how many rows were skipped per file. The
+Rust replay uses the same prefix and the same formula, so replay and `--check` make the same claim. `cmp_nsearch` is a
+diagnostic column: `--check` fails if the prefix on the running platform is *shorter* than the committed one (the committed
+prefix is then outside the bound there), never by changing it. 18 of the 49 replayed runs have a prefix shorter than the run:
+the Rosenbrock-2/5 runs (9 line searches; the runs have 36–55) and `quad5_k1e4` (15 of 30–36), `m3_rosen5` (8 of 25).
+
+**The earlier scale was replaced.** The first version used the absolute-value recursion of the two-loop (`Σ|terms|` with every
+sign positive), which compounds along the recursion: on `default_rosen2` it grew to 4.6e15 over 36 iterations, and
+`C_X ε x_scale` was about 33 in x at the end of that run: vacuous for the replay and for this check. With the running magnitude
+sum the same run has `x_scale` ≈ 9 at its last compared evaluation and a position tolerance of 7e-14 (2e-13 at the last
+evaluation of the run), against 33 before. The price is honest: where the old scale hid the amplification inside a huge
+tolerance, the prefix now shows where it starts. Tolerances relative to the values in the committed data (inside the prefixes):
+`x` median 6e-14, 95th percentile 1e-12, maximum 5e-11 of `‖x‖∞`; `g` median 1e-10, 95th percentile 3e-6, maximum 52 (late in
+runs where `|g|` is below the absolute floor `4 L ‖tol_x‖`); `f` median 6e-13, 95th percentile 2e-7, maximum 333 (the same).
 
 **Caps are platform-independent.** The cap of a run is the minimum over the checked platforms of the largest prefix of line
 searches inside the bounds: macOS arm64 (committed first) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (CI run 46132168523,
@@ -137,56 +154,59 @@ The replay feeds SciPy's `(f, g)` to the Rust state and compares the requested p
 `x_base + α d`, `d = −H g` (two-loop), α from the line search. Rust's `x_base` is its own accepted iterate, so the error
 accumulates over the steps taken. For component `i` the test allows
 
-    |x_rust,i − x_scipy,i|  ≤  C_X · ε · x_scale,i  +  x_slack,i          (ε = 2⁻⁵², C_X = 32)
+    |x_rust,i − x_scipy,i|  ≤  C_X · ε · x_scale,i  +  2 · x_slack,i          (ε = 2⁻⁵², C_X = 32)
 
-* `x_scale,i = cum_i + |x_base,i| + |α| d_scale,i`: the absolute-value scale of the computation (Higham,
-  *Accuracy and Stability of Numerical Algorithms*, 2nd ed., §3.1: a sum or dot product of terms is computed to within
-  `γₙ Σ|terms|`, `γₙ = nε/(1−nε)`). `d_scale,i` is `Σ|terms|` of the two-loop recursion for component `i`, evaluated with
-  all signs positive in 60-digit arithmetic (`searches.csv`); `cum_i` is the sum over the accepted steps so far of
-  `|α_j| d_scale,j,i + |x_{j+1,i}|`.
-* `x_slack,i`: the sum over the steps so far (and the current one) of `|α_j| · |d_scipy − d_exact|_i`: SciPy's *own*
+* `x_scale,i = |x₀,i| + Σⱼ (|αⱼ dⱼ,i| + |x_{j+1,i}|) + |x_base,i| + |α d_i|`: the magnitudes whose rounding enters the point
+  (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., §3.1: a sum of terms is computed to within
+  `γₙ Σ|terms|`, `γₙ = nε/(1−nε)`), with the *actual* direction and step, no recursion. It is the same quantity for the replay
+  (Rust vs SciPy) and for `--check` (SciPy vs SciPy): "the same claim".
+* `x_slack,i`: the sum over the steps so far (and the current one) of `|α_j| · |d_scipy − d_exact|_i`, counted twice in the bound (each implementation deviates from the exact direction by about that): SciPy's *own*
   deviation from the exact direction, measured against mpmath, not assumed. SciPy's compact-representation direction is
   less accurate than a two-loop recursion on small memories: relative to `d_scale` it deviates by up to **43.8 ε** on the
   committed runs (`dir_ratio`), against 1.3 ε for a float64 two-loop recursion (`../../../src/lbfgs/twoloop.rs`,
   checked on all 1028 searches).
 * **`C_X = 32` is measured, not derived from `n` and `m`.** A float64 mirror of the algorithm the Rust code follows
   (`Mirror` in the generator: the ask/tell state machine described in the module docs of `minimize::lbfgs`, on Python's
-  `DCSRCH._iterate`, which `linesearch::MoreThuente` ports) replays every run. The generator keeps a run (or the prefix
-  of one) only while the mirror agrees on every count and termination and the ratio
-  `(|Δx| − x_slack) / (ε x_scale)` of each line search (`mirror_ratio`) is at most `C_X / 4 = 8`, and SciPy's own direction
-  is within `C_DIR / 2 = 64` of exact (`dir_ratio`, `C_DIR = 128`). The factor 4 is a margin: a throwaway implementation
+  `DCSRCH._iterate`, which `linesearch::MoreThuente` ports) replays every run. The generator measures, for each run, the longest prefix in which the mirror agrees and the ratio
+  `(|Δx| − 2 x_slack) / (ε x_scale)` of each line search (`mirror_ratio`) is at most `C_X / 4 = 8` (this defines `cmp_nsearch`, the
+  comparison prefix), and, for the cap, SciPy's own direction is within `C_DIR / 2 = 64` of exact (`dir_ratio`, `C_DIR = 128`). The factor 4 is a margin: a throwaway implementation
   of the algorithm was up to twice as far from SciPy as the mirror (27.5 against the mirror's 13.6 on a longer prefix), so
   the constant `C_X` is never raised and the prefix is shortened instead. The Rust implementation is independent of the
   mirror; its PR must report its own maximum. If it exceeds the bound, that is a finding to explain, not a constant to widen.
   The constant is one named value (`C_X` in `tests/lbfgs_common/mod.rs`) and every replay failure prints the observed
   maximum ratio and the bound.
-* **Which runs are capped, and why the cap is data.** Five runs of the `memory` group (`maxcor` = 1, 3) leave the bounds
-  after some line searches. Their `maxiter` is the `maxiter_cap` column of `runs.csv` (empty = `none` for every other run),
-  chosen as **the largest prefix inside the bounds on every checked platform** (see "What `--check` compares"): every line
-  search before the cap has mirror ratio ≤ `C_X / 4` and SciPy direction error ≤ `C_DIR / 2`, and the run stops there (`MaxIter`).
-  `cap_first_bad` is the first search outside the bounds on the generating platform (macOS); the cap is at or below it. `caps.csv`
-  holds the per-search ratios of the *uncapped* run behind each capped row, so the claim is checkable.
+* **Which runs are capped, and why the cap is data.** Five runs of the `memory` group (`maxcor` = 1, 3) end early. Their
+  `maxiter` is the `maxiter_cap` column of `runs.csv` (`none` for every other run), chosen as **the largest prefix inside the
+  bound on SciPy's own direction error on every checked platform**: every line search before the cap has direction error
+  ≤ `C_DIR / 2`, and the run stops there (`MaxIter`). (The cap no longer depends on the mirror: the position claim is the
+  separate, shorter-or-equal `cmp_nsearch`.) `cap_first_bad` is the first search outside the direction bound on the generating
+  platform (macOS); the cap is at or below it. `caps.csv` holds the per-search mirror and direction ratios of the *uncapped* run
+  behind each capped row.
 
-  | run | cap (searches) | macOS first search outside | Ubuntu (CI) first search outside | of uncapped | macOS: search outside, mirror / direction | exceeds |
-  |---|---|---|---|---|---|---|
-  | `m1_rosen5` | 7 | 25 | 7 | 78 | 11.7, 0.9 | mirror ratio above `C_X / 4` |
-  | `m3_rosen5` | 25 | 26 | 25 | 58 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
-  | `m1_quad10_k1e2` | 15 | 15 | 16 | 73 | 0.9, 113.6 | SciPy's own direction error above `C_DIR / 2` |
-  | `m1_powell4` | 15 | 15 | 15 | 58 | 1.4, 438.5 | SciPy's own direction error above `C_DIR / 2` |
-  | `m3_quad10_k1e2` | 26 | 26 | 26 | 56 | 0.7, 65.8 | SciPy's own direction error above `C_DIR / 2` |
+  | run | cap | first search outside the direction bound (macOS) | comparison prefix `cmp_nsearch` | Linux CI evidence |
+  |---|---|---|---|---|
+  | `m1_rosen5` | 7 | 42 (direction 81.0) | 7 | cap 7 from CI run 46132168523 (selection by the old mirror scale) |
+  | `m3_rosen5` | 25 | 55 (64.1) | 8 | cap 25 from CI run 46133315711 (old scale) |
+  | `m1_quad10_k1e2` | 15 | 15 (113.6) | 15 | CI run 46132168523: 16 |
+  | `m1_powell4` | 15 | 15 (438.5) | 15 | 15 |
+  | `m3_quad10_k1e2` | 26 | 26 (65.8) | 26 | 26 |
 
-  The maintainer proposed that the per-search ratio should be monotone up to the cap. It is not (11–15 decreases before the
-  cap in the Rosenbrock rows, 5–13 in the others; only the running maximum is monotone, which is a tautology), and the
-  test does not pretend it is. `lbfgs_replay.rs::caps_cannot_hide_a_disagreement` checks the condition that does hold and
-  that excludes "we stopped before it got worse": the replay agrees on every request up to the cap, every search before
-  the cap is inside the bounds, and the generating platform's first search outside the bounds (`cap_first_bad`) is at or after the
-  cap and really is outside one (a cap below it, as for `m1_rosen5`, is justified by the other platform). `only_a_recorded_cap_shortens_a_run`
-  checks that no other run is shortened (the only other runs with a small `maxiter` are the tests of the iteration limit
-  itself).
-* **Largest observed ratios on the uncapped runs** (mirror ratio, SciPy direction ratio; all runs of a group that have no
-  cap): `default` 0.73, 7.5; `ftol0` 0.73, 7.5; `memory` (`m3_powell4`, `m50_quad10_k1e2`) 0.64, 1.7; `tight` 0.21, 14.7;
-  `termination` 0.73, 1.6; `maxiter_order` 0.30, 1.9; `maxfun` 0.73, 1.9; `maxls` 0.73, 7.5; `search` 0.73, 9.1. For the
-  capped runs, inside their cap: 7.7 and 44.4.
+  The caps of `m1_rosen5` and `m3_rosen5` come from Linux evidence gathered with the earlier (compounding-scale) criterion; they
+  are kept as the committed run lengths (shorter than SciPy's direction bound requires, and not shorter than the prefix), and
+  the position claim for them is `cmp_nsearch` (7 and 8 line searches). Indexing: line searches are numbered from 0; the cap is
+  the number of line searches kept (= `maxiter`), searches `0 … cap − 1`; a cap is valid iff `cap ≤ cap_first_bad`.
+
+  The maintainer proposed that the per-search ratio should be monotone up to the cap. It is not (several decreases before the
+  cap in every capped run; only the running maximum is monotone, which is a tautology), and the test does not pretend it is.
+  `lbfgs_replay.rs::caps_cannot_hide_a_disagreement` checks, for each capped row, that the replay agrees on every request of the
+  comparison prefix; that every search before the cap is inside the direction bound and `cap_first_bad` is at or after the cap and
+  really outside it; that every search of the prefix is inside the mirror bound; and that the prefix ends at the cap or at a search
+  that exceeds the mirror bound. `only_a_recorded_cap_shortens_a_run` checks that no other run is shortened.
+* **Largest observed ratios per group** (replayed runs; the mirror ratio over the *whole* run, so it exceeds `C_X / 4` where the
+  prefix is shorter than the run; SciPy direction ratio; runs with a shortened prefix / runs): `default` 3.1e6, 7.5 (3/10);
+  `ftol0` 3.1e6, 7.5 (2/4); `memory` 1.8e3, 44.4 (1/7); `tight` 29, 14.7 (1/4); `live` 3.1e6, 7.5 (3/6); `termination` 0.73, 1.6 (0/3);
+  `maxiter_order` 3.1e6, 1.9 (3/5); `maxfun` 1.4e3, 1.9 (1/4); `maxls` 3.0e3, 7.5 (2/3); `search` 1.4e3, 9.1 (2/3). Inside the
+  prefixes the mirror ratio is ≤ 8 by construction (the Rust implementation reaches 5.5 on the committed data).
 * **A finding that bounds what replay can prove: Rosenbrock-5 with `maxcor = 1`.** Run to its end (78 iterations) the
   mirror's ratio reaches 1.8e5 (3e5 for SciPy's own direction error against the exact one in the same run) although both
   implementations are correct: last-digit differences between two correct implementations are amplified by the

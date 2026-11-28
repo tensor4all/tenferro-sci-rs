@@ -1060,7 +1060,7 @@ def check(new, data):
         c = runs_c.get(r["id"], {}).get("cmp_nsearch", "none")
         if c != "none" and r["cmp_nsearch"] != "none" and int(r["cmp_nsearch"]) < int(c):
             BOUND_FAILURES.append(f"{r['id']}: the committed comparison prefix ({c} line searches) is longer than the prefix inside the bound here ({r['cmp_nsearch']})")  # fmt: skip
-    print("== bounds on this platform (mirror ratio <= C_X/4, SciPy direction <= C_DIR/2, every search up to a cap)")
+    print("== bounds on this platform (SciPy direction <= C_DIR/2 up to a cap; comparison prefix not shorter than committed)")
     for l in BOUND_FAILURES:
         print("  OUT OF BOUNDS", l)
     print(f"  {len(BOUND_FAILURES)} violations" if BOUND_FAILURES else "  all inside")
