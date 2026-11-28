@@ -855,15 +855,12 @@ def texts() -> dict[str, str]:
 #   If any of these differs on another platform the path of a recorded run changed there: the summary lists every such
 #   mismatch in full, and that run leaves the parity set (it is never loosened).
 # * trajectory (SciPy's own values, which BLAS and libm round differently): evals x, f, g; runs x, f, ginf; searches
-#   x_base, g_base; pairs s, y. Within a tolerance DERIVED from the committed scales, as #39 derives dphi_scale:
-#     |dx_i| <= C_X eps x_scale_i + 2 x_slack_i               (two correct implementations: the replay bound, C_X = 32;
-#                                                               both SciPy runs deviate from the exact direction by
-#                                                               at most x_slack)
-#     |dg_i| <= 4 L ||dx_tol||_2 + 8 n eps (|g_i| + L ||x||_2)        (mean value theorem: g is L-Lipschitz along the
-#                                                               path; L = largest ||y|| / ||s|| over the recorded pairs
-#                                                               of the run, 4 = margin for segments the other path took)
-#     |df|   <= ||g||_2 ||dx_tol||_2 + 2 L ||dx_tol||_2^2 + 8 n eps (|f| + ||g||_2 ||x||_2)
-#     pairs: s differs by at most 2 max_k tol_x, y by at most 2 max_k tol_g (a difference of two iterates / gradients)
+#   x_base, g_base; pairs s, y, on the run's comparison prefix only. Compared with ONE calibrated constant,
+#   SCIPY_REPRO_RTOL: |a_i - b_i| <= SCIPY_REPRO_RTOL max(|a_i|, |b_i|, scale), scale = the largest |component| of that column
+#   over the compared rows of the run (committed values). This is a REPRODUCIBILITY tolerance of SciPy across BLAS/libm
+#   (OpenBLAS vs Accelerate), calibrated on CI data with a stated safety factor, NOT derived from the algorithm; the derived
+#   position bound (C_X eps x_scale + 2 x_slack) belongs to the Rust replay (the parity claim). Every run prints the observed
+#   maximum next to the constant.
 # * diagnostic (not compared): x_scale, x_slack, d, d_exact, d_scale, gamma_*, stp0, the ratio columns, caps.csv,
 #   cap_first_bad, uncapped_nsearch. The regenerated ones are checked against their bounds by the generator itself
 #   (a run, or a committed cap, outside the bounds on the running platform aborts with a message).
@@ -899,29 +896,12 @@ def _by_key(name, rows):
     return {tuple(r[k] for k in keys): r for r in rows} if keys else None
 
 
-def derived_tolerances(committed):
-    """Per run: tol_x (per accepted eval index k), tol_g, tol_f from the committed evals, scales and pairs."""
-    runs = {r["id"]: r for r in committed["runs.csv"][1]}
-    ev, pr = collections.defaultdict(list), collections.defaultdict(list)
-    for e in committed["evals.csv"][1]:
-        ev[e["run"]].append(e)
-    for p in committed["pairs.csv"][1]:
-        pr[p["run"]].append(p)
-    tol = {}
-    for rid, rows in ev.items():
-        L = max((np.linalg.norm(fvec(p["y"])) / np.linalg.norm(fvec(p["s"])) for p in pr[rid] if np.linalg.norm(fvec(p["s"])) > 0),
-                default=0.0)  # fmt: skip
-        n = len(fvec(rows[0]["x"]))
-        per = {}
-        for e in rows:
-            x, g, f = fvec(e["x"]), fvec(e["g"]), float(e["f"])
-            tx = C_X * EPS * fvec(e["x_scale"]) + 2 * fvec(e["x_slack"])
-            dx = float(np.linalg.norm(tx))
-            tg = 4 * L * dx + 8 * n * EPS * (np.abs(g) + L * np.linalg.norm(x))
-            tf = float(np.linalg.norm(g)) * dx + 2 * L * dx * dx + 8 * n * EPS * (abs(f) + np.linalg.norm(g) * np.linalg.norm(x))
-            per[int(e["k"])] = (tx, tg, tf, e)
-        tol[rid] = per
-    return tol
+# Calibration of SCIPY_REPRO_RTOL (CI run 46134161576, Ubuntu 24.04 / OpenBLAS, against the macOS data): over all compared rows of
+# every column the largest absolute difference was (evals x 7.2e-12, f 8.7e-11, g 2.1e-8; searches x_base 6.5e-12, g_base 2.7e-9;
+# pairs s 9.1e-12, y 2.4e-8; runs x 1.1e-13, f 5.7e-14, ginf 3.7e-13); divided by the smallest run scale of that column in the
+# compared prefixes this bounds the observed relative difference by 3.5e-8 (pairs y; the others <= 4.2e-9). Constant: 1e-6,
+# a factor >= 28 above that bound. If an observed maximum exceeds ~1e-6 the check fails and the data, not the constant, is questioned.
+SCIPY_REPRO_RTOL = 1e-6
 
 
 def check(new, data):
@@ -933,7 +913,6 @@ def check(new, data):
             return 1
         committed[name] = parse_csv(path.read_text())
     regenerated = {name: parse_csv(text) for name, text in new.items()}
-    tol = derived_tolerances(committed)
     runs_c = {r["id"]: r for r in committed["runs.csv"][1]}
     first_window = {}
     for r in committed["searches.csv"][1]:
@@ -957,11 +936,24 @@ def check(new, data):
             return int(a["j"]) < cmpn
         return first_window.get((rid, int(a["p"])), 0) <= cmpn  # pairs: formed by a search inside the prefix
 
+    # scale of each (file, column, run): the largest |component| over the run's compared rows (committed values)
+    run_scale = collections.defaultdict(float)
+
+    def scale_key(name, col, a):
+        rid = a["id"] if name == "runs.csv" else a["run"]
+        # runs.csv x, f, ginf share the scales of evals x, f and g
+        return (("evals.csv", {"x": "x", "f": "f", "ginf": "g"}[col]) if name == "runs.csv" else (name, col), rid)
+
+    for name in ("evals.csv", "searches.csv", "pairs.csv"):
+        for a in committed[name][1]:
+            if in_prefix(name, a):
+                for col in TRAJECTORY[name]:
+                    run_scale[scale_key(name, col, a)] = max(run_scale[scale_key(name, col, a)], float(np.max(np.abs(fvec(a[col])))))
     exact_lines, float_stats, sample = [], {}, []
     n_exact = 0
     diag_note = []
 
-    def stat(name, col, absd, reld, rel_ok=True):
+    def stat(name, col, absd, reld):
         a = float_stats.setdefault((name, col), dict(n=0, bad=0, maxabs=0.0, maxrel=0.0, maxratio=0.0))
         a["n"] += 1
         a["maxabs"] = max(a["maxabs"], absd)
@@ -1007,39 +999,17 @@ def check(new, data):
                 continue
             for col in TRAJECTORY.get(name, set()):
                 xa, xb = fvec(a[col]), fvec(b[col])
-                if name == "evals.csv":
-                    tx, tg, tf, _ = tol[a["run"]][int(a["k"])]
-                    t = {"x": tx, "g": tg, "f": np.array([tf])}[col]
-                elif name == "runs.csv":
-                    per = tol.get(a["id"], {})
-                    acc = [k for k, v in per.items() if v[3]["accepted"] == "1"]
-                    kk = max(acc) if acc else (min(per) if per else None)
-                    if kk is None:  # counts-only row: no evals; use rounding scale of the value itself
-                        t = 1e-6 * np.maximum(np.abs(xa), 1.0)
-                    elif col == "x":
-                        t = per[kk][0]
-                    elif col == "ginf":
-                        t = np.array([float(np.max(per[kk][1]))])
-                    else:
-                        t = np.array([per[max(per)][2]])
-                elif name == "searches.csv":
-                    per = tol[a["run"]]
-                    prev = [k for k, v in per.items() if k < int(a["k0"]) and (v[3]["accepted"] == "1" or k == 0)]
-                    kk = max(prev)
-                    t = per[kk][0] if col == "x_base" else per[kk][1]
-                else:  # pairs
-                    cmpn = int(runs_c[a["run"]]["cmp_nsearch"])
-                    per = [v for v in tol[a["run"]].values() if int(v[3]["search"]) < cmpn]
-                    t = 2 * np.max([(v[0] if col == "s" else v[1]) for v in per], axis=0) if per else 1e-6
+                scale = run_scale[scale_key(name, col, a)]
                 d = np.abs(xa - xb)
                 with np.errstate(all="ignore"):
-                    ratio = float(np.max(d / np.maximum(t, 1e-300))) if d.size else 0.0
-                st = stat(name, col, float(np.max(d)), float(np.max(d / np.maximum(np.abs(xa), 1e-300))))
-                st["maxratio"] = max(st["maxratio"], ratio)
-                if not ratio <= 1.0:
+                    rel = float(np.max(d / np.maximum(np.maximum(np.abs(xa), np.abs(xb)), scale))) if d.size else 0.0
+                    rel = 0.0 if not d.size or not np.any(d > 0) else rel
+                st = stat(name, col, float(np.max(d)), rel)
+                st["maxratio"] = max(st["maxratio"], rel / SCIPY_REPRO_RTOL)
+                if not rel <= SCIPY_REPRO_RTOL:
                     st["bad"] += 1
                     if len(sample) < 40:
-                        sample.append(f"{name} {'/'.join(key)} column {col}: committed {a[col][:40]}, regenerated {b[col][:40]}, |diff| {float(np.max(d)):.3e} is {ratio:.2f} x the derived tolerance")  # fmt: skip
+                        sample.append(f"{name} {'/'.join(key)} column {col}: committed {a[col][:40]}, regenerated {b[col][:40]}, relative difference {rel:.3e} > SCIPY_REPRO_RTOL = {SCIPY_REPRO_RTOL:g}")  # fmt: skip
     n_exact = len(exact_lines)
     print("== exact columns (counts, termination, message, call, caps, flags, row keys): every mismatch")
     for l in exact_lines[:300]:
@@ -1049,11 +1019,14 @@ def check(new, data):
     runs_changed = sorted({l.split()[1].split("/")[0] for l in exact_lines if l.split()[0] in ("runs.csv", "evals.csv", "searches.csv", "pairs.csv")})
     print(f"  {n_exact} exact mismatches; runs with a changed path or option: {runs_changed if runs_changed else 'none'}")  # fmt: skip
     print("== rows past a run's comparison prefix (counts/termination only): " + ", ".join(f"{k} {v}" for k, v in sorted(skipped_rows.items())))
-    print("== trajectory columns: per file and column (compared; derived tolerance, ratio = |diff| / tolerance, must be <= 1)")
+    print(f"== trajectory columns, calibrated reproducibility tolerance SCIPY_REPRO_RTOL = {SCIPY_REPRO_RTOL:g}: |a-b| <= rtol max(|a|, |b|, run scale) per component, on the comparison prefix")
     bad_total = 0
+    worst = 0.0
     for (name, col), st in sorted(float_stats.items()):
         bad_total += st["bad"]
-        print(f"  {name:13s} {col:7s} compared {st['n']:6d}  outside tolerance {st['bad']:5d}  largest |diff| {st['maxabs']:.3e}  largest rel diff {st['maxrel']:.3e}  largest ratio {st['maxratio']:.3f}")  # fmt: skip
+        worst = max(worst, st["maxrel"])
+        print(f"  {name:13s} {col:7s} compared {st['n']:6d}  outside {st['bad']:5d}  largest |diff| {st['maxabs']:.3e}  observed maximum {st['maxrel']:.3e}  constant {SCIPY_REPRO_RTOL:g}  margin {('%.3gx' % (SCIPY_REPRO_RTOL / st['maxrel'])) if st['maxrel'] > 0 else 'n/a (identical)'}")  # fmt: skip
+    print(f"  observed maximum over all columns {worst:.3e}; constant {SCIPY_REPRO_RTOL:g} (margin {('%.3gx' % (SCIPY_REPRO_RTOL / worst)) if worst > 0 else 'n/a, identical'})")
     for l in sample:
         print("  FLOAT MISMATCH", l)
     for r in regenerated["runs.csv"][1]:
@@ -1065,7 +1038,7 @@ def check(new, data):
         print("  OUT OF BOUNDS", l)
     print(f"  {len(BOUND_FAILURES)} violations" if BOUND_FAILURES else "  all inside")
     failed = n_exact + bad_total + len(BOUND_FAILURES)
-    print("check:", "FAILED" if failed else "ok", f"({n_exact} exact, {bad_total} trajectory outside tolerance, {len(BOUND_FAILURES)} out of bounds)")
+    print("check:", "FAILED" if failed else "ok", f"({n_exact} exact, {bad_total} trajectory outside SCIPY_REPRO_RTOL, {len(BOUND_FAILURES)} out of bounds)")
     return 1 if failed else 0
 
 
