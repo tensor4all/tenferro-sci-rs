@@ -92,7 +92,7 @@ impl MoreThuenteConfig {
     ///     Err(ConfigError::NonFinite)
     /// );
     /// ```
-    pub fn new(
+    pub const fn new(
         ftol: f64,
         gtol: f64,
         xtol: f64,

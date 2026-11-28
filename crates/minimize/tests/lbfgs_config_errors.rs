@@ -124,7 +124,7 @@ fn the_boundaries_are_valid() {
 
 #[test]
 fn scipy_default_has_scipys_options_and_lnsrlbs_line_search() {
-    let cfg = LbfgsConfig::scipy_default().expect("valid");
+    let cfg = LbfgsConfig::scipy_default();
     assert_eq!(
         (
             cfg.m(),
@@ -147,6 +147,26 @@ fn scipy_default_has_scipys_options_and_lnsrlbs_line_search() {
     // and the same line search whatever the other options are
     let other = make((3, 1e-8, 0.0, 7, 9, 2, H0::FixedIdentity)).expect("valid");
     assert_eq!(other.line_search(), ls);
+}
+
+#[test]
+fn the_infallible_default_equals_the_validated_path() {
+    // scipy_default() is built from constants; new() validates caller input. They must agree field by field, and the
+    // line search must equal the validated MoreThuenteConfig::new of the lnsrlb constants.
+    let validated = LbfgsConfig::new(
+        10,
+        1e-5,
+        2.220446049250313e-9,
+        15000,
+        15000,
+        20,
+        H0::ScaledGamma,
+    )
+    .expect("valid");
+    assert_eq!(LbfgsConfig::scipy_default(), validated);
+    let ls =
+        minimize::linesearch::MoreThuenteConfig::new(1e-3, 0.9, 0.1, 0.0, 1e10).expect("valid");
+    assert_eq!(LbfgsConfig::scipy_default().line_search(), &ls);
 }
 
 #[test]

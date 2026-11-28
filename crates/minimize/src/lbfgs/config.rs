@@ -4,7 +4,17 @@
 //! `b9105ccc2237f57acb1060202cd77f6dd264fb34`) `minimize(method="L-BFGS-B")` (`_lbfgsb_py.py`, `_minimize_lbfgsb`) and the line-search numbers are the ones
 //! `lnsrlb` hard-codes (`__lbfgsb.c`: `ftol = 1e-3, gtol = 0.9, xtol = 0.1`, `stpmin = 0`, `stpmax = 1e10`).
 
-use crate::linesearch::{self, MoreThuenteConfig};
+use crate::linesearch::MoreThuenteConfig;
+
+/// The line search of SciPy's L-BFGS-B, `lnsrlb` in `__lbfgsb.c`: `ftol = 1e-3`, `gtol = 0.9`, `xtol = 0.1`,
+/// `stpmin = 0`, `stpmax = 1e10` (unconstrained). These numbers belong to L-BFGS, not to `linesearch`. The validation
+/// of [`MoreThuenteConfig::new`] runs at compile time (it is a `const fn`), so a wrong constant is a build error and
+/// the configuration of the optimizer cannot fail at run time.
+const LBFGSB_LINE_SEARCH: MoreThuenteConfig =
+    match MoreThuenteConfig::new(1e-3, 0.9, 0.1, 0.0, 1e10) {
+        Ok(c) => c,
+        Err(_) => panic!("the L-BFGS-B line search constants are valid"),
+    };
 
 /// The initial inverse-Hessian approximation `H₀` of the two-loop recursion.
 ///
@@ -59,10 +69,6 @@ pub enum ConfigError {
     /// `ftol < 0` (SciPy: `ERROR: FACTR < 0`).
     #[error("ftol must not be negative")]
     NegativeFtol,
-    /// The line-search configuration was refused. It is built from constants, so this does not occur; it exists
-    /// because [`MoreThuenteConfig::new`] is fallible and `linesearch` has no infallible constructor for them.
-    #[error("line search configuration: {0}")]
-    LineSearch(#[from] linesearch::ConfigError),
 }
 
 /// The configuration of [`LbfgsState`](super::LbfgsState) and [`minimize`](super::minimize), validated at
@@ -83,9 +89,8 @@ pub enum ConfigError {
 /// ```
 /// use minimize::lbfgs::{LbfgsConfig, H0};
 ///
-/// let cfg = LbfgsConfig::scipy_default()?;
+/// let cfg = LbfgsConfig::scipy_default();
 /// assert_eq!((cfg.m(), cfg.gtol(), cfg.maxls(), cfg.h0()), (10, 1e-5, 20, H0::ScaledGamma));
-/// # Ok::<(), minimize::lbfgs::ConfigError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LbfgsConfig {
@@ -153,7 +158,6 @@ impl LbfgsConfig {
         if ftol < 0.0 {
             return Err(ConfigError::NegativeFtol);
         }
-        let ls = MoreThuenteConfig::new(1e-3, 0.9, 0.1, 0.0, 1e10)?;
         Ok(Self {
             m,
             gtol,
@@ -162,38 +166,34 @@ impl LbfgsConfig {
             maxfun,
             maxls,
             h0,
-            ls,
+            ls: LBFGSB_LINE_SEARCH,
         })
     }
 
     /// SciPy 1.16.3's defaults for `minimize(method="L-BFGS-B")`: `maxcor = 10`, `gtol = 1e-5`,
-    /// `ftol = 2.220446049250313e-9` (`1e7 · eps`), `maxiter = maxfun = 15000`, `maxls = 20`.
-    ///
-    /// # Errors
-    ///
-    /// [`ConfigError::LineSearch`] never occurs for these constants; the signature carries the error because the
-    /// line-search configuration has no infallible constructor.
+    /// `ftol = 2.220446049250313e-9` (`1e7 · eps`), `maxiter = maxfun = 15000`, `maxls = 20`, and the line search
+    /// L-BFGS-B hard-codes. It cannot fail: every value is a valid constant.
     ///
     /// # Examples
     ///
     /// ```
     /// use minimize::lbfgs::LbfgsConfig;
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!((cfg.maxiter(), cfg.maxfun()), (15000, 15000));
     /// assert_eq!(cfg.ftol(), 2.220446049250313e-9);
-    /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
-    pub fn scipy_default() -> Result<Self, ConfigError> {
-        Self::new(
-            10,
-            1e-5,
-            2.220446049250313e-9,
-            15000,
-            15000,
-            20,
-            H0::ScaledGamma,
-        )
+    pub fn scipy_default() -> Self {
+        Self {
+            m: 10,
+            gtol: 1e-5,
+            ftol: 2.220446049250313e-9,
+            maxiter: 15000,
+            maxfun: 15000,
+            maxls: 20,
+            h0: H0::ScaledGamma,
+            ls: LBFGSB_LINE_SEARCH,
+        }
     }
 
     /// The number of stored pairs `m`.
@@ -300,7 +300,7 @@ impl LbfgsConfig {
     ///
     /// ```
     /// # use minimize::lbfgs::LbfgsConfig;
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let ls = cfg.line_search();
     /// assert_eq!((ls.ftol(), ls.gtol(), ls.xtol(), ls.stpmin(), ls.stpmax()), (1e-3, 0.9, 0.1, 0.0, 1e10));
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())

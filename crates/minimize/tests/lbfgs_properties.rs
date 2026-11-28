@@ -99,7 +99,7 @@ fn fixed_identity_and_scaled_gamma_differ_after_the_first_pair() {
 #[test]
 fn evaluations_count_the_tell_calls() {
     let q = Quadratic::new(5, 1e2);
-    let cfg = LbfgsConfig::scipy_default().expect("valid");
+    let cfg = LbfgsConfig::scipy_default();
     let mut state = LbfgsState::new(&cfg, &mut (), vec![0.0; 5]);
     let mut g = vec![0.0; 5];
     let mut told = 0;

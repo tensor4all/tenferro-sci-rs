@@ -5,7 +5,24 @@
 //! for tenferro tensors. Workspace is allocated by cloning `x0` when a state is created; [`Clone::clone_from`] reuses it
 //! afterwards, so an iteration allocates nothing.
 //!
-//! The scalar is `f64` for now (the scalar trait is still private, as decided on #38).
+//! The scalar is `f64` for now (the scalar trait is still private, as decided on #38). This is provisional: the
+//! scalar becomes an associated type of `Vector` (and `LbfgsConfig` generic over it) when the scalar trait of #38 is
+//! public and a second precision has parity data; the migration is replacing `f64` in the five signatures by
+//! `Self::Real`.
+//!
+//! # Contracts
+//!
+//! - **Workspace reuse.** The zero-allocation promise of the iteration is per implementation: a `Vector` type used
+//!   in the iteration must override [`Clone::clone_from`] so that it reuses the destination's storage (the default
+//!   `clone_from` reallocates). `Vec<f64>` does; `tests/lbfgs_alloc.rs` pins that path only. There is deliberately no
+//!   second mechanism (`similar`/`copy_from` as in krylov); if a tensor type cannot reuse device memory through
+//!   `clone_from`, reopen the question before 0.1 instead of adding one speculatively.
+//! - **Infallible by design, for now.** Shape and dtype are fixed when the state is created (every vector is a clone
+//!   of `x0`); an operand of another shape is a programming error and an implementation may panic (`Vec<f64>`
+//!   panics in debug builds). If the tenferro implementation needs fallible operations, an error type is added to
+//!   the trait before 0.1 as a planned breaking change; infallibility is not a promise for ever.
+//! - **`Ctx`** is the caller's execution context (device, stream), not an allocation arena. It is passed to every
+//!   operation; the host implementation (`Ctx = ()`) ignores it.
 
 /// A vector space element as the L-BFGS and BFGS iterations use it.
 ///
@@ -48,7 +65,7 @@ impl Vector for Vec<f64> {
     type Ctx = ();
 
     fn axpy(&mut self, _ctx: &mut (), a: f64, x: &Self) {
-        debug_assert_eq!(self.len(), x.len());
+        debug_assert_eq!(self.len(), x.len(), "axpy: operands differ in length");
         // contraction-kernel-ok: BLAS-1 reference implementation for plain Vec<f64>; the tenferro implementation goes through tenferro
         for (yi, xi) in self.iter_mut().zip(x) {
             *yi += a * xi;
@@ -63,7 +80,7 @@ impl Vector for Vec<f64> {
     }
 
     fn dot(&self, _ctx: &mut (), x: &Self) -> f64 {
-        debug_assert_eq!(self.len(), x.len());
+        debug_assert_eq!(self.len(), x.len(), "dot: operands differ in length");
         let mut sum = 0.0;
         // contraction-kernel-ok: BLAS-1 reference implementation for plain Vec<f64>; the tenferro implementation goes through tenferro
         for (a, b) in self.iter().zip(x) {
@@ -163,6 +180,22 @@ mod tests {
         assert_eq!(vec![1.0, f64::INFINITY].norm_inf(&mut ()), f64::INFINITY);
         assert_eq!(vec![1.0, f64::NEG_INFINITY].norm(&mut ()), f64::INFINITY);
         assert!(vec![1.0, f64::NAN].norm(&mut ()).is_nan());
+    }
+
+    // A length mismatch is a programming error: it must not be truncated silently by `zip`. The check is a
+    // `debug_assert_eq!` (no panic in release builds), so these tests exist in debug and test builds only.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "axpy: operands differ in length")]
+    fn axpy_with_a_length_mismatch_panics_in_debug_builds() {
+        vec![1.0, 2.0].axpy(&mut (), 1.0, &vec![1.0]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "dot: operands differ in length")]
+    fn dot_with_a_length_mismatch_panics_in_debug_builds() {
+        let _ = vec![1.0, 2.0].dot(&mut (), &vec![1.0, 2.0, 3.0]);
     }
 
     #[test]

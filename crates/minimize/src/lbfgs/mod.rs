@@ -3,6 +3,13 @@
 //! **Red stage (tensor4all/tenferro-sci-rs#40).** This module holds the public types and stubs the tests are
 //! written against; the iteration itself is not implemented yet, so the behavioural tests fail by design.
 //!
+//! # Scalar type
+//!
+//! Everything is `f64` for now, and `LbfgsConfig` is not generic. This is provisional: it becomes generic over the
+//! scalar when the scalar trait of #38 is public and a second precision has parity data; the migration is replacing
+//! `f64` by `V::Real` in the signatures of [`LbfgsConfig`], [`LbfgsState`] and [`minimize`]. See also the contracts
+//! of [`Vector`](crate::Vector).
+//!
 //! # Provenance
 //!
 //! *Written independently from the published algorithm:* the two-loop recursion and the ring buffer of the stored

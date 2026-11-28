@@ -14,7 +14,7 @@ use crate::vector::Vector;
 /// ```
 /// use minimize::lbfgs::{LbfgsConfig, Termination};
 ///
-/// let cfg = LbfgsConfig::scipy_default()?;
+/// let cfg = LbfgsConfig::scipy_default();
 /// // f(x) = (x - 1)², started at the minimizer: zero iterations, one evaluation.
 /// let rep = minimize::minimize(
 ///     |_: &mut (), x: &Vec<f64>, g: &mut Vec<f64>| {
@@ -62,7 +62,7 @@ pub struct Report<V> {
 ///     g[1] = 200.0 * (b - a * a);
 ///     (1.0 - a).powi(2) + 100.0 * (b - a * a).powi(2)
 /// };
-/// let cfg = LbfgsConfig::scipy_default()?;
+/// let cfg = LbfgsConfig::scipy_default();
 /// let rep = minimize::minimize(rosen, vec![-1.2, 1.0], &cfg, &mut ());
 /// assert!(matches!(rep.termination, Termination::GradTol | Termination::FTol));
 /// assert!((rep.x[0] - 1.0).abs() < 1e-3 && (rep.x[1] - 1.0).abs() < 1e-3);

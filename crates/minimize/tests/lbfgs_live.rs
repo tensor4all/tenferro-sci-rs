@@ -136,7 +136,7 @@ fn beale_reaches_its_minimizer() {
 fn the_scipy_default_configuration_stops_on_gradient_or_function_tolerance() {
     // SciPy's defaults stop Rosenbrock-5 with FTol at ‖g‖∞ ≈ 9e-5 > gtol (recorded: default_rosen5); the run ends
     // on a tolerance, not on a failure, and the point is near the minimizer.
-    let cfg = LbfgsConfig::scipy_default().expect("valid");
+    let cfg = LbfgsConfig::scipy_default();
     let rep = minimize::minimize(rosen, vec![-1.2, 1.0, -1.2, 1.0, -1.2], &cfg, &mut ());
     assert!(
         matches!(rep.termination, Termination::GradTol | Termination::FTol),
@@ -164,7 +164,7 @@ fn the_report_is_consistent_with_the_objective() {
     let rep = minimize::minimize(
         |_: &mut (), x: &Vec<f64>, g: &mut Vec<f64>| q.eval(x, 0.0, g),
         vec![0.0; 5],
-        &LbfgsConfig::scipy_default().expect("valid"),
+        &LbfgsConfig::scipy_default(),
         &mut (),
     );
     let mut g = vec![0.0; 5];

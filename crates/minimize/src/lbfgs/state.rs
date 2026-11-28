@@ -47,7 +47,7 @@ pub enum Termination {
 /// ```
 /// use minimize::lbfgs::{LbfgsConfig, LbfgsState, Step};
 ///
-/// let cfg = LbfgsConfig::scipy_default()?;
+/// let cfg = LbfgsConfig::scipy_default();
 /// let state = LbfgsState::new(&cfg, &mut (), vec![1.0, 2.0]);
 /// // the first request is the starting point itself
 /// assert!(matches!(state.ask(), Step::Evaluate { x } if *x == vec![1.0, 2.0]));
@@ -72,7 +72,7 @@ pub enum Step<'a, V> {
 /// use minimize::lbfgs::{LbfgsConfig, LbfgsState, Step};
 ///
 /// // minimize f(x) = |x|² / 2: ask for a point, evaluate, tell.
-/// let cfg = LbfgsConfig::scipy_default()?;
+/// let cfg = LbfgsConfig::scipy_default();
 /// let mut state = LbfgsState::new(&cfg, &mut (), vec![3.0, -4.0]);
 /// let mut evals = 0;
 /// loop {
@@ -112,12 +112,14 @@ impl<V: Vector> LbfgsState<V> {
     /// Takes the starting point `x0` (it becomes the state's iterate), allocates the rest of the workspace by cloning
     /// it, and returns a state whose first request is `x0` itself. Nothing is evaluated.
     ///
+    /// `ctx` is threaded through for uniformity with the other calls; the host path (`Ctx = ()`) ignores it.
+    ///
     /// # Examples
     ///
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let state = LbfgsState::new(&cfg, &mut (), vec![1.0]);
     /// assert_eq!((state.iterations(), state.evaluations()), (0, 0));
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
@@ -147,7 +149,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState, Step};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let state = LbfgsState::new(&cfg, &mut (), vec![0.5]);
     /// assert!(matches!(state.ask(), Step::Evaluate { .. }));
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
@@ -167,7 +169,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let mut state = LbfgsState::new(&cfg, &mut (), vec![0.0]);
     /// state.tell(&cfg, &mut (), 0.0, &vec![0.0]); // stationary at the start
     /// assert_eq!((state.evaluations(), state.iterations()), (1, 0));
@@ -185,7 +187,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let state = LbfgsState::new(&cfg, &mut (), vec![1.5]);
     /// assert_eq!(state.x(), &vec![1.5]);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
@@ -201,7 +203,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let state = LbfgsState::new(&cfg, &mut (), vec![1.5]);
     /// assert!(state.f().is_nan());
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
@@ -217,7 +219,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// let state = LbfgsState::new(&cfg, &mut (), vec![1.5, 2.5]);
     /// assert_eq!(state.grad().len(), 2);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
@@ -233,7 +235,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!(LbfgsState::new(&cfg, &mut (), vec![1.0]).iterations(), 0);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
@@ -249,7 +251,7 @@ impl<V: Vector> LbfgsState<V> {
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!(LbfgsState::new(&cfg, &mut (), vec![1.0]).evaluations(), 0);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
@@ -257,14 +259,14 @@ impl<V: Vector> LbfgsState<V> {
         self.evaluations
     }
 
-    /// The number of stored `(s, y)` pairs (SciPy's `col`).
+    /// The number of stored `(s, y)` pairs (SciPy's `col`). Diagnostic but stable: part of the public API.
     ///
     /// # Examples
     ///
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!(LbfgsState::new(&cfg, &mut (), vec![1.0]).stored_pairs(), 0);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
@@ -272,14 +274,15 @@ impl<V: Vector> LbfgsState<V> {
         self.mem.len()
     }
 
-    /// The number of updates skipped by the `yᵀs ≤ eps · (−gᵀs)` rule (SciPy's `nskip`).
+    /// The number of updates skipped by the `yᵀs ≤ eps · (−gᵀs)` rule (SciPy's `nskip`). Diagnostic but stable: part
+    /// of the public API.
     ///
     /// # Examples
     ///
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!(LbfgsState::new(&cfg, &mut (), vec![1.0]).skipped_updates(), 0);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
@@ -287,14 +290,15 @@ impl<V: Vector> LbfgsState<V> {
         self.skipped
     }
 
-    /// The number of memory resets after a failed line search (the retry is steepest descent with step 1).
+    /// The number of memory resets after a failed line search (the retry is steepest descent with step 1). Diagnostic
+    /// but stable: part of the public API.
     ///
     /// # Examples
     ///
     /// ```
     /// use minimize::lbfgs::{LbfgsConfig, LbfgsState};
     ///
-    /// let cfg = LbfgsConfig::scipy_default()?;
+    /// let cfg = LbfgsConfig::scipy_default();
     /// assert_eq!(LbfgsState::new(&cfg, &mut (), vec![1.0]).restarts(), 0);
     /// # Ok::<(), minimize::lbfgs::ConfigError>(())
     /// ```
