@@ -50,4 +50,4 @@ mod update;
 pub use config::{BfgsConfig, ConfigError};
 pub use driver::{minimize, Report};
 pub use state::{BfgsState, Step, Termination};
-pub use update::{inverse_update, UpdateError};
+pub use update::{inverse_update, search_direction, UpdateError};

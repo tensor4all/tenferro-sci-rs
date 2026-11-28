@@ -155,6 +155,22 @@ pub struct Hess {
     pub h_compared: bool,
 }
 
+/// One iteration of SciPy's state (`steps.csv`): `H_k`, the pair `(s_k, y_k)`, SciPy's `H_{k+1}` and `g_{k+1}`, SciPy's next
+/// direction `p_{k+1}` and the exact (mpmath) results from the same inputs. Matrices are row-major.
+#[derive(Clone, Debug)]
+pub struct StepRec {
+    pub k: usize,
+    pub n: usize,
+    pub h: Vec<f64>,
+    pub s: Vec<f64>,
+    pub y: Vec<f64>,
+    pub h_next: Vec<f64>,
+    pub g_next: Vec<f64>,
+    pub p_next: Vec<f64>,
+    pub h_exact: Vec<f64>,
+    pub p_exact: Vec<f64>,
+}
+
 /// One run of `runs.csv` with its evaluations, line searches and final matrix.
 #[derive(Clone, Debug)]
 pub struct Run {
@@ -197,6 +213,7 @@ pub struct Run {
     pub evals: Vec<Eval>,
     pub iters: Vec<Iter>,
     pub hess: Option<Hess>,
+    pub steps: Vec<StepRec>,
 }
 
 impl Run {
@@ -261,6 +278,21 @@ pub fn load_runs() -> Vec<Run> {
             },
         );
     }
+    let mut steps: HashMap<String, Vec<StepRec>> = HashMap::new();
+    for r in read_csv("steps.csv") {
+        steps.entry(r["run"].clone()).or_default().push(StepRec {
+            k: count(&r, "k"),
+            n: count(&r, "n"),
+            h: vecs(&r, "h"),
+            s: vecs(&r, "s"),
+            y: vecs(&r, "y"),
+            h_next: vecs(&r, "h_next"),
+            g_next: vecs(&r, "g_next"),
+            p_next: vecs(&r, "p_next"),
+            h_exact: vecs(&r, "h_exact"),
+            p_exact: vecs(&r, "p_exact"),
+        });
+    }
     read_csv("runs.csv")
         .into_iter()
         .map(|r| {
@@ -304,6 +336,7 @@ pub fn load_runs() -> Vec<Run> {
                 group: r["group"].clone(),
                 problem: r["problem"].clone(),
                 hess: hess.remove(&id),
+                steps: steps.remove(&id).unwrap_or_default(),
                 evals: ev.into_iter().map(|(_, e)| e).collect(),
                 iters: it,
                 id,
@@ -650,4 +683,111 @@ pub fn is_positive_definite(a: &[f64], n: usize) -> bool {
         }
     }
     true
+}
+
+// ----------------------------------------------------------------------------------------------
+// The derived single-step bounds (data README, "Per-step replay"): never fitted
+// ----------------------------------------------------------------------------------------------
+
+/// Higham's `γ_k = k ε / (1 − k ε)`.
+pub fn gamma(k: usize) -> f64 {
+    k as f64 * EPS / (1.0 - k as f64 * EPS)
+}
+
+/// The entrywise bounds of one BFGS update of `H` (row-major `n × n`) with the pair `(s, y)`, as in the README:
+/// `tol_m` for an implementation of the symmetric form against the exact result of SciPy's formula,
+/// `tol_s` for SciPy's own form against it, and the pair's conditioning `κ = |y|ᵀ|s| / |yᵀs|`.
+///
+/// With `ρ = 1/(yᵀs)`, `ū = |H||y|`, `c̄ = |ρ| + ρ² |y|ᵀ ū`:
+/// `M = |H| + c̄ |s||s|ᵀ + |ρ|(ū|s|ᵀ + |s|ū ᵀ)`, `S = (I + |ρ||s||y|ᵀ) |H| (I + |ρ||y||s|ᵀ) + |ρ||s||s|ᵀ`,
+/// `tol_m = (2κ + 4) γ_{n+6} M + |ρ||s||w|ᵀ` with `w = |(Hᵀ − H) y|`, `tol_s = (2κ + 4) γ_{2n+6} S`.
+pub fn step_bounds(h: &[f64], s: &[f64], y: &[f64]) -> (Vec<f64>, Vec<f64>, f64) {
+    let n = s.len();
+    let sy = dot(s, y);
+    let rho = (1.0 / sy).abs();
+    let abs_s: Vec<f64> = s.iter().map(|t| t.abs()).collect();
+    let abs_y: Vec<f64> = y.iter().map(|t| t.abs()).collect();
+    let abs_h: Vec<f64> = h.iter().map(|t| t.abs()).collect();
+    let ubar = matvec(&abs_h, n, &abs_y);
+    let cbar = rho + rho * rho * dot(&abs_y, &ubar);
+    // w = |(Hᵀ − H) y|
+    let w: Vec<f64> = (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| (h[j * n + i] - h[i * n + j]) * y[j])
+                .sum::<f64>()
+                .abs()
+        })
+        .collect();
+    // A1m |H| A2m with A1m = I + ρ|s||y|ᵀ, A2m = I + ρ|y||s|ᵀ
+    let a1: Vec<f64> = (0..n * n)
+        .map(|ij| (if ij / n == ij % n { 1.0 } else { 0.0 }) + rho * abs_s[ij / n] * abs_y[ij % n])
+        .collect();
+    let a2: Vec<f64> = (0..n * n)
+        .map(|ij| (if ij / n == ij % n { 1.0 } else { 0.0 }) + rho * abs_y[ij / n] * abs_s[ij % n])
+        .collect();
+    let mut t = vec![0.0; n * n]; // |H| A2m
+    let mut sm = vec![0.0; n * n]; // A1m (|H| A2m)
+    for i in 0..n {
+        for j in 0..n {
+            t[i * n + j] = (0..n).map(|k| abs_h[i * n + k] * a2[k * n + j]).sum();
+        }
+    }
+    for i in 0..n {
+        for j in 0..n {
+            sm[i * n + j] = (0..n).map(|k| a1[i * n + k] * t[k * n + j]).sum::<f64>()
+                + rho * abs_s[i] * abs_s[j];
+        }
+    }
+    let kappa = dot(&abs_y, &abs_s) / sy.abs();
+    let f = 2.0 * kappa + 4.0;
+    let (gm, gs) = (gamma(n + 6), gamma(2 * n + 6));
+    let mut tol_m = vec![0.0; n * n];
+    let mut tol_s = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let m = abs_h[i * n + j]
+                + cbar * abs_s[i] * abs_s[j]
+                + rho * (ubar[i] * abs_s[j] + abs_s[i] * ubar[j]);
+            tol_m[i * n + j] = f * gm * m + rho * abs_s[i] * w[j];
+            tol_s[i * n + j] = f * gs * sm[i * n + j];
+        }
+    }
+    (tol_m, tol_s, kappa)
+}
+
+/// `None` if `|got − want| ≤ tol + rounding` componentwise (`rounding` = ε|want|: the data stores the exact value as a float),
+/// else a message naming the first failing component and the observed maximum of `|got − want| / tol` over all of them.
+pub fn within(
+    label: &str,
+    got: &[f64],
+    want: &[f64],
+    tol: &[f64],
+    rounding_of_want: bool,
+) -> Option<String> {
+    let mut worst = 0.0_f64;
+    let mut first: Option<usize> = None;
+    for j in 0..want.len() {
+        let t = tol[j]
+            + if rounding_of_want {
+                EPS * want[j].abs()
+            } else {
+                0.0
+            };
+        let d = (got[j] - want[j]).abs();
+        let r = d / t.max(f64::MIN_POSITIVE);
+        worst = if d.is_nan() { f64::NAN } else { worst.max(r) };
+        if first.is_none() && (d.is_nan() || d > t) {
+            first = Some(j);
+        }
+    }
+    first.map(|j| {
+        format!(
+            "{label}[{j}]: got {:e}, want {:e}, |diff| {:e} > derived bound {:e}; observed maximum |diff| / bound over components = {worst:.3} (bound: README, per-step replay)",
+            got[j],
+            want[j],
+            (got[j] - want[j]).abs(),
+            tol[j] + if rounding_of_want { EPS * want[j].abs() } else { 0.0 }
+        )
+    })
 }

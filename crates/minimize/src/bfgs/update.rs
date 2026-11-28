@@ -62,3 +62,29 @@ pub fn inverse_update(h: &mut Mat<f64>, s: &[f64], y: &[f64]) -> Result<(), Upda
     }
     Ok(())
 }
+
+/// The search direction `p = −H g` of the BFGS iteration, for the inverse Hessian approximation `h`.
+///
+/// **Red stage:** the stub returns zeros.
+///
+/// # Errors
+///
+/// [`UpdateError::DimensionMismatch`] if `h` is not `n × n` for `g.len() == n`.
+///
+/// # Examples
+///
+/// ```
+/// use colmat::Mat;
+/// use minimize::bfgs::search_direction;
+///
+/// let h = Mat::<f64>::identity(2, 2);
+/// assert_eq!(search_direction(&h, &[3.0, -4.0])?, vec![-3.0, 4.0]);
+/// # Ok::<(), minimize::bfgs::UpdateError>(())
+/// ```
+pub fn search_direction(h: &Mat<f64>, g: &[f64]) -> Result<Vec<f64>, UpdateError> {
+    let n = g.len();
+    if h.nrows() != n || h.ncols() != n {
+        return Err(UpdateError::DimensionMismatch);
+    }
+    Ok(vec![0.0; n])
+}
