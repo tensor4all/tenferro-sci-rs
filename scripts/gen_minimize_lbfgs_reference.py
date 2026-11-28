@@ -50,6 +50,7 @@ Floats are written with ``repr(float(x))`` (shortest round-trip); vectors are ``
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime
 import math
 import platform
@@ -178,6 +179,22 @@ def wa_layout(n, m):
     wy = m * n
     z = 2 * m * n + 11 * m * m
     return dict(ws=ws, wy=wy, z=z, r=z + n, d=z + 2 * n, t=z + 3 * n)
+
+
+# ----------------------------------------------------------------------------------------------
+# Platform-independent choices. Anything that depended on where the generator ran (the cap of a run, the gtol of a
+# `tight` run, which runs a search found, which live rows are counts-only) is fixed here, so that `--check` on
+# another platform regenerates the same rows and only has to verify that the bounds still hold there.
+# ----------------------------------------------------------------------------------------------
+
+# cap (line searches) of the capped runs = the minimum over the platforms checked so far of the largest prefix inside
+# the bounds: macOS arm64 (Accelerate) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (OpenBLAS), CI run 46132168523 of
+# PR #41: 7, 16, 15, 29, 26 (m1_rosen5, m1_quad10_k1e2, m1_powell4, m3_rosen5, m3_quad10_k1e2).
+FIXED_CAPS = {"m1_rosen5": 7, "m1_quad10_k1e2": 15, "m1_powell4": 15, "m3_rosen5": 26, "m3_quad10_k1e2": 26}
+TIGHT_GTOL = {"quad5_k1": 1e-9, "quad5_k1e2": 1e-6, "quad5_k1e4": 1e-9, "quad10_k1e2": 1e-5}
+SEARCH_PICKS = {"restart_f_tol": ("rosen5", 3), "restart_grad_tol": ("rosen2", 2), "restart_line_search_failed": ("rosen2_far", 2)}
+# live rows outside the replay bounds on macOS (SciPy's own direction is inaccurate there): counts only, on every platform
+COUNTS_ONLY = {"live_quad5_k1e2", "live_quad10_k1e2"}
 
 
 def fmt(x) -> str:
@@ -425,6 +442,7 @@ EVALS: list[dict] = []
 SEARCHES: list[dict] = []
 PAIRS: list[dict] = []
 CAPS: list[dict] = []
+LAST_SERIES: list = []
 DIVERGENCES: list[tuple[str, str, str, str, str]] = []
 
 
@@ -577,10 +595,15 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides):
         if e["search"] >= 0:
             mirror_by[e["search"]] = max(mirror_by[e["search"]], r)
     series = list(zip(mirror_by, dir_by))
+    global LAST_SERIES
+    LAST_SERIES = series
     bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 4 or d_ > C_DIR / 2]
     if not ok and not bad:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
     replay = 1
+    if rid in COUNTS_ONLY:
+        replayable = False
+        bad = bad or [0]
     if bad and not replayable:
         # counts-only row (the live tests compare their counts with it): outside the replay bounds, so no
         # evaluations, searches or pairs are emitted and the replay tests skip it (`replay` = 0)
@@ -605,6 +628,7 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, **overrides):
         f=official.fun, ginf=float(np.max(np.abs(official.jac))), x=official.x,
         dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2),
         replay=replay, maxiter_cap="none" if cap is None else cap[0],
+        cap_first_bad="none" if cap is None else cap[2],
         uncapped_nsearch="none" if cap is None else len(cap[1]), note=note,
     ))  # fmt: skip
     return RUNS[-1]
@@ -625,18 +649,28 @@ def free_nit(problem, **kw):
     return r
 
 
+class CapOutside(Exception):
+    """The committed cap leaves the bounds on this platform."""
+
+
 def capped(rid, group, problem, **kw):
-    """The run, capped (`maxiter` = the cap, recorded in the `maxiter_cap` column and in caps.csv) at the largest prefix
-    of line searches that stays inside the bounds: past some iteration rounding differences between independent
-    implementations are amplified by the problem (README.md), and the replay claim stops there. A run that never
-    leaves the bounds is recorded uncapped."""
+    """The run, capped at FIXED_CAPS[rid] line searches (`maxiter` = the cap, in the `maxiter_cap` column and, with the
+    per-search ratios of the uncapped run, in caps.csv). The cap is the minimum over the checked platforms of the largest
+    prefix inside the bounds; here it is only verified: every search before the cap must be inside the bounds (mirror
+    ratio <= C_X / 4, SciPy direction <= C_DIR / 2), otherwise CapOutside. `cap_first_bad` records the first search
+    outside the bounds on THIS platform (diagnostic; platform-dependent)."""
+    if rid not in FIXED_CAPS:
+        return run(rid, group, problem, **kw)  # never capped: must stay inside the bounds
+    cap = FIXED_CAPS[rid]
+    first_bad = None
     try:
-        return run(rid, group, problem, **kw)
+        run(rid, group, problem, **kw)
+        raise CapOutside(f"{rid}: the uncapped run is inside the bounds here; the committed cap {cap} is stale")
     except OutOfRegime as e:
-        if not e.first_bad or e.first_bad < 5:
-            raise SystemExit(f"{rid}: the bounds fail after {e.first_bad} searches; no useful cap")
-        print(f"  {rid}: capped at {e.first_bad} of {len(e.series)} line searches")
-        return run(rid, group, problem, cap=(e.first_bad, e.series), **kw)
+        first_bad, series = e.first_bad, e.series
+    if first_bad is None or first_bad < cap:
+        raise CapOutside(f"{rid}: the committed cap {cap} is outside the bounds here (first search outside: {first_bad})")
+    return run(rid, group, problem, cap=(cap, series, first_bad), **kw)
 
 
 def cases():
@@ -652,19 +686,12 @@ def cases():
             capped(f"m{m}_{p}", "memory", p, maxcor=m)
     run("m50_quad10_k1e2", "memory", "quad10_k1e2", maxcor=50)
     # quadratics, tight gtol: the stopping point is determined by gtol alone
-    for p in ("quad5_k1", "quad5_k1e2", "quad5_k1e4", "quad10_k1e2"):
-        for gt in (1e-9, 1e-8, 1e-7, 1e-6, 3e-6, 1e-5):
-            try:
-                run(f"tight_{p}", "tight", p, gtol=gt, ftol=0.0)
-                break
-            except OutOfRegime as e:
-                print("  out of regime:", e)
-        else:
-            print(f"  tight_{p}: no gtol stays inside the bounds; not recorded")
+    for p, gt in TIGHT_GTOL.items():
+        run(f"tight_{p}", "tight", p, gtol=gt, ftol=0.0)
     # the live tests of tests/lbfgs_live.rs: exactly their options (gtol = 1e-8, ftol = 0), so the counts they print
     # are compared with the SciPy run of the same call
     for p in ("rosen2", "rosen2_far", "rosen5", "beale", "quad5_k1", "quad5_k1e2", "quad5_k1e4", "quad10_k1e2"):
-        run(f"live_{p}", "live", p, gtol=1e-8, ftol=0.0, replayable=False,
+        run(f"live_{p}", "live", p, gtol=1e-8, ftol=0.0,
             note="options of tests/lbfgs_live.rs; replay=0 where SciPy's own direction leaves the replay bounds")
     # --- terminations -----------------------------------------------------------------------
     run("stationary_start", "termination", "quad5_k1e2", x0=np.arange(1.0, 6.0),
@@ -702,17 +729,7 @@ def cases():
 def search_cases():
     """Deterministic searches for runs with a restart (col drops to 0 at iter > 0) and with a
     skipped update. The first candidate that shows the feature is recorded."""
-    found = {}
-    for ls in (2, 3, 4, 5, 6, 8):
-        for p in ("rosen2", "rosen2_far", "rosen5", "beale", "himmelblau", "powell4"):
-            r = free_nit(p, maxls=ls)
-            key = None
-            if r["nrestart"] > 0:
-                key = "restart_" + r["termination"]
-            if r["nskip"] > 0:
-                key = "skip_" + r["termination"]
-            if key and key not in found:
-                found[key] = (p, ls)
+    found = dict(SEARCH_PICKS)  # the first candidates a deterministic search over (maxls, problem) found on macOS
     for key, (p, ls) in sorted(found.items()):
         run(f"search_{key}", "search", p, maxls=ls, note=f"first candidate with {key.split('_')[0]} (maxls = {ls})")
     print("  search found:", sorted(found))
@@ -814,20 +831,42 @@ def texts() -> dict[str, str]:
     return out
 
 
-REL_TOL = 1e-8
-ABS_TOL = 1e-12
-# Exact (string equality): ids, outcomes, counts, flags, the exact call text. Floats: within
-# REL_TOL relative or ABS_TOL absolute. The libm-free closed forms and SciPy's C code agree across
-# platforms to the last bits, except where BLAS (the quadratics' matrix-vector products and the
-# dot products inside L-BFGS-B) sums in a different order; the path (counts, termination) is
-# pinned exactly, the values loosely.
-FLOAT_COLS = {
-    "runs.csv": {"ftol", "gtol", "f", "ginf", "x0", "x", "dir_ratio", "mirror_ratio"},
-    "caps.csv": {"mirror_ratio", "dir_ratio"},
-    "evals.csv": {"x", "f", "g", "x_scale", "x_slack"},
-    "searches.csv": {"gamma_scipy", "gamma_exact", "stp0", "x_base", "g_base", "d", "d_exact", "d_scale"},
-    "pairs.csv": {"s", "y"},
-}
+# ----------------------------------------------------------------------------------------------
+# --check
+#
+# Three kinds of column (the contract is in crates/minimize/tests/data/lbfgs/README.md):
+#
+# * exact: ids, options, the call, counts, termination, message, flags, caps, row keys and the row counts of every file.
+#   If any of these differs on another platform the path of a recorded run changed there: the summary lists every such
+#   mismatch in full, and that run leaves the parity set (it is never loosened).
+# * trajectory (SciPy's own values, which BLAS and libm round differently): evals x, f, g; runs x, f, ginf; searches
+#   x_base, g_base; pairs s, y. Within a tolerance DERIVED from the committed scales, as #39 derives dphi_scale:
+#     |dx_i| <= C_X eps x_scale_i + 2 x_slack_i               (two correct implementations: the replay bound, C_X = 32;
+#                                                               both SciPy runs deviate from the exact direction by
+#                                                               at most x_slack)
+#     |dg_i| <= 4 L ||dx_tol||_2 + 8 n eps (|g_i| + L ||x||_2)        (mean value theorem: g is L-Lipschitz along the
+#                                                               path; L = largest ||y|| / ||s|| over the recorded pairs
+#                                                               of the run, 4 = margin for segments the other path took)
+#     |df|   <= ||g||_2 ||dx_tol||_2 + 2 L ||dx_tol||_2^2 + 8 n eps (|f| + ||g||_2 ||x||_2)
+#     pairs: s differs by at most 2 max_k tol_x, y by at most 2 max_k tol_g (a difference of two iterates / gradients)
+# * diagnostic (not compared): x_scale, x_slack, d, d_exact, d_scale, gamma_*, stp0, the ratio columns, caps.csv,
+#   cap_first_bad, uncapped_nsearch. The regenerated ones are checked against their bounds by the generator itself
+#   (a run, or a committed cap, outside the bounds on the running platform aborts with a message).
+# ----------------------------------------------------------------------------------------------
+
+EXACT_FILES_KEYS = {"runs.csv": ("id",), "evals.csv": ("run", "k"), "searches.csv": ("run", "j"), "pairs.csv": ("run", "p"),
+                    "divergences.csv": ("id",)}  # fmt: skip
+TRAJECTORY = {"runs.csv": {"x", "f", "ginf"}, "evals.csv": {"x", "f", "g"}, "searches.csv": {"x_base", "g_base"},
+              "pairs.csv": {"s", "y"}}  # fmt: skip
+DIAGNOSTIC = {
+    "runs.csv": {"dir_ratio", "mirror_ratio", "cap_first_bad", "uncapped_nsearch"},
+    "evals.csv": {"x_scale", "x_slack"},
+    "searches.csv": {"gamma_scipy", "gamma_exact", "stp0", "d", "d_exact", "d_scale"},
+    "pairs.csv": set(),
+    "caps.csv": {"run", "j", "mirror_ratio", "dir_ratio"},
+    "divergences.csv": set(),
+}  # fmt: skip
+FLOAT_EXACT = {"ftol", "gtol", "x0"}  # inputs: parsed and compared as floats, exactly
 
 
 def parse_csv(text):
@@ -836,47 +875,146 @@ def parse_csv(text):
     return header, [dict(zip(header, l.split(","))) for l in lines[1:]]
 
 
-def floats_agree(a, b):
-    if a == b:
-        return True
-    try:
-        xs = [float(t) for t in a.split(";")]
-        ys = [float(t) for t in b.split(";")]
-    except ValueError:
-        return False
-    if len(xs) != len(ys):
-        return False
-    for x, y in zip(xs, ys):
-        if math.isnan(x) or math.isnan(y):
-            if not (math.isnan(x) and math.isnan(y)):
-                return False
-        elif x != y and abs(x - y) > max(REL_TOL * max(abs(x), abs(y)), ABS_TOL):
-            return False
-    return True
+def fvec(a):
+    return np.array([float(t) for t in a.split(";")])
+
+
+def _by_key(name, rows):
+    keys = EXACT_FILES_KEYS.get(name)
+    return {tuple(r[k] for k in keys): r for r in rows} if keys else None
+
+
+def derived_tolerances(committed):
+    """Per run: tol_x (per accepted eval index k), tol_g, tol_f from the committed evals, scales and pairs."""
+    runs = {r["id"]: r for r in committed["runs.csv"][1]}
+    ev, pr = collections.defaultdict(list), collections.defaultdict(list)
+    for e in committed["evals.csv"][1]:
+        ev[e["run"]].append(e)
+    for p in committed["pairs.csv"][1]:
+        pr[p["run"]].append(p)
+    tol = {}
+    for rid, rows in ev.items():
+        L = max((np.linalg.norm(fvec(p["y"])) / np.linalg.norm(fvec(p["s"])) for p in pr[rid] if np.linalg.norm(fvec(p["s"])) > 0),
+                default=0.0)  # fmt: skip
+        n = len(fvec(rows[0]["x"]))
+        per = {}
+        for e in rows:
+            x, g, f = fvec(e["x"]), fvec(e["g"]), float(e["f"])
+            tx = C_X * EPS * fvec(e["x_scale"]) + 2 * fvec(e["x_slack"])
+            dx = float(np.linalg.norm(tx))
+            tg = 4 * L * dx + 8 * n * EPS * (np.abs(g) + L * np.linalg.norm(x))
+            tf = float(np.linalg.norm(g)) * dx + 2 * L * dx * dx + 8 * n * EPS * (abs(f) + np.linalg.norm(g) * np.linalg.norm(x))
+            per[int(e["k"])] = (tx, tg, tf, e)
+        tol[rid] = per
+    return tol
 
 
 def check(new, data):
-    problems = []
-    for name, text in new.items():
+    committed = {}
+    for name in new:
         path = data / name
         if not path.exists():
-            problems.append(f"{name}: missing")
+            print(f"MISSING {name}")
+            return 1
+        committed[name] = parse_csv(path.read_text())
+    regenerated = {name: parse_csv(text) for name, text in new.items()}
+    tol = derived_tolerances(committed)
+    exact_lines, float_stats, sample = [], {}, []
+    n_exact = 0
+    diag_note = []
+
+    def stat(name, col, absd, reld, rel_ok=True):
+        a = float_stats.setdefault((name, col), dict(n=0, bad=0, maxabs=0.0, maxrel=0.0, maxratio=0.0))
+        a["n"] += 1
+        a["maxabs"] = max(a["maxabs"], absd)
+        a["maxrel"] = max(a["maxrel"], reld)
+        return a
+
+    for name in new:
+        h1, r1 = committed[name]
+        h2, r2 = regenerated[name]
+        if h1 != h2:
+            exact_lines.append(f"{name}: header differs: committed {h1}, regenerated {h2}")
             continue
-        h1, r1 = parse_csv(path.read_text())
-        h2, r2 = parse_csv(text)
-        if h1 != h2 or len(r1) != len(r2):
-            problems.append(f"{name}: header or row count differs ({len(r1)} committed, {len(r2)} regenerated)")
+        if name == "caps.csv":
+            a, b = {r["run"] for r in r1}, {r["run"] for r in r2}
+            if a != b:
+                exact_lines.append(f"caps.csv: capped runs differ: committed {sorted(a)}, regenerated {sorted(b)}")
             continue
-        fcols = FLOAT_COLS.get(name, set())
-        for i, (a, b) in enumerate(zip(r1, r2)):
-            for c in h1:
-                ok = floats_agree(a[c], b[c]) if c in fcols else a[c] == b[c]
+        k1, k2 = _by_key(name, r1), _by_key(name, r2)
+        if k1 is None:
+            if r1 != r2:
+                exact_lines.append(f"{name}: rows differ")
+            continue
+        if set(k1) != set(k2):
+            only1, only2 = sorted(set(k1) - set(k2)), sorted(set(k2) - set(k1))
+            exact_lines.append(f"{name}: row keys differ: only committed {only1[:6]} (+{max(len(only1) - 6, 0)}), only regenerated {only2[:6]} (+{max(len(only2) - 6, 0)})")  # fmt: skip
+        for key in sorted(set(k1) & set(k2)):
+            a, b = k1[key], k2[key]
+            for col in h1:
+                if col in DIAGNOSTIC.get(name, set()):
+                    continue
+                if col in TRAJECTORY.get(name, set()):
+                    continue
+                if col in FLOAT_EXACT:
+                    ok = fvec(a[col]).tolist() == fvec(b[col]).tolist()
+                else:
+                    ok = a[col] == b[col]
                 if not ok:
-                    problems.append(f"{name} row {i} column {c}: committed {a[c][:60]!r}, regenerated {b[c][:60]!r}")
-    for p in problems[:40]:
-        print("MISMATCH", p)
-    print("check:", "FAILED" if problems else "ok", f"({len(problems)} problems)")
-    return 1 if problems else 0
+                    exact_lines.append(f"{name} {'/'.join(key)} column {col}: committed {a[col][:70]!r}, regenerated {b[col][:70]!r}")
+            # trajectory columns, only where the path (all exact columns) agrees is the comparison meaningful
+            for col in TRAJECTORY.get(name, set()):
+                xa, xb = fvec(a[col]), fvec(b[col])
+                if name == "evals.csv":
+                    tx, tg, tf, _ = tol[a["run"]][int(a["k"])]
+                    t = {"x": tx, "g": tg, "f": np.array([tf])}[col]
+                elif name == "runs.csv":
+                    per = tol.get(a["id"], {})
+                    acc = [k for k, v in per.items() if v[3]["accepted"] == "1"]
+                    kk = max(acc) if acc else (min(per) if per else None)
+                    if kk is None:  # counts-only row: no evals; use rounding scale of the value itself
+                        t = 1e-6 * np.maximum(np.abs(xa), 1.0)
+                    elif col == "x":
+                        t = per[kk][0]
+                    elif col == "ginf":
+                        t = np.array([float(np.max(per[kk][1]))])
+                    else:
+                        t = np.array([per[max(per)][2]])
+                elif name == "searches.csv":
+                    per = tol[a["run"]]
+                    prev = [k for k, v in per.items() if k < int(a["k0"]) and (v[3]["accepted"] == "1" or k == 0)]
+                    kk = max(prev)
+                    t = per[kk][0] if col == "x_base" else per[kk][1]
+                else:  # pairs
+                    per = tol[a["run"]]
+                    t = 2 * np.max([(v[0] if col == "s" else v[1]) for v in per.values()], axis=0) if per else 1e-6
+                d = np.abs(xa - xb)
+                with np.errstate(all="ignore"):
+                    ratio = float(np.max(d / np.maximum(t, 1e-300))) if d.size else 0.0
+                st = stat(name, col, float(np.max(d)), float(np.max(d / np.maximum(np.abs(xa), 1e-300))))
+                st["maxratio"] = max(st["maxratio"], ratio)
+                if not ratio <= 1.0:
+                    st["bad"] += 1
+                    if len(sample) < 40:
+                        sample.append(f"{name} {'/'.join(key)} column {col}: committed {a[col][:40]}, regenerated {b[col][:40]}, |diff| {float(np.max(d)):.3e} is {ratio:.2f} x the derived tolerance")  # fmt: skip
+    n_exact = len(exact_lines)
+    print("== exact columns (counts, termination, message, call, caps, flags, row keys): every mismatch")
+    for l in exact_lines[:300]:
+        print("  EXACT MISMATCH", l)
+    if n_exact > 300:
+        print(f"  ... {n_exact - 300} more")
+    runs_changed = sorted({l.split()[1].split("/")[0] for l in exact_lines if l.split()[0] in ("runs.csv", "evals.csv", "searches.csv", "pairs.csv")})
+    print(f"  {n_exact} exact mismatches; runs with a changed path or option: {runs_changed if runs_changed else 'none'}")  # fmt: skip
+    print("== trajectory columns: per file and column (compared; derived tolerance, ratio = |diff| / tolerance, must be <= 1)")
+    bad_total = 0
+    for (name, col), st in sorted(float_stats.items()):
+        bad_total += st["bad"]
+        print(f"  {name:13s} {col:7s} compared {st['n']:6d}  outside tolerance {st['bad']:5d}  largest |diff| {st['maxabs']:.3e}  largest rel diff {st['maxrel']:.3e}  largest ratio {st['maxratio']:.3f}")  # fmt: skip
+    for l in sample:
+        print("  FLOAT MISMATCH", l)
+    failed = n_exact + bad_total
+    print("check:", "FAILED" if failed else "ok", f"({n_exact} exact, {bad_total} trajectory outside tolerance)")
+    return 1 if failed else 0
 
 
 def coverage():
@@ -904,7 +1042,14 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--data", type=Path, default=DATA)
     args = ap.parse_args()
-    cases()
+    try:
+        cases()
+    except (CapOutside, OutOfRegime) as e:
+        if not args.check:
+            raise
+        print(f"OUT OF BOUNDS on this platform: {e}")
+        print("check: FAILED (the committed data leave the replay bounds here; shorten the prefix, never raise the constant)")
+        sys.exit(1)
     coverage()
     scripted_checks()
     new = texts()
