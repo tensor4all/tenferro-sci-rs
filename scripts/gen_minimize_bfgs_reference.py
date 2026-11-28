@@ -667,7 +667,8 @@ def generate():
             cache_hits=cache_hits, n_updates=len(applied_ys), n_rho1000=n_rho1000, n_ys_nonpos=n_ys_nonpos,
             wolfe1_fail=("none" if w1_fail is None else clean(w1_fail)), termination=term,
             parity=("true" if parity else "false"), final_x=vec(res.x), final_f=fl(res.fun),
-            gnorm_inf=fl(gnorm), n_ls=len(log.ls), note=clean(spec.note + " | " + prob.note)))
+            gnorm_inf=fl(gnorm), n_ls=len(log.ls), x_ratio_max="none", x_env_max="none", dir_ratio_max="none",
+            dir_env_max="none", note=clean(spec.note + " | " + prob.note)))
 
         for i, (x, f, g) in enumerate(log.evals):
             out["evals"].append(dict(run=spec.rid, i=i, x=vec(x), f=fl(f), g=vec(g), x_scale="none", x_ratio="none"))
@@ -683,6 +684,10 @@ def generate():
             if ratios:
                 ratio_max = max(ratio_max, max(ratios.values()))
                 env_max = max(env_max, max(envs.values()))
+            run_row = out["runs"][-1]
+            run_row["x_ratio_max"] = fl(max(ratios.values(), default=0.0))
+            run_row["x_env_max"] = fl(max(envs.values(), default=0.0))
+            run_dir_ratio = run_dir_env = 0.0
             # exact direction per line search from SciPy's pairs
             for j, rec in enumerate(log.ls):
                 Hm = mpH[min(j, len(mpH) - 1)]
@@ -696,15 +701,20 @@ def generate():
                     pm = np.array(dir_info[j][0])
                     r_mirror = float(np.max(np.abs(pm - d_exact_f) / (n * EPS * np.maximum(d_scale, np.finfo(float).tiny))))
                 dir_ratio_max = max(dir_ratio_max, r_scipy, r_mirror or 0.0)
+                run_dir_ratio = max(run_dir_ratio, r_scipy, r_mirror or 0.0)
                 dn = float(np.max(np.abs(d_exact_f))) or 1.0
                 dir_env_max = max(dir_env_max, float(np.max(np.abs(rec["pk"] - d_exact_f))) / dn)
+                run_dir_env = max(run_dir_env, float(np.max(np.abs(rec["pk"] - d_exact_f))) / dn)
                 if j < len(dir_info):
                     dir_env_max = max(dir_env_max, float(np.max(np.abs(np.array(dir_info[j][0]) - d_exact_f))) / dn)
+                    run_dir_env = max(run_dir_env, float(np.max(np.abs(np.array(dir_info[j][0]) - d_exact_f))) / dn)
                 out["iters"].append(dict(
                     run=spec.rid, k=j, x=vec(rec["xk"]), f=fl(rec["fk"]), g=vec(rec["gk"]), p=vec(rec["pk"]),
                     d_exact=vec(d_exact_f), d_scale=vec(d_scale), alpha=fl(rec["alpha"]),
                     ev_start=rec["ev_start"], ev_end=rec["ev_end"], ys=fl(ys_list[j]), applied=("none" if applied[j] is None else str(applied[j]).lower()), dir_ratio_scipy=fl(r_scipy),
                     dir_ratio_mirror=fl(r_mirror)))
+            run_row["dir_ratio_max"] = fl(run_dir_ratio)
+            run_row["dir_env_max"] = fl(run_dir_env)
             # final inverse Hessian: SciPy's vs exact
             Hs = np.array(res.hess_inv)
             Hex = np.array([[float(mpH[-1][i, j]) for j in range(n)] for i in range(n)])
@@ -738,7 +748,8 @@ COLUMNS = dict(
     runs=["id", "group", "problem", "n", "x0", "gtol", "xrtol", "c1", "c2", "maxiter", "ls_maxiter", "scipy_call",
           "status", "message", "nit", "nfev", "njev", "wolfe2_calls", "wolfe2_first_eval", "wolfe2_found",
           "wolfe2_warned", "cache_hits", "n_updates", "n_rho1000", "n_ys_nonpos",
-          "wolfe1_fail", "termination", "parity", "final_x", "final_f", "gnorm_inf", "n_ls", "note"],
+          "wolfe1_fail", "termination", "parity", "final_x", "final_f", "gnorm_inf", "n_ls", "x_ratio_max", "x_env_max",
+          "dir_ratio_max", "dir_env_max", "note"],
     evals=["run", "i", "x", "f", "g", "x_scale", "x_ratio"],
     iters=["run", "k", "x", "f", "g", "p", "d_exact", "d_scale", "alpha", "ev_start", "ev_end", "ys", "applied", "dir_ratio_scipy",
            "dir_ratio_mirror"],
@@ -780,7 +791,25 @@ def assert_derivation(stats):
 # --check
 # ----------------------------------------------------------------------------------------------
 
-RTOL = 1e-8
+# The contract (data/bfgs/README.md, "What --check compares"): SciPy's float trajectory differs between platforms at
+# rounding level (libm, BLAS summation order, FMA), and BFGS propagates that by up to the envelope measured below.
+#
+# * exact:     ids, groups, options, status, message, every count (nit, nfev, njev, n_ls, cache_hits, n_updates,
+#              n_rho1000, n_ys_nonpos, wolfe2_*), termination, parity, evaluation ranges, `applied`;
+# * tolerance: every float SciPy computed (x, f, g, p, alpha, ys, d_exact, hess, final_*, and the problem data that
+#              comes from BLAS or LAPACK): |a - b| <= ENVELOPE * (1 + max |value| of that column over the run), the same
+#              envelope the replay tests use, so a difference this size cannot have been hidden by the check;
+# * diagnostics (x_scale, d_scale, h_scale, x_ratio, dir_ratio_*, ratio): not compared, but the *committed* ratios are
+#              checked against the bounds C / MARGIN and the regenerated ones are re-measured (assert_derivation).
+# Every difference is summarized per file and column (rows differing, largest |diff| / tolerance) before up to
+# three examples per column are printed; nothing is cut at a fixed number of lines.
+
+FLOAT_DATA = {"final_x", "final_f", "gnorm_inf", "x", "f", "g", "p", "alpha", "ys", "d_exact", "h_scipy", "h_exact",
+              "A", "b", "x_star", "f_star", "mu"}
+DIAGNOSTIC = {"x_ratio_max", "x_env_max", "dir_ratio_max", "dir_env_max", "x_ratio", "dir_ratio_scipy", "dir_ratio_mirror", "ratio", "x_scale", "d_scale", "h_scale", "scipy_call",
+              "note"}
+RATIO_COLS = {"x_ratio": "evals.csv", "dir_ratio_scipy": "iters.csv", "dir_ratio_mirror": "iters.csv",
+              "ratio": "hess_final.csv"}
 
 
 def _split_data(text):
@@ -789,65 +818,112 @@ def _split_data(text):
     return head, [dict(zip(head, r.split(","))) for r in rows[1:]]
 
 
-def _close(a, b, scale):
-    if a == b:
-        return True
+def _num(t):
     try:
-        x, y = float(a), float(b)
+        return float(t)
     except ValueError:
-        return False
-    if math.isnan(x) or math.isnan(y):
-        return math.isnan(x) and math.isnan(y)
-    if math.isinf(x) or math.isinf(y):
-        return x == y
-    return abs(x - y) <= RTOL * max(abs(x), abs(y)) + 1e-10 * scale
+        return None
 
 
-FLOAT_COLS = {"x0", "gtol", "xrtol", "c1", "c2", "final_x", "final_f", "gnorm_inf", "x", "f", "g", "x_scale", "x_ratio",
-              "p", "d_exact", "d_scale", "alpha", "ys", "dir_ratio_scipy", "dir_ratio_mirror", "h_scipy", "h_exact",
-              "h_scale", "ratio", "A", "b", "x_star", "f_star", "mu"}
-# exact floats: what the problems and options are, not a computed trajectory
-EXACT_COLS = {"x0", "gtol", "xrtol", "c1", "c2", "A", "b", "x_star", "f_star", "mu"}
-IGNORE_COLS = {"x_ratio", "dir_ratio_scipy", "dir_ratio_mirror", "ratio", "x_scale", "d_scale", "h_scale", "scipy_call", "note"}
+def _vals(cell):
+    return [_num(t) for t in cell.split(";")]
+
+
+def _run_of(row):
+    return row.get("run") or row.get("id")
 
 
 def check(data_dir: Path) -> int:
     out, stats = generate()
     assert_derivation(stats)
     fresh = render(out)
-    problems = []
+    summary = {}  # (file, column) -> [rows differing, rows total, worst |diff|/tol]
+    examples = {}
+    problems = 0
+
+    def note(name, col, ok, ratio, ident, va, vb):
+        nonlocal problems
+        s = summary.setdefault((name, col), [0, 0, 0.0])
+        s[1] += 1
+        if not ok:
+            s[0] += 1
+            s[2] = max(s[2], ratio)
+            problems += 1
+            ex = examples.setdefault((name, col), [])
+            if len(ex) < 3:
+                ex.append(f"{ident}: committed {va[:70]!r}, regenerated {vb[:70]!r}")
+
     for name, text in fresh.items():
         path = data_dir / name
         if not path.exists():
-            problems.append(f"{name}: missing")
+            print(f"MISSING {name}")
+            problems += 1
             continue
         h1, r1 = _split_data(path.read_text())
         h2, r2 = _split_data(text)
         if h1 != h2:
-            problems.append(f"{name}: columns differ")
+            print(f"COLUMNS {name}: committed {h1} regenerated {h2}")
+            problems += 1
             continue
         if len(r1) != len(r2):
-            problems.append(f"{name}: {len(r1)} committed rows, {len(r2)} regenerated")
+            print(f"ROWS {name}: {len(r1)} committed, {len(r2)} regenerated")
+            problems += 1
             continue
-        for a, b in zip(r1, r2):
-            ident = a.get("id") or a.get("run")
-            scale = 1.0
+        # per (run, column) scale of the committed values
+        runmax = {}
+        for a_ in r1:
             for col in h1:
-                if col in IGNORE_COLS:
+                if col in FLOAT_DATA:
+                    for v in _vals(a_[col]):
+                        if v is not None and math.isfinite(v):
+                            k = (_run_of(a_), col)
+                            runmax[k] = max(runmax.get(k, 0.0), abs(v))
+        for a_, b_ in zip(r1, r2):
+            ident = f"{name} {_run_of(a_)}" + (f" row {a_['i']}" if "i" in a_ else f" k={a_['k']}" if "k" in a_ else "")
+            for col in h1:
+                if col in DIAGNOSTIC:
                     continue
-                va, vb = a[col], b[col]
-                if col in FLOAT_COLS and col not in EXACT_COLS:
-                    la, lb = va.split(";"), vb.split(";")
-                    if len(la) != len(lb) or not all(_close(p, q, scale) for p, q in zip(la, lb)):
-                        problems.append(f"{name} {ident} {col}: {va[:80]} != {vb[:80]}")
-                elif va != vb:
-                    problems.append(f"{name} {ident} {col}: {va[:80]} != {vb[:80]}")
+                va, vb = a_[col], b_[col]
+                if col not in FLOAT_DATA:
+                    note(name, col, va == vb, 0.0, ident, va, vb)
+                    continue
+                la, lb = _vals(va), _vals(vb)
+                tol = ENVELOPE * (1.0 + runmax.get((_run_of(a_), col), 0.0))
+                ok, worst = len(la) == len(lb), 0.0
+                if ok:
+                    for x, y in zip(la, lb):
+                        if x is None or y is None:
+                            ok &= (x is None and y is None) and (va == vb)
+                        elif math.isnan(x) or math.isnan(y):
+                            ok &= math.isnan(x) and math.isnan(y)
+                        elif math.isinf(x) or math.isinf(y):
+                            ok &= x == y
+                        else:
+                            worst = max(worst, abs(x - y) / tol)
+                    ok &= worst <= 1.0
+                note(name, col, ok, worst if worst else float("inf"), ident, va, vb)
+        # committed diagnostic ratios must respect the bounds the README states
+        for col, fname in RATIO_COLS.items():
+            if fname != name:
+                continue
+            for a_ in r1:
+                v = _num(a_[col])
+                if v is not None and v > REPLAY_C / MARGIN:
+                    note(name, col + " (committed ratio vs C/MARGIN)", False, v / (REPLAY_C / MARGIN), f"{name} {_run_of(a_)}",
+                         a_[col], f"bound {REPLAY_C / MARGIN:g}")
+    print("--check summary (file column: rows differing / rows compared, worst |diff|/tolerance of the differing ones)")
+    for (name, col), (bad, tot, worst) in sorted(summary.items()):
+        if bad:
+            print(f"  {name} {col}: {bad}/{tot}, worst {worst:.3g}")
+    for (name, col), ex in sorted(examples.items()):
+        for line in ex:
+            print(f"    e.g. {name} {col}: {line}")
     if problems:
-        print(f"--check FAILED: {len(problems)} difference(s) against {data_dir}")
-        for p in problems[:40]:
-            print("  " + p)
+        print(f"--check FAILED: {problems} difference(s) against {data_dir}; tolerance {ENVELOPE:g} * (1 + run maximum) for "
+              f"floats, exact for counts, decisions and text")
         return 1
-    print(f"--check OK: {len(out['runs'])} runs, {len(out['evals'])} evaluations agree with {data_dir}")
+    n_cmp = sum(t for _, t, _ in summary.values())
+    print(f"--check OK: {len(out['runs'])} runs, {len(out['evals'])} evaluations; {n_cmp} cells compared, none differ")
     return 0
 
 
