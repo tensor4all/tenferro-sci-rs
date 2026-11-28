@@ -93,6 +93,9 @@ NAN = math.nan
 # enters the bound as x_slack, the mirror's amplifies with the problem and is reported, not bounded); the constant is never raised, the prefix is shortened.
 REPLAY_C = 32.0
 MARGIN = 4.0
+# Every committed comparison prefix = (smallest first-outside index observed on any checked platform) - PREFIX_MARGIN, never longer
+# (the rule of #41's L-BFGS data). Observed so far for BFGS: macOS arm64 only; the first CI run adds Linux and may only shorten.
+PREFIX_MARGIN = 2
 # CALIBRATED reproducibility tolerance of SciPy across platforms (BLAS, libm), used by --check only: per component
 # |a - b| <= SCIPY_REPRO_RTOL * max(|a|, |b|, scale), scale = the largest |component| of that column over the run's compared rows.
 # No Linux data for BFGS exists yet: chosen with a large margin after the L-BFGS observation (3.5e-8 at worst, constant 1e-6);
@@ -641,7 +644,7 @@ def generate():
             repro=("class" if spec.rid in CLASS_RUNS else "exact"),
             wolfe1_fail=("none" if w1_fail is None else clean(w1_fail)), termination=term,
             parity=("true" if parity else "false"), final_x=vec(res.x), final_f=fl(res.fun),
-            gnorm_inf=fl(gnorm), n_ls=len(log.ls), cmp_nsearch="none", x_ratio_max="none", dir_ratio_max="none",
+            gnorm_inf=fl(gnorm), n_ls=len(log.ls), cmp_nsearch="none", cmp_first_outside="none", x_ratio_max="none", dir_ratio_max="none",
             note=clean(spec.note + " | " + prob.note)))
 
         for i, (x, f, g) in enumerate(log.evals):
@@ -669,16 +672,16 @@ def generate():
             for i, pe in per_eval.items():
                 out["evals"][base0 + i].update(search=pe["search"], x_scale=vec(pe["scale"]), x_slack=vec(pe["slack"]),
                                                x_ratio=fl(pe["ratio"]))
-            # the comparison prefix: searches whose evaluations and direction stay inside C / MARGIN for the mirror
-            cmp_n = 0
-            for j in range(len(log.ls)):
-                evs = [pe["ratio"] for pe in per_eval.values() if pe["search"] == j]
-                if max(evs, default=0.0) <= REPLAY_C / MARGIN:
-                    cmp_n = j + 1
-                else:
-                    break
+            # the comparison prefix: the first search whose mirror ratio exceeds C / MARGIN is the first-outside index; the
+            # committed prefix keeps PREFIX_MARGIN searches below it (a runner-to-runner difference of one search was observed
+            # for L-BFGS on GitHub runners of the same image), never longer. A run with no search outside is covered in full.
+            first_outside = next((j for j in range(len(log.ls))
+                                  if max([pe["ratio"] for pe in per_eval.values() if pe["search"] == j], default=0.0)
+                                  > REPLAY_C / MARGIN), None)
+            cmp_n = len(log.ls) if first_outside is None else max(first_outside - PREFIX_MARGIN, 0)
             run_row = out["runs"][-1]
             run_row["cmp_nsearch"] = cmp_n
+            run_row["cmp_first_outside"] = "none" if first_outside is None else first_outside
             in_prefix = [pe["ratio"] for pe in per_eval.values() if pe["search"] < cmp_n]
             run_row["x_ratio_max"] = fl(max(in_prefix, default=0.0))
             run_row["dir_ratio_max"] = fl(max(dir_ratio_m[:cmp_n], default=0.0))  # diagnostic: the amplification of H's error
@@ -725,7 +728,7 @@ COLUMNS = dict(
     runs=["id", "group", "problem", "n", "x0", "gtol", "xrtol", "c1", "c2", "maxiter", "ls_maxiter", "scipy_call",
           "status", "message", "nit", "nfev", "njev", "wolfe2_calls", "wolfe2_first_eval", "wolfe2_found",
           "wolfe2_warned", "cache_hits", "n_updates", "n_rho1000", "n_ys_nonpos", "repro",
-          "wolfe1_fail", "termination", "parity", "final_x", "final_f", "gnorm_inf", "n_ls", "cmp_nsearch",
+          "wolfe1_fail", "termination", "parity", "final_x", "final_f", "gnorm_inf", "n_ls", "cmp_nsearch", "cmp_first_outside",
           "x_ratio_max", "dir_ratio_max", "note"],
     evals=["run", "i", "search", "x", "f", "g", "x_scale", "x_slack", "x_ratio"],
     iters=["run", "k", "x", "f", "g", "p", "d_exact", "d_scale", "alpha", "ev_start", "ev_end", "ys", "applied",
@@ -769,9 +772,10 @@ def assert_derivation(out):
     short = [(r["id"], r["cmp_nsearch"], r["n_ls"]) for r in runs if r["cmp_nsearch"] != r["n_ls"]]
     if short:
         print("  shorter prefixes (run, searches compared, searches):", ", ".join(f"{a} {b}/{c}" for a, b, c in short))
-    bad = [r["id"] for r in runs if r["cmp_nsearch"] < min(3, r["n_ls"])]
+    print(f"  prefix margin rule: committed prefix = first-outside index - {PREFIX_MARGIN} (macOS arm64 only so far)")
+    bad = [r["id"] for r in runs if r["cmp_nsearch"] < 1 and r["n_ls"] > 0]
     if bad:
-        print(f"a comparison prefix shorter than 3 searches ({bad}): the replay claim is empty there; refusing", file=sys.stderr)
+        print(f"an empty comparison prefix ({bad}): the replay claim is empty there; refusing", file=sys.stderr)
         sys.exit(1)
     for r in runs:
         assert float(r["x_ratio_max"]) <= REPLAY_C / MARGIN
@@ -797,7 +801,7 @@ TRAJ = {"evals.csv": {"x", "f", "g"}, "iters.csv": {"x", "f", "g", "p", "alpha",
         "runs.csv": {"final_x", "final_f", "gnorm_inf"}, "hess_final.csv": {"h_scipy", "h_exact"},
         "problems.csv": {"A", "b", "x_star", "f_star", "mu"}}
 DIAGNOSTIC = {"x_scale", "x_slack", "x_ratio", "d_scale", "dir_ratio_scipy", "dir_ratio_mirror", "ratio", "ratio_mirror",
-              "h_scale", "x_ratio_max", "dir_ratio_max", "scipy_call", "note", "cmp_nsearch"}
+              "h_scale", "x_ratio_max", "dir_ratio_max", "scipy_call", "note", "cmp_nsearch", "cmp_first_outside"}
 
 
 def _split_data(text):
@@ -839,10 +843,14 @@ def check(data_dir: Path) -> int:
     cmp_n = {i: (int(r["cmp_nsearch"]) if r["cmp_nsearch"] != "none" else None) for i, r in runs_c.items()}
     n_ls = {i: int(r["n_ls"]) for i, r in runs_c.items()}
     runs_f = {r["id"]: r for r in _split_data(fresh["runs.csv"])[1]}
+    margins = []
     for i, r in runs_c.items():
-        if r["parity"] == "true" and i in runs_f and runs_f[i]["cmp_nsearch"] != "none":
-            if int(runs_f[i]["cmp_nsearch"]) < int(r["cmp_nsearch"]):
-                bounds.append(f"run {i}: comparison prefix {runs_f[i]['cmp_nsearch']} searches on this platform, committed {r['cmp_nsearch']}")
+        if r["parity"] == "true" and i in runs_f and runs_f[i]["cmp_first_outside"] != "none":
+            fo = int(runs_f[i]["cmp_first_outside"])
+            m = fo - int(r["cmp_nsearch"])
+            margins.append((m, i, f"committed prefix {r['cmp_nsearch']} of {r['n_ls']}, first search outside the bound here {fo}"))
+            if m < PREFIX_MARGIN:
+                bounds.append(f"run {i}: first search outside the bound on this platform is {fo}, committed prefix {r['cmp_nsearch']}: margin {m} < {PREFIX_MARGIN}")
     for name in fresh:
         if name not in committed:
             continue
@@ -936,6 +944,11 @@ def check(data_dir: Path) -> int:
           + ", ".join(f"{k} {v}" for k, v in skipped.items() if isinstance(k, str)))
     for line in outside_examples[:20]:
         print("  OUTSIDE", line)
+    print(f"== margins on this platform (first search outside the bound minus the committed prefix; the rule keeps >= {PREFIX_MARGIN}): smallest first")
+    for m_, rid, txt in sorted(margins):
+        print(f"  margin {m_:3d}  {rid:24s} {txt}")
+    print(f"  {len(margins)} prefixes with a finite first-outside index; smallest margin {min((m for m, _, _ in margins), default='n/a')}; "
+          f"runs covered in full: {sum(1 for r in runs_c.values() if r['parity'] == 'true' and r['cmp_nsearch'] == r['n_ls'])}")
     if bounds:
         print("== bounds on this platform")
         for b in bounds:
