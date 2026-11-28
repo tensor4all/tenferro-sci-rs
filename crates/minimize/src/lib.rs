@@ -1,11 +1,13 @@
-//! Optimization in pure Rust: unconstrained L-BFGS and the Moré–Thuente line search it is built on.
+//! Optimization in pure Rust: unconstrained L-BFGS and BFGS and the Moré–Thuente line search they are built on.
 //!
 //! [`lbfgs`] is the unconstrained path (`bounds=None`) of SciPy's `L-BFGS-B`, as an ask/tell state machine
 //! ([`lbfgs::LbfgsState`]) and a closure driver ([`minimize`]), on any [`Vector`] type (`Vec<f64>` is implemented;
 //! the scalar is `f64`, provisionally). [`linesearch`] is a port of SciPy's Moré–Thuente strong-Wolfe line search
 //! (MINPACK-2 `dcsrch`/`dcstep`, as translated in `scipy.optimize._dcsrch`) and of the thin driver
 //! `scipy.optimize.scalar_search_wolfe1` around it; it works on plain `f64` scalar functions φ(α) and φ'(α) and is the
-//! search L-BFGS uses. The crate depends on no other crate beyond `thiserror`.
+//! search both use. [`bfgs`] is SciPy's `minimize(method="BFGS")` with a dense inverse Hessian (a `colmat` matrix, host
+//! memory); [`minimize`] selects the algorithm by the type of its configuration ([`Optimizer`]), there is no method enum.
+//! The crate depends on no other crate beyond `thiserror` and `colmat` (pure Rust, `std` feature only).
 //!
 //! # SciPy mapping
 //!
@@ -17,6 +19,7 @@
 //! | `_dcsrch.DCSRCH` (`_iterate`) | [`linesearch::MoreThuente`] | Steps within 1e-12 relative, evaluation counts equal (dcstep Case 1 tie: see below) |
 //! | `_linesearch.scalar_search_wolfe1` | [`linesearch::scalar_search_wolfe1`] | The same, plus `None` ↔ `alpha: None` |
 //! | `minimize(method="L-BFGS-B", bounds=None)` (`_lbfgsb_py._minimize_lbfgsb`, `__lbfgsb.c`) | [`minimize`], [`lbfgs::LbfgsState`], [`lbfgs::LbfgsConfig::scipy_default`] | On every recorded run: counts of evaluations, iterations, stored pairs and restarts and the termination equal; every requested point within `32 ε` times the absolute-value scale of its computation plus the measured deviation of SciPy's own direction from the exact one (`C_X · ε · x_scale + x_slack`; `tests/data/lbfgs/README.md` derives both; five long small-memory runs are cut at a recorded `maxiter`, because last-digit differences are amplified past that point). Live runs on closed-form problems: the same counts as SciPy on the committed problems |
+//! | `minimize(method="BFGS")` (`_optimize._minimize_bfgs`, `_line_search_wolfe12`, `wolfe1` branch) | [`bfgs::BfgsState`], [`bfgs::minimize`], [`bfgs::BfgsConfig::scipy_default`] | Claimed only on runs where SciPy's `wolfe2` fallback never fires (`wolfe2_calls == 0`; the zoom search is not ported, a failed `wolfe1` ends with [`bfgs::Termination::LineSearchFailed`]); there: evaluation and iteration counts and termination equal, requested points within the tolerance of `tests/data/bfgs/README.md` |
 //!
 //! `maxcor`, `gtol`, `ftol`, `maxiter`, `maxfun` and `maxls` are the fields of [`lbfgs::LbfgsConfig`] of the same
 //! meaning; `LbfgsConfig::scipy_default()` has SciPy's defaults. SciPy's `ftol` is the relative tolerance of the
@@ -56,7 +59,7 @@
 //!   `eps`, `iprint`, `disp`. The scalar is `f64` for now: `LbfgsConfig` is not generic, and becomes so when the scalar
 //!   trait of #38 is public and a second precision has parity data.
 //!
-//! Not in this crate yet: bounds (the Cauchy point and subspace minimization of L-BFGS-B), BFGS, `line_search_wolfe1`
+//! Not in this crate yet: bounds (the Cauchy point and subspace minimization of L-BFGS-B), `line_search_wolfe1`
 //! on vectors, the zoom search (`scalar_search_wolfe2`), Armijo and Hager–Zhang searches.
 //!
 //! # Example
@@ -88,10 +91,12 @@
 //! # Ok::<(), minimize::linesearch::Wolfe1Error>(())
 //! ```
 
+pub mod bfgs;
 pub mod lbfgs;
 pub mod linesearch;
+mod optimizer;
 mod real;
 pub mod vector;
 
-pub use lbfgs::minimize;
+pub use optimizer::{minimize, Optimizer};
 pub use vector::Vector;

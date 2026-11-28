@@ -9,6 +9,9 @@ rust-version = "1.96"
 repository = "https://github.com/tensor4all/tenferro-sci-rs"
 
 [workspace.dependencies]
+# Dense linear algebra (matrix-vector products, rank updates) for `minimize::bfgs`; as krylov 0.4.0.
+colmat = { version = "0.34.0", default-features = false, features = ["std"] }
+
 # Exact pin: the families it provides are re-exported by `specials`.
 few_special_functions = "=0.2.1"
 num-traits = "0.2.19"
