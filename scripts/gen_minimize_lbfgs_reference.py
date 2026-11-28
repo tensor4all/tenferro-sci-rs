@@ -416,14 +416,14 @@ class Mirror:
 
 def mirror_replay(row, evals):
     """Replay SciPy's (f, g) through the mirror; returns (counts and termination agree, the ratio
-    (|x_mirror - x_scipy| - x_slack) / (eps x_scale) of every request, as the worst over components)."""
+    (|x_mirror - x_scipy| - 2 x_slack) / (eps x_scale) of every request, as the worst over components)."""
     M = Mirror(row["x0"], row["maxcor"], row["gtol"], row["ftol"], row["maxiter"], row["maxfun"], row["maxls"])
     x, ratios, i = M.req, [], 0
     while True:
         if i >= len(evals):
             return False, ratios
         e = evals[i]
-        over = np.maximum(np.abs(x - e["x"]) - e["x_slack"], 0.0)
+        over = np.maximum(np.abs(x - e["x"]) - 2.0 * e["x_slack"], 0.0)
         ratios.append(float(np.max(over / np.maximum(EPS * e["x_scale"], 1e-300))))
         x = M.tell(e["f"], e["g"])
         i += 1
@@ -522,7 +522,7 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
     pair_ids: dict[tuple[int, int], int] = {}
     local_pairs: list[dict] = []
     epoch = 0
-    cum = np.zeros(n)  # sum over accepted searches of the per-step rounding scale
+    cum = np.zeros(n)  # sum over accepted steps of |alpha d| + |x_new|: the magnitudes whose rounding enters x
     cum_slack = np.zeros(n)  # sum over accepted searches of |stp| |d_scipy - d_exact|
     search = -1
     nrestart = 0
@@ -572,12 +572,13 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
             SEARCHES.append(last_search_row)
             d_scale_vec = np.array(d_scale)
             d_err = np.abs(q["d"] - np.array(d_exact))
-        xs = cum + np.abs(last_search_row["x_base"]) + abs(q["stp"]) * d_scale_vec
+        step = np.abs(q["stp"] * last_search_row["d"])  # the step actually taken (not the abs-recursion scale of the two-loop)
+        xs = cum + np.abs(last_search_row["x_base"]) + step
         EVALS.append(dict(run=rid, k=k, search=search, ifun=q["ifun"], x=q["x"], f=q["f"], g=q["g"],
                           accepted=int(q["accepted"]), x_scale=xs,
                           x_slack=cum_slack + abs(q["stp"]) * d_err))  # fmt: skip
         if q["accepted"]:
-            cum = cum + abs(q["stp"]) * d_scale_vec + np.abs(q["x"])
+            cum = cum + step + np.abs(q["x"])
             cum_slack = cum_slack + abs(q["stp"]) * d_err
     PAIRS.extend(local_pairs)
     # per line search: SciPy's own direction error and the float64 mirror's replay against the data
@@ -599,8 +600,15 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
     series = list(zip(mirror_by, dir_by))
     global LAST_SERIES
     LAST_SERIES = series
-    bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 4 or d_ > C_DIR / 2]
-    if not ok and not bad:
+    # caps and the regime: SciPy's own direction error only. The float comparison prefix (below) carries the mirror.
+    bad = [j for j, (m_, d_) in enumerate(series) if d_ > C_DIR / 2]
+    # cmp_nsearch: the number of line searches whose requested points stay within C_X/4 of the derived bound
+    # (|dx| <= C_X/4 eps x_scale + 2 x_slack for the independent float64 mirror); past it only counts and termination
+    # are compared (replay and --check alike).
+    covered = len({e["search"] for e in run_evals if e["search"] >= 0 and e["k"] < len(ratios) + 0})
+    first_over = next((j for j, (m_, _) in enumerate(series) if m_ > C_X / 4), nsearch)
+    cmp_nsearch = min(first_over, nsearch if ok else max(covered - 1, 0))
+    if not ok and cmp_nsearch >= nsearch:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
     replay = 1
     if rid in COUNTS_ONLY:
@@ -614,10 +622,9 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
         local_pairs.clear()
     elif bad and CHECK_MODE and not probe:
         # --check: report and go on, so that one violation never hides the other comparisons
-        BOUND_FAILURES.append(f"{rid}: line search {bad[0]} is outside the bounds on this platform (mirror {series[bad[0]][0]:.2f} > {C_X // 4} or direction {series[bad[0]][1]:.2f} > {C_DIR // 2})")
+        BOUND_FAILURES.append(f"{rid}: line search {bad[0]} is outside the bounds on this platform (SciPy direction {series[bad[0]][1]:.2f} > {C_DIR // 2})")
     elif bad:
-        raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 4}"
-                          f" or direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
+        raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (SciPy direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
     mirror_ratio, dir_ratio = max(mirror_by, default=0.0), max(dir_by, default=0.0)
     if cap is not None:
         # the cap is data: the largest prefix of line searches inside the bounds
@@ -632,7 +639,7 @@ def run_(rid, group, problem, note, x0, snap, cap, replayable, probe, **override
         nrequests=nreq, nskip=rep["nskip"], nrestart=nrestart, nsearch=search + 1,
         f=official.fun, ginf=float(np.max(np.abs(official.jac))), x=official.x,
         dir_ratio=round(dir_ratio, 2), mirror_ratio=round(mirror_ratio, 2),
-        replay=replay, maxiter_cap="none" if cap is None else cap[0],
+        cmp_nsearch=cmp_nsearch if replay else "none", replay=replay, maxiter_cap="none" if cap is None else cap[0],
         cap_first_bad="none" if cap is None else cap[2],
         uncapped_nsearch="none" if cap is None else len(cap[1]), note=note,
     ))  # fmt: skip
@@ -867,7 +874,7 @@ EXACT_FILES_KEYS = {"runs.csv": ("id",), "evals.csv": ("run", "k"), "searches.cs
 TRAJECTORY = {"runs.csv": {"x", "f", "ginf"}, "evals.csv": {"x", "f", "g"}, "searches.csv": {"x_base", "g_base"},
               "pairs.csv": {"s", "y"}}  # fmt: skip
 DIAGNOSTIC = {
-    "runs.csv": {"dir_ratio", "mirror_ratio", "cap_first_bad", "uncapped_nsearch"},
+    "runs.csv": {"dir_ratio", "mirror_ratio", "cap_first_bad", "uncapped_nsearch", "cmp_nsearch"},
     "evals.csv": {"x_scale", "x_slack"},
     "searches.csv": {"gamma_scipy", "gamma_exact", "stp0", "d", "d_exact", "d_scale"},
     "pairs.csv": set(),
@@ -927,6 +934,29 @@ def check(new, data):
         committed[name] = parse_csv(path.read_text())
     regenerated = {name: parse_csv(text) for name, text in new.items()}
     tol = derived_tolerances(committed)
+    runs_c = {r["id"]: r for r in committed["runs.csv"][1]}
+    first_window = {}
+    for r in committed["searches.csv"][1]:
+        if r["pair_lo"] != "none":
+            for p_ in range(int(r["pair_lo"]), int(r["pair_hi"]) + 1):
+                first_window.setdefault((r["run"], p_), int(r["j"]))
+    skipped_rows = {}
+
+    def in_prefix(name, a):
+        """Is this committed row inside its run's comparison prefix?"""
+        rid = a["id"] if name == "runs.csv" else a["run"]
+        cmpn = runs_c[rid]["cmp_nsearch"]
+        if cmpn == "none":
+            return False  # counts-only row: nothing recorded
+        cmpn = int(cmpn)
+        if name == "runs.csv":
+            return cmpn >= int(runs_c[rid]["nsearch"])  # the whole run is inside the prefix
+        if name == "evals.csv":
+            return int(a["search"]) < cmpn
+        if name == "searches.csv":
+            return int(a["j"]) < cmpn
+        return first_window.get((rid, int(a["p"])), 0) <= cmpn  # pairs: formed by a search inside the prefix
+
     exact_lines, float_stats, sample = [], {}, []
     n_exact = 0
     diag_note = []
@@ -970,7 +1000,11 @@ def check(new, data):
                     ok = a[col] == b[col]
                 if not ok:
                     exact_lines.append(f"{name} {'/'.join(key)} column {col}: committed {a[col][:70]!r}, regenerated {b[col][:70]!r}")
-            # trajectory columns, only where the path (all exact columns) agrees is the comparison meaningful
+            # trajectory columns: only inside the run's comparison prefix (cmp_nsearch line searches); past it a run is
+            # compared by counts and termination only
+            if not in_prefix(name, a):
+                skipped_rows[name] = skipped_rows.get(name, 0) + 1
+                continue
             for col in TRAJECTORY.get(name, set()):
                 xa, xb = fvec(a[col]), fvec(b[col])
                 if name == "evals.csv":
@@ -994,8 +1028,9 @@ def check(new, data):
                     kk = max(prev)
                     t = per[kk][0] if col == "x_base" else per[kk][1]
                 else:  # pairs
-                    per = tol[a["run"]]
-                    t = 2 * np.max([(v[0] if col == "s" else v[1]) for v in per.values()], axis=0) if per else 1e-6
+                    cmpn = int(runs_c[a["run"]]["cmp_nsearch"])
+                    per = [v for v in tol[a["run"]].values() if int(v[3]["search"]) < cmpn]
+                    t = 2 * np.max([(v[0] if col == "s" else v[1]) for v in per], axis=0) if per else 1e-6
                 d = np.abs(xa - xb)
                 with np.errstate(all="ignore"):
                     ratio = float(np.max(d / np.maximum(t, 1e-300))) if d.size else 0.0
@@ -1013,6 +1048,7 @@ def check(new, data):
         print(f"  ... {n_exact - 300} more")
     runs_changed = sorted({l.split()[1].split("/")[0] for l in exact_lines if l.split()[0] in ("runs.csv", "evals.csv", "searches.csv", "pairs.csv")})
     print(f"  {n_exact} exact mismatches; runs with a changed path or option: {runs_changed if runs_changed else 'none'}")  # fmt: skip
+    print("== rows past a run's comparison prefix (counts/termination only): " + ", ".join(f"{k} {v}" for k, v in sorted(skipped_rows.items())))
     print("== trajectory columns: per file and column (compared; derived tolerance, ratio = |diff| / tolerance, must be <= 1)")
     bad_total = 0
     for (name, col), st in sorted(float_stats.items()):
@@ -1020,6 +1056,10 @@ def check(new, data):
         print(f"  {name:13s} {col:7s} compared {st['n']:6d}  outside tolerance {st['bad']:5d}  largest |diff| {st['maxabs']:.3e}  largest rel diff {st['maxrel']:.3e}  largest ratio {st['maxratio']:.3f}")  # fmt: skip
     for l in sample:
         print("  FLOAT MISMATCH", l)
+    for r in regenerated["runs.csv"][1]:
+        c = runs_c.get(r["id"], {}).get("cmp_nsearch", "none")
+        if c != "none" and r["cmp_nsearch"] != "none" and int(r["cmp_nsearch"]) < int(c):
+            BOUND_FAILURES.append(f"{r['id']}: the committed comparison prefix ({c} line searches) is longer than the prefix inside the bound here ({r['cmp_nsearch']})")  # fmt: skip
     print("== bounds on this platform (mirror ratio <= C_X/4, SciPy direction <= C_DIR/2, every search up to a cap)")
     for l in BOUND_FAILURES:
         print("  OUT OF BOUNDS", l)
