@@ -77,11 +77,41 @@ then (10, 1) four times) and asserts the requests `0, 1, 5, 1.3552244689139858, 
 `WARNING: XTOL TEST SATISFIED`, the last trial becomes the iterate although `f` rose from 4 to 10, and the one-sided
 function test stops the run. `../../lbfgs_termination.rs` replays the same script.
 
+## Two claims, two mechanisms
+
+1. **Parity: the Rust implementation against SciPy's committed data** (the Rust replay, `tests/lbfgs_replay.rs`). The requested
+   points must agree within a *derived* bound, `C_X ε x_scale + 2 x_slack`, on each run's comparison prefix; counts and
+   termination agree exactly on the whole run. The bound is derived from the algorithm (rounding of the updates plus SciPy's
+   measured direction error), `C_X = 32` is calibrated on the float64 mirror with a margin (see "How the tolerance was derived").
+2. **Reproducibility: SciPy regenerated on another platform against SciPy committed** (`--check`, run in CI on Ubuntu/OpenBLAS
+   while the data come from macOS/Accelerate). Counts, termination, message, call, caps, flags and row keys are **exact**; the
+   bounds section (caps and comparison prefixes must stay inside the bounds on the running platform) is unchanged; SciPy's float
+   columns (the *trajectory* columns below) are compared with **one named constant, `SCIPY_REPRO_RTOL = 1e-6`**, per component,
+   `|a − b| ≤ SCIPY_REPRO_RTOL · max(|a|, |b|, scale)`, on the same comparison prefix as the replay (rows past it: exact columns
+   only). `scale` is the largest absolute component of that column over the run's compared rows (committed values); it makes
+   1-ulp differences of components near 0 pass by construction (an ulp of the large components is ≪ 1e-6 of the scale).
+
+   `SCIPY_REPRO_RTOL` is a **calibrated reproducibility tolerance of SciPy across BLAS/libm, not derived from the algorithm.**
+   Calibration (Ubuntu CI run 46134161576, all compared rows of every column, not a sample): the largest absolute differences were
+   `evals` x 7.2e-12, f 8.7e-11, g 2.1e-8; `searches` x_base 6.5e-12, g_base 2.7e-9; `pairs` s 9.1e-12, y 2.4e-8; `runs` x 1.1e-13,
+   f 5.7e-14, ginf 3.7e-13. Divided by the smallest run scale of that column in the compared prefixes (1.2, 14.2, 5.0, 1.2, 5.0,
+   0.18, 0.67, 1.2, 14.2, 5.0) the observed relative difference is bounded by 6e-12, 6e-12, 4.2e-9, 5.4e-12, 5.4e-10, 5.0e-11,
+   **3.5e-8** (pairs y, the largest), 9e-14, 4e-15, 7e-14. The constant is 1e-6: a margin of at least 28x over the largest. Every
+   `--check` run prints the observed maximum per column and overall next to the constant (the maintainer's condition for a
+   calibrated constant); an observed maximum above ~1e-6 would mean the data, not the constant, is in question.
+
+   Why two mechanisms: an earlier attempt used the derived parity bound for the cross-platform check as well and failed on
+   Linux (148 values outside it in run 46134161576, including 1-ulp differences): a bound derived for "an implementation that
+   follows the algorithm" says nothing about how SciPy's own BLAS/libm calls round, and a bound for SciPy's rounding is an
+   empirical property of those libraries. In three CI runs (46133315711, 46133534426 and 46134161576, each with the full check)
+   the exact columns, i.e. every path, count, termination, message and cap, were **identical on Linux** (0 exact mismatches); only
+   floating-point values differ, at the 1e-8 relative level at most on the compared prefixes.
+
 ## What `--check` compares
 
 `uv run scripts/gen_minimize_lbfgs_reference.py --check` regenerates everything in memory, compares and writes nothing.
-It prints a summary per file and column (mismatch counts, the largest absolute and relative difference, the largest ratio to
-the tolerance) and **every mismatch of an exact column in full**, with the list of runs whose path or options changed, so
+It prints a summary per file and column (rows compared, rows outside, the largest absolute difference, the observed maximum
+relative difference next to the constant and the margin) and **every mismatch of an exact column in full**, with the list of runs whose path or options changed, so
 one CI log answers "did any run change its counts or termination on this platform". Every comparison runs before the verdict: a committed cap (or run) outside the bounds on the running platform is listed under
 "bounds on this platform" after the summaries and never hides other mismatches. Exit 1 on any exact mismatch, any
 trajectory value outside its tolerance, or any bound violation.
@@ -94,22 +124,16 @@ final `ginf` of the same run differs in the 7th digit, and the platform-dependen
 | kind | columns | rule |
 |---|---|---|
 | exact | ids, options (`ftol`, `gtol`, `x0` as floats), `call`, `message`, `termination`, `nit`, `nfev`, `njev`, `nrequests`, `nskip`, `nrestart`, `nsearch`, `maxiter`, `maxiter_cap`, `replay`, the keys and the number of rows of every file, `accepted`, `search`, `ifun`, `col`, `iter`, `restart` | string equality. A difference means the path of a recorded run changed on that platform: the run leaves the parity set with a documented reason; the check is never loosened |
-| trajectory (SciPy's own values) | `evals.csv` `x`, `f`, `g`; `runs.csv` `x`, `f`, `ginf`; `searches.csv` `x_base`, `g_base`; `pairs.csv` `s`, `y` | within a tolerance **derived from the committed scales** (below) |
+| trajectory (SciPy's own values) | `evals.csv` `x`, `f`, `g`; `runs.csv` `x`, `f`, `ginf`; `searches.csv` `x_base`, `g_base`; `pairs.csv` `s`, `y` | `SCIPY_REPRO_RTOL` per component with the run scale ("Two claims"), on the comparison prefix |
 | diagnostic | `x_scale`, `x_slack`, `d`, `d_exact`, `d_scale`, `gamma_*`, `stp0`, `dir_ratio`, `mirror_ratio`, `cap_first_bad`, `uncapped_nsearch`, `cmp_nsearch` (checked: not shorter on the running platform), `caps.csv` | not compared; the generator checks the regenerated ones against their bounds (a run, or a committed cap, outside the bounds on the running platform aborts with a message) |
 
-Tolerances of the trajectory columns (ε = 2⁻⁵², `C_X = 32`, the committed `x_scale`, `x_slack`; `L` = largest ‖y‖/‖s‖ over the
-recorded pairs of the run, n the dimension), as #39 derives `dphi_scale`:
+The derived position bound below (ε = 2⁻⁵², `C_X = 32`, the committed `x_scale`, `x_slack`) is the **parity bound of the Rust replay**;
+`--check` does not use it:
 
-* `|Δxᵢ| ≤ C_X ε x_scaleᵢ + 2 x_slackᵢ` (same formula as the Rust replay): `x_scale` is the running sum of the magnitudes
-  whose rounding enters the point, `x_scaleᵢ = |x₀ᵢ| + Σⱼ (|αⱼ dⱼᵢ| + |x_{j+1,i}|) + |x_base,i| + |α dᵢ|`, so one fused update
-  `x + α d` (one product, one sum: error ≤ ε|α d| + ε|x_new| per implementation, two implementations) is covered by
-  construction, and a 1-ulp difference of an iterate always passes. `x_slackᵢ` is the accumulated deviation of SciPy's direction
-  from the exact one (measured against mpmath), counted twice (two SciPy runs).
-* `|Δgᵢ| ≤ 4 L ‖tol_x‖₂ + 8 n ε (|gᵢ| + L ‖x‖₂)`: `g` is `L`-Lipschitz along the path (mean value theorem; `L` is an estimate
-  from the secant ratios, the factor 4 a margin for it and for segments the other path took), plus the rounding of evaluating
-  `g`.
-* `|Δf| ≤ ‖g‖₂ ‖tol_x‖₂ + 2 L ‖tol_x‖₂² + 8 n ε (|f| + ‖g‖₂ ‖x‖₂)`: first-order Taylor.
-* `pairs`: `s` differs by at most `2 max_k tol_x`, `y` by at most `2 max_k tol_g` over the evaluations of the comparison prefix.
+* `|Δxᵢ| ≤ C_X ε x_scaleᵢ + 2 x_slackᵢ`: `x_scale` is the running sum of the magnitudes whose rounding enters the point,
+  `x_scaleᵢ = |x₀ᵢ| + Σⱼ (|αⱼ dⱼᵢ| + |x_{j+1,i}|) + |x_base,i| + |α dᵢ|`, so one fused update `x + α d` (error ≤ ε|α d| + ε|x_new|
+  per implementation, two implementations) is covered by construction. `x_slackᵢ` is the accumulated deviation of SciPy's direction
+  from the exact one (measured against mpmath), counted twice.
 
 **What is compared, row by row: the comparison prefix.** The bound models rounding, not its *amplification* by the problem
 (the line search and the matrix `H` respond to a perturbation of an iterate). So every run carries `cmp_nsearch`: the number of

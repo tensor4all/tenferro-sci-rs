@@ -50,7 +50,7 @@ fn assert_none(what: &str, mut bad: Vec<String>) {
 fn replay_reproduces_every_requested_point_count_and_termination() {
     let reps = replays();
     let worst = reps.iter().map(|r| r.max_ratio).fold(0.0, f64::max);
-    eprintln!("replay: largest (|dx| - slack) / (eps x_scale) over all runs = {worst:.2} (tolerance {C_X})");
+    eprintln!("replay: largest (|dx| - 2 x_slack) / (eps x_scale) over the compared prefixes = {worst:.2} (tolerance {C_X})");
     assert_none(
         &format!("path (largest observed ratio {worst:.2}, bound C_X = {C_X})"),
         reps.iter()
