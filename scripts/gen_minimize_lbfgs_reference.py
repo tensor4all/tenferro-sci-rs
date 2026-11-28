@@ -74,7 +74,7 @@ HEADER = (
 )
 
 EPS = 2.0**-52
-C_X = 32  # tolerance multiplier of the replay (README.md); the mirror below must stay within it
+C_X = 32  # tolerance multiplier of the replay (README.md); a run is kept only while the mirror stays within C_X / 4 (the real implementation may be a factor ~2 worse than the mirror)
 C_DIR = 128  # SciPy's own direction must be within C_DIR eps scale of the exact one on every search
 mpmath.mp.dps = 60
 
@@ -577,11 +577,11 @@ def run_(rid, group, problem, note, x0, snap, cap, **overrides):
         if e["search"] >= 0:
             mirror_by[e["search"]] = max(mirror_by[e["search"]], r)
     series = list(zip(mirror_by, dir_by))
-    bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 2 or d_ > C_DIR / 2]
+    bad = [j for j, (m_, d_) in enumerate(series) if m_ > C_X / 4 or d_ > C_DIR / 2]
     if not ok and not bad:
         raise SystemExit(f"{rid}: the mirror disagrees with SciPy on counts or termination (algorithm error)")
     if bad:
-        raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 2}"
+        raise OutOfRegime(f"{rid}: first line search outside the bounds: {bad[0]} (mirror {series[bad[0]][0]:.1f} > {C_X // 4}"
                           f" or direction {series[bad[0]][1]:.1f} > {C_DIR // 2})", bad[0], series)  # fmt: skip
     mirror_ratio, dir_ratio = max(mirror_by, default=0.0), max(dir_by, default=0.0)
     if cap is not None:
