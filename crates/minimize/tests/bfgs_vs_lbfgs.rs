@@ -98,8 +98,7 @@ fn check(problem: &str, x0: &[f64], iters: usize) {
             d,
             &want,
             &scale,
-            norm_inf(&want),
-            n,
+            &[],
         );
         assert!(m.is_none(), "{}", m.unwrap_or_default());
     }

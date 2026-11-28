@@ -294,7 +294,7 @@ fn first_iteration_is_steepest_descent_with_scipys_first_step() {
             .zip(&g0)
             .map(|(x, g)| x.abs() + alpha * g.abs())
             .collect();
-        let m = mismatch(&format!("{id}: first trial"), trial, &want, &scale, 1.0, n);
+        let m = mismatch(&format!("{id}: first trial"), trial, &want, &scale, &[]);
         assert!(m.is_none(), "{}", m.unwrap_or_default());
     }
 }

@@ -17,10 +17,9 @@ use std::path::PathBuf;
 
 /// ε = 2⁻⁵², the unit the README's tolerances are written in.
 pub const EPS: f64 = f64::EPSILON;
-/// The constant C of the strict (local rounding) term of the replay tolerance.
-pub const REPLAY_C: f64 = 64.0;
-/// The relative propagation envelope of the replay tolerance.
-pub const ENVELOPE: f64 = 1e-8;
+/// The CALIBRATED constant of the replay bound `C ε x_scale + 2 x_slack` (data README, "Two claims, two mechanisms"): measured on
+/// an independent float64 mirror, which defines each run's comparison prefix with a 4× margin; never raised, the prefix is shortened.
+pub const REPLAY_C: f64 = 32.0;
 
 // ----------------------------------------------------------------------------------------------
 // Data
@@ -128,6 +127,9 @@ pub struct Eval {
     pub f: f64,
     pub g: Vec<f64>,
     pub x_scale: Option<Vec<f64>>,
+    pub x_slack: Option<Vec<f64>>,
+    /// The line search the evaluation belongs to (0 for `x0`).
+    pub search: Option<usize>,
 }
 
 /// One recorded line search (one iteration of `_minimize_bfgs`).
@@ -148,7 +150,9 @@ pub struct Hess {
     pub n_updates: usize,
     pub h_scipy: Vec<f64>,
     pub h_exact: Vec<f64>,
-    pub h_scale: Vec<f64>,
+    pub h_scale: f64,
+    /// The final `H` is inside the claim (whole run in the prefix and the mirror agrees).
+    pub h_compared: bool,
 }
 
 /// One run of `runs.csv` with its evaluations, line searches and final matrix.
@@ -179,11 +183,12 @@ pub struct Run {
     /// Applied updates with `yᵀs == 0` (SciPy's `ρ = 1000`) and with `yᵀs <= 0`.
     pub n_rho1000: usize,
     pub n_ys_nonpos: usize,
-    /// Observed maxima of the generator's replay mirror (README, "Calibration"); NaN for non-parity runs.
+    /// Observed maxima inside the prefix of the generator's replay mirror (README); NaN for non-parity runs.
     pub x_ratio_max: f64,
-    pub x_env_max: f64,
     pub dir_ratio_max: f64,
-    pub dir_env_max: f64,
+    /// Line searches inside the comparison prefix (parity runs): the replay compares points by value only there.
+    pub cmp_nsearch: Option<usize>,
+    pub n_ls: usize,
     pub wolfe1_fail: String,
     pub termination: String,
     pub parity: bool,
@@ -226,6 +231,8 @@ pub fn load_runs() -> Vec<Run> {
                 f: num(&r, "f"),
                 g: vecs(&r, "g"),
                 x_scale: opt_vecs(&r, "x_scale"),
+                x_slack: opt_vecs(&r, "x_slack"),
+                search: (r["search"] != "none").then(|| count(&r, "search")),
             },
         ));
     }
@@ -249,7 +256,8 @@ pub fn load_runs() -> Vec<Run> {
                 n_updates: count(&r, "n_updates"),
                 h_scipy: vecs(&r, "h_scipy"),
                 h_exact: vecs(&r, "h_exact"),
-                h_scale: vecs(&r, "h_scale"),
+                h_scale: num(&r, "h_scale"),
+                h_compared: r["h_compared"] == "true",
             },
         );
     }
@@ -285,9 +293,9 @@ pub fn load_runs() -> Vec<Run> {
                 n_rho1000: count(&r, "n_rho1000"),
                 n_ys_nonpos: count(&r, "n_ys_nonpos"),
                 x_ratio_max: r["x_ratio_max"].parse().unwrap_or(f64::NAN),
-                x_env_max: r["x_env_max"].parse().unwrap_or(f64::NAN),
                 dir_ratio_max: r["dir_ratio_max"].parse().unwrap_or(f64::NAN),
-                dir_env_max: r["dir_env_max"].parse().unwrap_or(f64::NAN),
+                cmp_nsearch: (r["cmp_nsearch"] != "none").then(|| count(&r, "cmp_nsearch")),
+                n_ls: count(&r, "n_ls"),
                 wolfe1_fail: r["wolfe1_fail"].clone(),
                 termination: r["termination"].clone(),
                 parity: r["parity"] == "true",
@@ -315,51 +323,47 @@ pub fn run_by_id(id: &str) -> Run {
 // The tolerance rule of the data README
 // ----------------------------------------------------------------------------------------------
 
-/// `min(C·n·ε·scale_j, ENVELOPE·env)` for component `j`: the README's bound (strict local-rounding
-/// term, capped by the propagation envelope). `env` is `1 + ‖want‖∞` for iterates and `‖want‖∞`
-/// for directions and matrices.
-pub fn tol(scale: &[f64], j: usize, n: usize, env: f64) -> f64 {
-    (REPLAY_C * n as f64 * EPS * scale[j]).min(ENVELOPE * env)
+/// The replay bound for component `j`: `C ε scale_j + 2 slack_j` (`slack` empty means none).
+pub fn tol(scale: &[f64], slack: &[f64], j: usize) -> f64 {
+    REPLAY_C * EPS * scale[j] + 2.0 * slack.get(j).copied().unwrap_or(0.0)
 }
 
-/// `None` if `got` is within the README's bound of `want` componentwise, else a message that names the first
-/// failing component and prints, over **all** components, the observed maxima next to the bounds: the largest
-/// `|diff| / (n ε scale)` (bound `REPLAY_C`) and the largest `|diff| / env` (bound `ENVELOPE`).
+/// `None` if `got` is within the replay bound of `want` componentwise, else a message that names the first failing
+/// component and prints, over **all** components, the observed maximum of `(|diff| − 2 slack) / (ε scale)` next to the
+/// calibrated constant `C`, so the constant can be re-examined from the failure alone.
 pub fn mismatch(
     label: &str,
     got: &[f64],
     want: &[f64],
     scale: &[f64],
-    env: f64,
-    n: usize,
+    slack: &[f64],
 ) -> Option<String> {
     if got.len() != want.len() {
         return Some(format!("{label}: length {} vs {}", got.len(), want.len()));
     }
-    let (mut strict_max, mut env_max) = (0.0_f64, 0.0_f64);
+    let mut ratio_max = 0.0_f64;
     let mut first_bad: Option<usize> = None;
     for j in 0..want.len() {
         let d = (got[j] - want[j]).abs();
-        let s_ratio = d / (n as f64 * EPS * scale[j].max(f64::MIN_POSITIVE));
-        let e_ratio = d / env.max(f64::MIN_POSITIVE);
-        if d.is_nan() || s_ratio.is_nan() {
-            strict_max = f64::NAN;
+        let r = (d - 2.0 * slack.get(j).copied().unwrap_or(0.0)).max(0.0)
+            / (EPS * scale[j].max(f64::MIN_POSITIVE));
+        ratio_max = if d.is_nan() {
+            f64::NAN
         } else {
-            strict_max = strict_max.max(s_ratio);
-            env_max = env_max.max(e_ratio);
-        }
-        if first_bad.is_none() && (d.is_nan() || d > tol(scale, j, n, env)) {
+            ratio_max.max(r)
+        };
+        if first_bad.is_none() && (d.is_nan() || d > tol(scale, slack, j)) {
             first_bad = Some(j);
         }
     }
     first_bad.map(|j| {
         format!(
-            "{label}[{j}]: got {:e}, want {:e}, |diff| {:e} > tol {:e}; observed max |diff|/(n ε scale) = {strict_max:.3e} \
-             (bound C = {REPLAY_C}), observed max |diff|/env = {env_max:.3e} (bound ENVELOPE = {ENVELOPE:e})",
+            "{label}[{j}]: got {:e}, want {:e}, |diff| {:e} > bound C ε scale + 2 slack = {:e}; observed maximum over components of \
+             (|diff| − 2 slack)/(ε scale) = {ratio_max:.3} (calibrated C = {REPLAY_C})",
             got[j],
             want[j],
             (got[j] - want[j]).abs(),
-            tol(scale, j, n, env)
+            tol(scale, slack, j)
         )
     })
 }
