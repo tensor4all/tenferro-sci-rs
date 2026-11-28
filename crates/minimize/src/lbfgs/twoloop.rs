@@ -3,7 +3,8 @@
 //! Written independently for tensor4all/tenferro-sci-rs#40 from the published recursion (J. Nocedal, Math. Comp. 35(151),
 //! 773–782, 1980, doi:10.1090/S0025-5718-1980-0572855-7); no source code was translated.
 //!
-//! **Red stage:** the stub returns `H g = g` (`H = I`), so every test that needs a non-trivial `H` fails.
+//! Notation: the pairs are `(sᵢ, yᵢ)`, oldest first, with `ρᵢ = 1/(yᵢᵀsᵢ)`; the first loop runs from the newest pair
+//! to the oldest, the second back again, and the initial matrix `H₀ = γ I` sits between them.
 
 use super::memory::Memory;
 use crate::vector::Vector;
@@ -11,16 +12,30 @@ use crate::vector::Vector;
 /// Computes `out = H g`, `H` the L-BFGS matrix of the pairs in `mem` with `H₀ = gamma · I`. `alpha` is scratch space
 /// of length at least `mem.capacity()`; nothing is allocated.
 pub(crate) fn twoloop<V: Vector>(
-    _mem: &Memory<V>,
+    mem: &Memory<V>,
     ctx: &mut V::Ctx,
-    _gamma: f64,
+    gamma: f64,
     g: &V,
     out: &mut V,
-    _alpha: &mut [f64],
+    alpha: &mut [f64],
 ) {
-    // Stub: H = I.
     out.clone_from(g);
-    let _ = ctx;
+    // first loop: newest to oldest, q ← q − (ρᵢ sᵢᵀq) yᵢ
+    for i in (0..mem.len()).rev() {
+        if let (Some((s, y)), Some(rho), Some(slot)) = (mem.pair(i), mem.rho(i), alpha.get_mut(i)) {
+            let a = rho * s.dot(ctx, out);
+            *slot = a;
+            out.axpy(ctx, -a, y);
+        }
+    }
+    out.scale(ctx, gamma);
+    // second loop: oldest to newest, r ← r + (αᵢ − ρᵢ yᵢᵀr) sᵢ
+    for i in 0..mem.len() {
+        if let (Some((s, y)), Some(rho), Some(&a)) = (mem.pair(i), mem.rho(i), alpha.get(i)) {
+            let b = rho * y.dot(ctx, out);
+            out.axpy(ctx, a - b, s);
+        }
+    }
 }
 
 #[cfg(test)]

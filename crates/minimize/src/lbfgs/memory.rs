@@ -1,11 +1,11 @@
 //! The ring buffer of the stored curvature pairs `(sᵢ, yᵢ)` and the skip rule that guards it.
 //!
-//! Written independently for tensor4all/tenferro-sci-rs#40. The skip test `yᵀs ≤ eps · (−gᵀs)` and the scaling
+//! Written for tensor4all/tenferro-sci-rs#40. The ring buffer is written independently from the storage scheme of
+//! J. Nocedal, Math. Comp. 35(151), 773–782, 1980 (the `m` newest pairs, oldest overwritten first); no source code was
+//! translated for it. The skip test `yᵀs ≤ eps · (−gᵀs)` and the scaling
 //! `γ = yᵀs / yᵀy` of the newest pair are derived from reading SciPy v1.16.3 (commit
 //! `b9105ccc2237f57acb1060202cd77f6dd264fb34`) `scipy/optimize/__lbfgsb.c` (`mainlb`, LINE777: `dr <= epsmach*ddum`;
 //! `matupd`: `theta = rr/dr`); SciPy's storage is the compact representation, this is a ring buffer.
-//!
-//! **Red stage:** [`Memory::push`] stores nothing, so the unit tests of this module fail.
 
 use crate::vector::Vector;
 
@@ -86,9 +86,32 @@ impl<V: Vector> Memory<V> {
     /// (`(g_new·d − g_old·d) α`), `ddum` is `−g_oldᵀs ≥ 0` and `rr` is `yᵀy`. The pair is skipped if
     /// `dr ≤ EPSMACH · ddum` (NaN `dr` compares false and is stored: the caller rejects non-finite values earlier).
     /// Otherwise it becomes the newest pair, `ρ = 1/dr`, `γ = dr/rr`.
-    pub(crate) fn push(&mut self, _s: &V, _y: &V, _dr: f64, _ddum: f64, _rr: f64) -> Push {
-        // Stub: stores nothing.
-        Push::Skipped
+    pub(crate) fn push(&mut self, s: &V, y: &V, dr: f64, ddum: f64, rr: f64) -> Push {
+        if dr <= EPSMACH * ddum {
+            return Push::Skipped;
+        }
+        let m = self.capacity();
+        let slot = if self.len < m {
+            let slot = (self.head + self.len) % m;
+            self.len += 1;
+            slot
+        } else {
+            // full: the oldest pair's slot becomes the newest
+            let slot = self.head;
+            self.head = (self.head + 1) % m;
+            slot
+        };
+        if let (Some(ss), Some(ys), Some(r)) = (
+            self.s.get_mut(slot),
+            self.y.get_mut(slot),
+            self.rho.get_mut(slot),
+        ) {
+            ss.clone_from(s);
+            ys.clone_from(y);
+            *r = 1.0 / dr;
+        }
+        self.gamma = dr / rr;
+        Push::Stored
     }
 }
 
