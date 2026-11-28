@@ -7,9 +7,8 @@ SciPy 1.16.3 runs of `scipy.optimize.minimize(method="L-BFGS-B", bounds=None)`, 
 Tracking issue: tensor4all/tenferro-sci-rs#40.
 
 Produced on macOS arm64, Python 3.12, SciPy 1.16.3, NumPy 2.3.5, mpmath 1.3.0 (Accelerate BLAS, Apple libm); the
-versions and the date are in the `#` header lines of every file. Whether the CI platform (ubuntu-24.04, OpenBLAS)
-regenerates the same data under the `--check` contract below has **not** been run yet: the `minimize-reference` job
-is not extended in this stage.
+versions and the date are in the `#` header lines of every file. The CI platform (ubuntu-24.04, OpenBLAS) runs `--check` in the `minimize-reference` job; its first run found the
+platform dependence described below.
 
 ## The protocol: what exactly was called
 
@@ -80,13 +79,51 @@ function test stops the run. `../../lbfgs_termination.rs` replays the same scrip
 
 ## What `--check` compares
 
-`uv run scripts/gen_minimize_lbfgs_reference.py --check` regenerates everything in memory, compares and writes nothing
-(exit 1 with the first mismatches). Ids, options, calls, counts, terminations, messages, flags and every non-float
-column are compared **exactly**; every float within `max(1e-8 · |x|, 1e-12)` componentwise. The path of a run (counts,
-termination) is pinned exactly, the values loosely, because BLAS (the quadratics' matrix–vector products and the dot
-products inside SciPy's C code) sums in a platform-dependent order and the objective of Rosenbrock amplifies it along the
-valley; the replay tolerance below is derived from the committed values, not from the regenerated ones. The generator also
-asserts the coverage the tests rely on (every termination, a restart ending in each of three ways, the counting cases).
+`uv run scripts/gen_minimize_lbfgs_reference.py --check` regenerates everything in memory, compares and writes nothing.
+It prints a summary per file and column (mismatch counts, the largest absolute and relative difference, the largest ratio to
+the tolerance) and **every mismatch of an exact column in full**, with the list of runs whose path or options changed, so
+one CI log answers "did any run change its counts or termination on this platform". Exit 1 on any exact mismatch, any
+trajectory value outside its tolerance, or any committed cap that leaves the bounds on the running platform.
+
+Why this is needed: SciPy's trajectory differs at rounding level between platforms (Accelerate/Apple libm vs
+OpenBLAS/glibc: the quadratics' matrix–vector products and the dot products inside SciPy's C code sum in a different order,
+and the Rosenbrock problems amplify it). The first Ubuntu 24.04 run (PR #41, CI run 46132168523) showed 764 mismatches: the
+final `ginf` of the same run differs in the 7th digit, and the platform-dependent choices of the generator changed.
+
+| kind | columns | rule |
+|---|---|---|
+| exact | ids, options (`ftol`, `gtol`, `x0` as floats), `call`, `message`, `termination`, `nit`, `nfev`, `njev`, `nrequests`, `nskip`, `nrestart`, `nsearch`, `maxiter`, `maxiter_cap`, `replay`, the keys and the number of rows of every file, `accepted`, `search`, `ifun`, `col`, `iter`, `restart` | string equality. A difference means the path of a recorded run changed on that platform: the run leaves the parity set with a documented reason; the check is never loosened |
+| trajectory (SciPy's own values) | `evals.csv` `x`, `f`, `g`; `runs.csv` `x`, `f`, `ginf`; `searches.csv` `x_base`, `g_base`; `pairs.csv` `s`, `y` | within a tolerance **derived from the committed scales** (below) |
+| diagnostic | `x_scale`, `x_slack`, `d`, `d_exact`, `d_scale`, `gamma_*`, `stp0`, `dir_ratio`, `mirror_ratio`, `cap_first_bad`, `uncapped_nsearch`, `caps.csv` | not compared; the generator checks the regenerated ones against their bounds (a run, or a committed cap, outside the bounds on the running platform aborts with a message) |
+
+Tolerances of the trajectory columns (ε = 2⁻⁵², `C_X = 32`, the committed `x_scale`, `x_slack`; `L` = largest ‖y‖/‖s‖ over the
+recorded pairs of the run, n the dimension), as #39 derives `dphi_scale`:
+
+* `|Δxᵢ| ≤ C_X ε x_scaleᵢ + 2 x_slackᵢ`: the replay bound of two correct implementations; both SciPy runs deviate from the
+  exact direction by at most `x_slack`.
+* `|Δgᵢ| ≤ 4 L ‖tol_x‖₂ + 8 n ε (|gᵢ| + L ‖x‖₂)`: `g` is `L`-Lipschitz along the path (mean value theorem; `L` from the
+  secant ratios, the factor 4 is a margin for segments the other path took), plus the rounding of evaluating `g`.
+* `|Δf| ≤ ‖g‖₂ ‖tol_x‖₂ + 2 L ‖tol_x‖₂² + 8 n ε (|f| + ‖g‖₂ ‖x‖₂)`: first-order Taylor.
+* `pairs`: `s` differs by at most `2 max_k tol_x`, `y` by at most `2 max_k tol_g` (a difference of two iterates/gradients);
+  `runs.csv` `x`, `f`, `ginf` use the tolerance of the last accepted (last) evaluation of the run.
+
+**Caveat found while deriving them:** `x_scale` is the absolute-value recursion of the two-loop (Σ|terms| with every sign
+positive), which compounds along the recursion: on `default_rosen2` it grows from 1 to 4.6e15 over 36 iterations. A tolerance
+of `C_X ε x_scale` is therefore vacuous late in such runs (about 1 in x at the end of `default_rosen2`), for the replay as well
+as for this check, while it is tight early. The bounds are valid but pessimistic; a tighter forward-error measure (per
+operation `Σ|terms|` with the actual values, not the abs-recursion) would make both claims sharper. Reported to the
+maintainer, not changed here (it would change every recorded ratio).
+
+**Caps are platform-independent.** The cap of a run is the minimum over the checked platforms of the largest prefix of line
+searches inside the bounds: macOS arm64 (committed first) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (CI run 46132168523,
+values from its log) 7, 16, 15, 29, 26 for `m1_rosen5`, `m1_quad10_k1e2`, `m1_powell4`, `m3_rosen5`, `m3_quad10_k1e2`; hence 7,
+15, 15, 26, 26. The generator takes the caps, the `tight` gtols, the search picks and the counts-only live rows from fixed
+tables, so no platform-dependent choice remains; `--check` verifies that every committed cap is still inside the bounds on the
+running platform and fails only if it is not (never by choosing a different cap). The generating platform's first search
+outside the bounds is the `cap_first_bad` column (diagnostic).
+
+The generator also asserts the coverage the tests rely on (every termination, a restart ending in each of three ways, the
+counting cases).
 
 ## How the tolerance was derived
 
@@ -119,23 +156,25 @@ accumulates over the steps taken. For component `i` the test allows
   maximum ratio and the bound.
 * **Which runs are capped, and why the cap is data.** Five runs of the `memory` group (`maxcor` = 1, 3) leave the bounds
   after some line searches. Their `maxiter` is the `maxiter_cap` column of `runs.csv` (empty = `none` for every other run),
-  chosen as the **largest prefix inside the bounds**: the first line search whose mirror ratio exceeds `C_X / 4` or whose
-  SciPy direction error exceeds `C_DIR / 2` is search `maxiter_cap`, and the run stops before it (`MaxIter`). `caps.csv`
+  chosen as **the largest prefix inside the bounds on every checked platform** (see "What `--check` compares"): every line
+  search before the cap has mirror ratio ≤ `C_X / 4` and SciPy direction error ≤ `C_DIR / 2`, and the run stops there (`MaxIter`).
+  `cap_first_bad` is the first search outside the bounds on the generating platform (macOS); the cap is at or below it. `caps.csv`
   holds the per-search ratios of the *uncapped* run behind each capped row, so the claim is checkable.
 
-  | run | cap (searches) | of uncapped | largest ratio inside the cap (mirror) | search at the cap: mirror, direction | why it is the cap |
-  |---|---|---|---|---|---|
-  | `m1_rosen5` | 25 | 78 | 6.5 | 11.7, 0.9 | mirror ratio above `C_X / 4` |
-  | `m3_rosen5` | 26 | 58 | 7.7 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
-  | `m1_quad10_k1e2` | 15 | 73 | 0.9 | 0.9, 113.6 | SciPy's own direction error above `C_DIR / 2` |
-  | `m1_powell4` | 15 | 58 | 1.5 | 1.4, 438.5 | SciPy's own direction error above `C_DIR / 2` |
-  | `m3_quad10_k1e2` | 26 | 56 | 0.8 | 0.7, 65.8 | SciPy's own direction error above `C_DIR / 2` |
+  | run | cap (searches) | macOS first search outside | Ubuntu (CI) first search outside | of uncapped | macOS: search outside, mirror / direction | exceeds |
+  |---|---|---|---|---|---|---|
+  | `m1_rosen5` | 7 | 25 | 7 | 78 | 11.7, 0.9 | mirror ratio above `C_X / 4` |
+  | `m3_rosen5` | 26 | 26 | 29 | 58 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
+  | `m1_quad10_k1e2` | 15 | 15 | 16 | 73 | 0.9, 113.6 | SciPy's own direction error above `C_DIR / 2` |
+  | `m1_powell4` | 15 | 15 | 15 | 58 | 1.4, 438.5 | SciPy's own direction error above `C_DIR / 2` |
+  | `m3_quad10_k1e2` | 26 | 26 | 26 | 56 | 0.7, 65.8 | SciPy's own direction error above `C_DIR / 2` |
 
   The maintainer proposed that the per-search ratio should be monotone up to the cap. It is not (11–15 decreases before the
   cap in the Rosenbrock rows, 5–13 in the others; only the running maximum is monotone, which is a tautology), and the
   test does not pretend it is. `lbfgs_replay.rs::caps_cannot_hide_a_disagreement` checks the condition that does hold and
   that excludes "we stopped before it got worse": the replay agrees on every request up to the cap, every search before
-  the cap is inside the bounds, and the search at the cap is outside one of them. `only_a_recorded_cap_shortens_a_run`
+  the cap is inside the bounds, and the generating platform's first search outside the bounds (`cap_first_bad`) is at or after the
+  cap and really is outside one (a cap below it, as for `m1_rosen5`, is justified by the other platform). `only_a_recorded_cap_shortens_a_run`
   checks that no other run is shortened (the only other runs with a small `maxiter` are the tests of the iteration limit
   itself).
 * **Largest observed ratios on the uncapped runs** (mirror ratio, SciPy direction ratio; all runs of a group that have no

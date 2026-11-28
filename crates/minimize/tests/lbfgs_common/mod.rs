@@ -103,6 +103,8 @@ pub struct Run {
     pub replay: bool,
     /// The `maxiter` the generator imposed because the run leaves the bounds after that many line searches (data).
     pub maxiter_cap: Option<usize>,
+    /// First line search outside the bounds on the platform that generated the data (diagnostic, platform-dependent).
+    pub cap_first_bad: Option<usize>,
     pub nit: usize,
     pub nfev: usize,
     pub nskip: usize,
@@ -165,6 +167,7 @@ pub fn load_runs() -> Vec<Run> {
             termination: r["termination"].clone(),
             replay: r["replay"] == "1",
             maxiter_cap: (r["maxiter_cap"] != "none").then(|| int(r, "maxiter_cap")),
+            cap_first_bad: (r["cap_first_bad"] != "none").then(|| int(r, "cap_first_bad")),
             nit: int(r, "nit"),
             nfev: int(r, "nfev"),
             nskip: int(r, "nskip"),

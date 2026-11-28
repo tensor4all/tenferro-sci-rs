@@ -223,18 +223,22 @@ fn only_a_recorded_cap_shortens_a_run() {
 
 #[test]
 fn caps_cannot_hide_a_disagreement() {
-    // For each capped row: (1) the replay agrees on every request up to the cap (it is part of
-    // `replay_reproduces_every_requested_point_count_and_termination`, repeated here for the capped rows alone);
-    // (2) every line search before the cap is inside the bounds, per the recorded series of the uncapped run;
-    // (3) the cap is the largest such prefix: line search `cap` of the uncapped run is outside a bound (mirror ratio
-    // above C_X/4 or SciPy direction error above C_DIR/2), so a cap is never "we stopped before it got worse".
+    // The cap of a run is the minimum, over the platforms checked so far, of the largest prefix of line searches inside
+    // the bounds (macOS: 25, 15, 15, 26, 26; Ubuntu/OpenBLAS, CI run 46132168523: 7, 16, 15, 29, 26). For each capped row:
+    // (1) the replay agrees on every request up to the cap; (2) every recorded line search before the cap is inside the
+    // bounds (mirror ratio <= C_X/4, SciPy direction error <= C_DIR/2); (3) the generating platform's first search
+    // outside the bounds (`cap_first_bad`) is at or after the cap, and the recorded series really leaves a bound
+    // there. A cap lowered below that platform's largest prefix is thus visible (`cap < cap_first_bad`) and justified
+    // by another platform, not by "we stopped before it got worse".
     //
-    // Monotonicity of the per-search ratio, which the maintainer proposed, does NOT hold in the data: the ratio of a
-    // single line search goes up and down (several decreases before the cap in every capped run, printed below); only its running maximum is
-    // monotone, and that is a tautology. The largest-prefix condition is the honest replacement.
+    // Monotonicity of the per-search ratio does NOT hold in the data (it goes up and down: several decreases before the
+    // cap in every capped run, printed below); only its running maximum is monotone, which proves nothing.
     let (runs, evals, searches, caps) = (load_runs(), load_evals(), load_searches(), load_caps());
     for r in runs.iter().filter(|r| r.maxiter_cap.is_some()) {
         let cap = r.maxiter_cap.expect("filtered");
+        let bad = r
+            .cap_first_bad
+            .expect("a capped row records where the bounds were first exceeded");
         let rep = replay(r, &evals[&r.id], &searches[&r.id]);
         assert!(
             rep.path_errors.is_empty(),
@@ -250,8 +254,13 @@ fn caps_cannot_hide_a_disagreement() {
         );
         let series = &caps[&r.id];
         assert!(
-            series.len() > cap,
-            "{}: the uncapped series must continue past the cap",
+            cap <= bad,
+            "{}: the cap {cap} is beyond the first search outside the bounds ({bad})",
+            r.id
+        );
+        assert!(
+            series.len() > bad,
+            "{}: the uncapped series must continue past {bad}",
             r.id
         );
         for c in &series[..cap] {
@@ -264,10 +273,10 @@ fn caps_cannot_hide_a_disagreement() {
                 c.dir_ratio
             );
         }
-        let next = &series[cap];
+        let next = &series[bad];
         assert!(
             next.mirror_ratio > CAP_MIRROR_BOUND || next.dir_ratio > CAP_DIR_BOUND,
-            "{}: line search {cap} is inside the bounds, so the cap is not the largest prefix",
+            "{}: line search {bad} is inside the bounds, so cap_first_bad is wrong",
             r.id
         );
         let decreases = series[1..cap]
@@ -275,7 +284,7 @@ fn caps_cannot_hide_a_disagreement() {
             .filter(|w| w[1].mirror_ratio < w[0].mirror_ratio)
             .count();
         eprintln!(
-            "{}: cap {cap} of {} searches; prefix max {:.2}; search {cap}: mirror {:.2}, direction {:.2}; {decreases} decreases of the per-search ratio before the cap",
+            "{}: cap {cap} (first search outside the bounds on the generating platform: {bad}) of {} searches; prefix max {:.2}; search {bad}: mirror {:.2}, direction {:.2}; {decreases} decreases before the cap",
             r.id,
             series.len(),
             series[..cap].iter().map(|c| c.mirror_ratio).fold(0.0, f64::max),
