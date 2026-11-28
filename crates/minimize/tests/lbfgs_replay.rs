@@ -16,7 +16,7 @@ mod lbfgs_common;
 use lbfgs_common::*;
 
 fn replays() -> Vec<Replay> {
-    let runs = load_runs();
+    let runs: Vec<Run> = load_runs().into_iter().filter(|r| r.replay).collect();
     let evals = load_evals();
     let searches = load_searches();
     runs.iter()
@@ -283,4 +283,25 @@ fn caps_cannot_hide_a_disagreement() {
             next.dir_ratio
         );
     }
+}
+
+#[test]
+fn only_the_live_group_is_counts_only() {
+    // Data only. Rows outside the replay bounds (`replay` = 0) have no recorded evaluations; the live tests compare
+    // their counts with them. Nothing else may be skipped by the replay.
+    let evals = load_evals();
+    let skipped: Vec<String> = load_runs()
+        .into_iter()
+        .filter(|r| !r.replay)
+        .map(|r| {
+            assert_eq!(r.group, "live", "{}: only live rows are counts-only", r.id);
+            assert!(
+                !evals.contains_key(&r.id),
+                "{}: a counts-only row has no evaluations",
+                r.id
+            );
+            r.id
+        })
+        .collect();
+    assert!(!skipped.is_empty() && skipped.len() <= 2, "{skipped:?}");
 }

@@ -99,6 +99,8 @@ pub struct Run {
     /// The exact SciPy call (the protocol).
     pub call: String,
     pub termination: String,
+    /// 0 for a counts-only row: outside the replay bounds, no evaluations are recorded, the replay skips it.
+    pub replay: bool,
     /// The `maxiter` the generator imposed because the run leaves the bounds after that many line searches (data).
     pub maxiter_cap: Option<usize>,
     pub nit: usize,
@@ -161,6 +163,7 @@ pub fn load_runs() -> Vec<Run> {
             maxls: int(r, "maxls"),
             call: r["call"].clone(),
             termination: r["termination"].clone(),
+            replay: r["replay"] == "1",
             maxiter_cap: (r["maxiter_cap"] != "none").then(|| int(r, "maxiter_cap")),
             nit: int(r, "nit"),
             nfev: int(r, "nfev"),

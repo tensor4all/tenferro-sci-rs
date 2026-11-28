@@ -32,11 +32,42 @@ fn dist(a: &[f64], b: &[f64]) -> f64 {
     norm2(&a.iter().zip(b).map(|(x, y)| x - y).collect::<Vec<_>>())
 }
 
-fn scipy_counts(id: &str) -> Option<(usize, usize)> {
-    load_runs()
-        .iter()
+/// SciPy's `(nit, nfev)` of the recorded run `live_<problem>`: the same call as the live test (`maxcor = 10`,
+/// `gtol = 1e-8`, `ftol = 0`, SciPy's other defaults), asserted here so that a missing run is a data-coverage failure.
+fn scipy_counts(problem: &str) -> (usize, usize) {
+    let id = format!("live_{problem}");
+    let r = load_runs()
+        .into_iter()
         .find(|r| r.id == id)
-        .map(|r| (r.nit, r.nfev))
+        .unwrap_or_else(|| panic!("data coverage: no recorded SciPy run {id}"));
+    assert!(
+        r.maxcor == 10
+            && r.gtol == 1e-8
+            && r.ftol == 0.0
+            && r.maxiter == 15000
+            && r.maxfun == 15000
+            && r.maxls == 20,
+        "{id}: the recorded options differ from the live test's"
+    );
+    (r.nit, r.nfev)
+}
+
+/// SciPy's `(nit, nfev)` of a recorded run with SciPy's default options (the same call as `LbfgsConfig::scipy_default()`).
+fn recorded_default_counts(id: &str) -> (usize, usize) {
+    let r = load_runs()
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap_or_else(|| panic!("data coverage: no recorded SciPy run {id}"));
+    assert!(
+        r.maxcor == 10
+            && r.gtol == 1e-5
+            && r.ftol == 2.220446049250313e-9
+            && r.maxiter == 15000
+            && r.maxfun == 15000
+            && r.maxls == 20,
+        "{id}: not a default-options run"
+    );
+    (r.nit, r.nfev)
 }
 
 #[test]
@@ -70,11 +101,11 @@ fn quadratics_reach_the_minimizer_within_the_gradient_bound() {
             "{id}: f = {:e}",
             rep.f
         );
-        let scipy =
-            scipy_counts(&format!("tight_{id}")).or_else(|| scipy_counts(&format!("default_{id}")));
         eprintln!(
-            "{id}: rust nit {} nfev {}; scipy (recorded, gtol differs) {scipy:?}",
-            rep.iterations, rep.evaluations
+            "{id}: rust nit {} nfev {}; scipy (same options) {:?}",
+            rep.iterations,
+            rep.evaluations,
+            scipy_counts(id)
         );
     }
 }
@@ -82,9 +113,9 @@ fn quadratics_reach_the_minimizer_within_the_gradient_bound() {
 #[test]
 fn rosenbrock_reaches_the_minimizer() {
     for (x0, lambda, id) in [
-        (vec![-1.2, 1.0], 0.399, "default_rosen2"),
-        (vec![3.0, -2.0], 0.399, "default_rosen2_far"),
-        (vec![-1.2, 1.0, -1.2, 1.0, -1.2], 0.497, "default_rosen5"),
+        (vec![-1.2, 1.0], 0.399, "rosen2"),
+        (vec![3.0, -2.0], 0.399, "rosen2_far"),
+        (vec![-1.2, 1.0, -1.2, 1.0, -1.2], 0.497, "rosen5"),
     ] {
         let gtol = 1e-8;
         let rep = minimize::minimize(rosen, x0.clone(), &tight(gtol), &mut ());
@@ -128,7 +159,7 @@ fn beale_reaches_its_minimizer() {
         "beale: rust nit {} nfev {}; scipy {:?}",
         rep.iterations,
         rep.evaluations,
-        scipy_counts("default_beale")
+        scipy_counts("beale")
     );
 }
 
@@ -153,7 +184,7 @@ fn the_scipy_default_configuration_stops_on_gradient_or_function_tolerance() {
         rep.termination,
         rep.iterations,
         rep.evaluations,
-        scipy_counts("default_rosen5")
+        recorded_default_counts("default_rosen5")
     );
 }
 
