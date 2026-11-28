@@ -208,7 +208,7 @@ fn data_is_consistent() {
             assert_eq!((r.n_rho1000, r.n_ys_nonpos), (0, 0), "{}", r.id);
             assert!(r.hess.is_some(), "{}: parity runs record the final H", r.id);
             // the calibration is data: inside the comparison prefix the mirror's ratio stays a quarter of C, and the
-            // prefix covers at least three searches (or the whole run)
+            // prefix is not empty (it keeps PREFIX_MARGIN = 2 searches below the first search outside the bound)
             assert!(
                 r.x_ratio_max <= REPLAY_C / 4.0,
                 "{}: ratio maximum {}",
@@ -217,7 +217,7 @@ fn data_is_consistent() {
             );
             let cmp = r.cmp_nsearch.expect("cmp_nsearch");
             assert!(
-                cmp <= r.n_ls && cmp >= r.n_ls.min(3),
+                cmp <= r.n_ls && cmp >= r.n_ls.min(1),
                 "{}: prefix {cmp} of {}",
                 r.id,
                 r.n_ls

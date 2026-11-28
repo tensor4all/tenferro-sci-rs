@@ -100,14 +100,27 @@ asserts `cache_hits == 0` for every parity run (all have 0).
    **`C = 32` is calibrated, not derived from `n` or the update.** An independent float64 mirror of the algorithm (the generator's
    `mirror`: SciPy's recorded `f`, `g`, a plain-Python BFGS in the symmetric update form, summing left to right where BLAS does
    not, the step from SciPy's own `scalar_search_wolfe1`) measures, per line search, the largest `(|Δx| − 2 x_slack)/(ε x_scale)`.
-   The **comparison prefix** `cmp_nsearch` of a run is the number of leading line searches for which that ratio stays at most
-   `C / 4 = 8`; the factor 4 is the margin for an implementation that rounds differently from the mirror. If an implementation
+   The **comparison prefix** `cmp_nsearch` of a run is the number of leading line searches kept: the first search whose ratio exceeds
+   `C / 4 = 8` is the *first-outside index* (`cmp_first_outside`, none if no search is outside), and the committed prefix is
+   **that index minus `PREFIX_MARGIN = 2`, never longer** (the rule of #41's L-BFGS data: the same image and code gave a prefix of 15
+   searches on one GitHub runner and 14 on another, so a prefix at margin 0 is fragile). Searches are numbered from 0; a prefix
+   of `n` keeps searches `0 … n−1`. The factor 4 of `C / 4` is the margin for an implementation that rounds differently from the
+   mirror. Only macOS arm64 has been observed for BFGS: **the first CI run adds Linux** and may only shorten a prefix (the
+   committed value is the minimum over the platforms observed, minus the margin). If an implementation
    exceeds the bound, that is a finding to explain, not a reason to raise `C`: the prefix is shortened instead.
 
    The bound models rounding, not its *amplification* by the problem: a perturbation of an iterate moves the line search and
-   `H`. So the prefix is where the claim is meaningful: 11 of the 16 parity runs are covered in full; `rosen2_b` 3 of 19,
-   `rosen2_c` 7 of 38, `rosen5` 3 of 49, `powell` 6 of 35, `quad10_k1e4` 5 of 15 searches. Observed maxima inside the prefixes
-   (`runs.csv` `x_ratio_max`): 7.93 (`powell`), 6.53 (`rosen2_b`), 4.99 (`rosen2_a` and three runs of the same path), 3.12, 2.98, below 1.4 elsewhere. The
+   `H`. So the prefix is where the claim is meaningful: 11 of the 16 parity runs are covered in full (no search outside); the others, with first-outside index and margin 2:
+
+   | run | prefix | searches | first outside |
+   |---|---|---|---|
+   | `rosen2_b` | 1 | 19 | 3 |
+   | `rosen2_c` | 5 | 38 | 7 |
+   | `rosen5` | 1 | 49 | 3 |
+   | `powell` | 4 | 35 | 6 |
+   | `quad10_k1e4` | 3 | 15 | 5 |
+
+   Observed maxima inside the prefixes (`runs.csv` `x_ratio_max`): 4.99 (`rosen2_a` and three runs of the same path), below 1.4 elsewhere. The
    mirror's direction against the exact one reaches 9·10³ ε d_scale on `quad10_k1e4` (`dir_ratio_max`, a diagnostic of the same
    amplification; SciPy's own is in `dir_ratio_scipy`). Replay failure messages print the observed maximum next to `C`.
 
@@ -136,14 +149,14 @@ asserts `cache_hits == 0` for every parity run (all have 0).
 `uv run scripts/gen_minimize_bfgs_reference.py --check` regenerates everything in memory, compares and writes nothing. It prints
 every mismatch of an exact column in full (with the list of runs whose path changed), a summary per file and column (values
 compared, outside, largest absolute difference, observed maximum relative difference next to the constant and the margin, rows
-skipped) and, under "bounds on this platform", any committed comparison prefix that is longer than the regenerated one; every
+skipped) the margin of every prefix ("margins on this platform", smallest first) and, under "bounds on this platform", any prefix whose margin is below 2; every
 comparison runs before the verdict. Exit 1 on any exact mismatch, trajectory value outside the constant, or bound violation.
 
 | kind | columns | rule |
 |---|---|---|
 | exact | every column not listed below: ids, `group`, `problem`, options, `scipy_call`, `status`, `message`, `nit`, `nfev`, `njev`, `n_ls`, `wolfe2_*`, `wolfe1_fail`, `cache_hits`, `n_updates`, `n_rho1000`, `n_ys_nonpos`, `termination`, `parity`, `repro`, `search`, `ev_start`, `ev_end`, `applied`, `h_compared`, the keys and number of rows | string equality; a difference means the path of a recorded run changed on that platform: the run leaves `parity` with a documented reason, the check is never loosened |
 | trajectory (SciPy's floats) | `evals` `x f g`; `iters` `x f g p alpha ys d_exact`; `runs` `final_x final_f gnorm_inf` (whole run in the prefix); `hess_final` `h_scipy h_exact` (`h_compared`); `problems` `A b x_star f_star mu` | `SCIPY_REPRO_RTOL` per component with the run scale, on the comparison prefix |
-| diagnostic | `x_scale`, `x_slack`, `x_ratio`, `d_scale`, `dir_ratio_*`, `ratio*`, `h_scale`, `x_ratio_max`, `dir_ratio_max`, `cmp_nsearch` (checked: not shorter on the running platform), `note` | not compared; the generator re-measures them and refuses a prefix shorter than 3 searches |
+| diagnostic | `x_scale`, `x_slack`, `x_ratio`, `d_scale`, `dir_ratio_*`, `ratio*`, `h_scale`, `x_ratio_max`, `dir_ratio_max`, `cmp_first_outside`, `cmp_nsearch` (checked: first-outside index on the running platform minus the committed prefix must be at least `PREFIX_MARGIN`), `note` | not compared; the generator re-measures them and refuses an empty prefix |
 | class runs (`repro = class`) | `w2_neggrad`, `w2_l1`, `w2_noisy`, `w2_pert`, `nan_region`, `inf_region` | only `id group problem n x0 options termination parity repro`: their counts depend on SciPy's evaluation cache and on the last bits of the arithmetic (`cache_hits`), which differ between platforms. `w2_unbounded` (exact arithmetic) is a full `exact` run |
 
 The check is wired into the `minimize-reference` job of `.github/workflows/checks.yml`.
