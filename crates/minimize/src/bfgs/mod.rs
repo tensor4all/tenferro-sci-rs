@@ -23,6 +23,22 @@
 //! runs diverge for good, and the recorded case `w2_unbounded` pins where. The data in
 //! `tests/data/bfgs/README.md` records, per run, whether the fallback fired.
 //!
+//! # Deliberate differences from SciPy, each with its test
+//!
+//! - `maxiter = 0` is refused ([`ConfigError::ZeroMaxIter`]); SciPy accepts it. Test:
+//!   `bfgs_config_errors::departure_zero_maxiter_is_refused`.
+//! - A NaN or infinite `gtol`, `xrtol`, `c1` or `c2` is refused ([`ConfigError::NonFinite`]); SciPy compares them as "not
+//!   negative". Test: `bfgs_config_errors::departure_non_finite_tolerances_are_refused`.
+//! - A negative `gtol` or `xrtol` is refused; SciPy runs with it. Test:
+//!   `bfgs_config_errors::departure_negative_tolerances_are_refused`.
+//! - A non-finite `f` or gradient ends the run with [`Termination::NonFiniteValue`] at the last finite iterate (the #38
+//!   rule); SciPy keeps iterating. Tests: `bfgs_termination::non_finite_*`.
+//! - No `wolfe2` fallback: [`Termination::LineSearchFailed`], see above. Test:
+//!   `bfgs_termination::line_search_failed_replays_scipy_fallback_case`.
+//!
+//! The algorithm is selected by the configuration type: `minimize::minimize(f, x0, &BfgsConfig, ctx)` runs this module's
+//! [`minimize`] (see [`crate::Optimizer`]).
+//!
 //! **Red stage:** the types and the Vec-based plumbing exist; the algorithm is not written, so
 //! [`BfgsState::ask`] ends every run at once.
 

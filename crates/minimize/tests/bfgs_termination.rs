@@ -52,7 +52,7 @@ fn grad_tol_at_the_start_takes_one_evaluation_and_no_step() {
     let t = drive(&cfg(1e-5, 0.0, 600), &x0, &*obj, 10);
     assert_eq!(t.termination, Termination::GradTol);
     assert_eq!(t.evals.len(), 1, "one evaluation, at x0");
-    assert_eq!((t.state.iterations(), t.state.nfev()), (0, 1));
+    assert_eq!((t.state.iterations(), t.state.evaluations()), (0, 1));
     assert_eq!(t.state.x(), &x0.to_vec());
     assert_eq!(t.state.f(), 0.0);
     // SciPy: the loop is never entered, H stays the identity
@@ -127,7 +127,7 @@ fn max_iter_stops_after_exactly_maxiter_accepted_iterations() {
         assert_eq!(t.state.iterations(), maxiter);
         let (f0, _) = rosenbrock(&x0);
         assert!(t.state.f() < f0, "the accepted iterate decreased f");
-        assert!(norm_inf(t.state.g()) > 1e-5, "not converged");
+        assert!(norm_inf(t.state.grad()) > 1e-5, "not converged");
         // the update of the last allowed iteration was applied (SciPy updates before testing `k < maxiter`)
         assert_ne!(
             matrix_of(&t.state),
@@ -151,7 +151,7 @@ fn max_iter_wins_over_grad_tol_on_the_last_allowed_iteration() {
     assert_eq!(capped.termination, Termination::MaxIter);
     assert_eq!(capped.state.iterations(), nit);
     assert!(
-        norm_inf(capped.state.g()) <= 1e-5,
+        norm_inf(capped.state.grad()) <= 1e-5,
         "the iterate satisfies gtol, the status is MaxIter anyway"
     );
     // one iteration more and the gradient test wins
@@ -202,7 +202,7 @@ fn line_search_failed_replays_scipy_fallback_case() {
         n0,
         "the state must stop where SciPy's wolfe1 gives up"
     );
-    assert_eq!(r.state.nfev(), n0);
+    assert_eq!(r.state.evaluations(), n0);
     assert_eq!(r.state.iterations(), 0, "no step was taken");
     assert_eq!(
         r.state.x(),
@@ -210,7 +210,7 @@ fn line_search_failed_replays_scipy_fallback_case() {
         "the reported iterate is the starting point"
     );
     assert_eq!(r.state.f(), run.evals[0].f);
-    assert_eq!(r.state.g(), &run.evals[0].g);
+    assert_eq!(r.state.grad(), &run.evals[0].g);
     assert!(matches!(
         r.state.ask(),
         Step::Converged(Termination::LineSearchFailed)
@@ -241,7 +241,7 @@ fn line_search_failed_live_on_an_unbounded_objective() {
     );
     assert_eq!(t.termination, Termination::LineSearchFailed);
     assert_eq!(t.evals.len(), 101, "x0 and the 100 trials of wolfe1");
-    assert_eq!((t.state.iterations(), t.state.nfev()), (0, 101));
+    assert_eq!((t.state.iterations(), t.state.evaluations()), (0, 101));
     assert_eq!(t.state.x(), &x0.to_vec());
 }
 
@@ -292,14 +292,14 @@ fn check_non_finite_stops_at_the_last_finite_iterate(problem: &str) {
     let snap = t.snaps.last().expect("snapshots");
     assert_eq!(t.state.x(), &snap.x);
     assert_eq!(t.state.f(), snap.f);
-    assert!(t.state.f().is_finite() && t.state.g().iter().all(|v| v.is_finite()));
+    assert!(t.state.f().is_finite() && t.state.grad().iter().all(|v| v.is_finite()));
     assert!(
         t.state.x()[0] <= 0.5,
         "{problem}: x is not in the non-finite region"
     );
     let (fx, gx) = objective(problem)(t.state.x());
     assert_eq!(
-        (t.state.f(), t.state.g()),
+        (t.state.f(), t.state.grad()),
         (fx, &gx),
         "{problem}: (f, g) belong to x"
     );
@@ -330,7 +330,7 @@ fn non_finite_gradient_with_finite_value_stops() {
     };
     let t = drive(&cfg(1e-5, 0.0, 400), &x0, &obj, 1000);
     assert_eq!(t.termination, Termination::NonFiniteValue);
-    assert!(t.state.g().iter().all(|v| v.is_finite()));
+    assert!(t.state.grad().iter().all(|v| v.is_finite()));
     assert!(t.state.x()[0] <= 0.5);
 }
 
@@ -340,7 +340,7 @@ fn non_finite_start_is_refused_after_one_evaluation() {
     let t = drive(&cfg(1e-5, 0.0, 400), &[1.0, 2.0], &obj, 10);
     assert_eq!(t.termination, Termination::NonFiniteValue);
     assert_eq!(t.evals.len(), 1);
-    assert_eq!((t.state.iterations(), t.state.nfev()), (0, 1));
+    assert_eq!((t.state.iterations(), t.state.evaluations()), (0, 1));
     assert_eq!(t.state.x(), &vec![1.0, 2.0]);
 }
 

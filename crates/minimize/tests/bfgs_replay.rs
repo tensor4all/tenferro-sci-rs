@@ -75,10 +75,10 @@ fn check_run(id: &str) {
             run.nfev
         ));
     }
-    if rep.state.nfev() != run.nfev {
+    if rep.state.evaluations() != run.nfev {
         errors.push(format!(
-            "state.nfev() = {}, SciPy {}",
-            rep.state.nfev(),
+            "state.evaluations() = {}, SciPy {}",
+            rep.state.evaluations(),
             run.nfev
         ));
     }

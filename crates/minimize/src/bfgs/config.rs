@@ -10,6 +10,15 @@
 //! - `maxiter = 0` is refused ([`ConfigError::ZeroMaxIter`]); SciPy accepts it and reports
 //!   "maximum number of iterations" after one evaluation, even at a stationary point.
 
+use crate::linesearch::MoreThuenteConfig;
+
+/// SciPy's defaults, validated when the crate is compiled: a wrong constant is a build error, so
+/// [`BfgsConfig::scipy_default`] cannot fail at run time (as `LBFGSB_LINE_SEARCH` in `lbfgs`).
+const SCIPY_DEFAULTS: BfgsConfig = match BfgsConfig::new(1e-5, 0.0, 1e-4, 0.9, 200) {
+    Ok(c) => c,
+    Err(_) => panic!("SciPy's BFGS defaults are valid"),
+};
+
 /// Why a [`BfgsConfig`] was refused.
 ///
 /// A configuration with several violations reports the first of them in the order of the variants.
@@ -66,6 +75,7 @@ pub struct BfgsConfig {
     c1: f64,
     c2: f64,
     maxiter: usize,
+    ls: MoreThuenteConfig,
 }
 
 impl BfgsConfig {
@@ -86,7 +96,7 @@ impl BfgsConfig {
     /// assert!(BfgsConfig::new(0.0, 1e-8, 1e-4, 0.9, 400).is_ok());
     /// assert_eq!(BfgsConfig::new(1e-5, 0.0, 0.9, 0.9, 400), Err(ConfigError::InvalidWolfeParameters));
     /// ```
-    pub fn new(
+    pub const fn new(
         gtol: f64,
         xrtol: f64,
         c1: f64,
@@ -108,12 +118,19 @@ impl BfgsConfig {
         if maxiter == 0 {
             return Err(ConfigError::ZeroMaxIter);
         }
+        // `_line_search_wolfe12(..., amin=1e-100, amax=1e100, c1, c2)`: `wolfe1` with `xtol = 1e-14`. With
+        // 0 < c1 < c2 < 1 checked above this cannot fail; the arm exists because a `const fn` cannot `unwrap`.
+        let ls = match MoreThuenteConfig::new(c1, c2, 1e-14, 1e-100, 1e100) {
+            Ok(ls) => ls,
+            Err(_) => return Err(ConfigError::InvalidWolfeParameters),
+        };
         Ok(Self {
             gtol,
             xrtol,
             c1,
             c2,
             maxiter,
+            ls,
         })
     }
 
@@ -128,14 +145,10 @@ impl BfgsConfig {
     /// assert_eq!(BfgsConfig::scipy_default(2).maxiter(), 400);
     /// assert_eq!(BfgsConfig::scipy_default(0).maxiter(), 200);
     /// ```
-    pub fn scipy_default(n: usize) -> Self {
-        Self {
-            gtol: 1e-5,
-            xrtol: 0.0,
-            c1: 1e-4,
-            c2: 0.9,
-            maxiter: 200 * n.max(1),
-        }
+    pub const fn scipy_default(n: usize) -> Self {
+        let mut c = SCIPY_DEFAULTS;
+        c.maxiter = 200 * if n == 0 { 1 } else { n };
+        c
     }
 
     /// The gradient tolerance, in the ∞-norm.
@@ -196,5 +209,19 @@ impl BfgsConfig {
     /// ```
     pub fn maxiter(&self) -> usize {
         self.maxiter
+    }
+
+    /// The Moré–Thuente configuration of the `wolfe1` line search these options define
+    /// (`ftol = c1`, `gtol = c2`, `xtol = 1e-14`, `stpmin = 1e-100`, `stpmax = 1e100`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use minimize::bfgs::BfgsConfig;
+    /// let ls = *BfgsConfig::scipy_default(1).line_search();
+    /// assert_eq!((ls.ftol(), ls.gtol(), ls.xtol()), (1e-4, 0.9, 1e-14));
+    /// ```
+    pub fn line_search(&self) -> &MoreThuenteConfig {
+        &self.ls
     }
 }

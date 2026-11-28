@@ -80,7 +80,7 @@ pub enum Step<'a, V> {
 /// let cfg = BfgsConfig::scipy_default(2);
 /// let state = BfgsState::new(&cfg, &mut (), vec![1.0, -1.0]);
 /// assert_eq!(state.x(), &vec![1.0, -1.0]);
-/// assert_eq!((state.iterations(), state.nfev()), (0, 0));
+/// assert_eq!((state.iterations(), state.evaluations()), (0, 0));
 /// assert_eq!(state.inverse_hessian().nrows(), 2);
 /// ```
 #[derive(Clone, Debug)]
@@ -183,9 +183,9 @@ impl<V: Vector + AsRef<[f64]> + AsMut<[f64]>> BfgsState<V> {
     /// ```
     /// # use minimize::bfgs::{BfgsConfig, BfgsState};
     /// let state = BfgsState::new(&BfgsConfig::scipy_default(2), &mut (), vec![3.0, 4.0]);
-    /// assert_eq!(state.g().len(), 2);
+    /// assert_eq!(state.grad().len(), 2);
     /// ```
-    pub fn g(&self) -> &V {
+    pub fn grad(&self) -> &V {
         &self.g
     }
 
@@ -222,9 +222,9 @@ impl<V: Vector + AsRef<[f64]> + AsMut<[f64]>> BfgsState<V> {
     /// ```
     /// # use minimize::bfgs::{BfgsConfig, BfgsState};
     /// let state = BfgsState::new(&BfgsConfig::scipy_default(1), &mut (), vec![3.0]);
-    /// assert_eq!(state.nfev(), 0);
+    /// assert_eq!(state.evaluations(), 0);
     /// ```
-    pub fn nfev(&self) -> usize {
+    pub fn evaluations(&self) -> usize {
         self.nfev
     }
 

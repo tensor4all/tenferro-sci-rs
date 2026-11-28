@@ -15,7 +15,7 @@ use crate::Vector;
 ///
 /// let cfg = BfgsConfig::scipy_default(1);
 /// let rep = minimize(|_, x: &Vec<f64>, g: &mut Vec<f64>| { g[0] = x[0]; 0.5 * x[0] * x[0] }, vec![0.0], &cfg, &mut ());
-/// assert_eq!((rep.iterations, rep.nfev), (0, 1));
+/// assert_eq!((rep.iterations, rep.evaluations), (0, 1));
 /// ```
 #[derive(Clone, Debug)]
 pub struct Report<V> {
@@ -24,13 +24,13 @@ pub struct Report<V> {
     /// `f` at `x`.
     pub f: f64,
     /// The gradient at `x`.
-    pub g: V,
+    pub grad: V,
     /// Why the run ended.
     pub termination: Termination,
     /// Accepted iterations (SciPy's `nit`).
     pub iterations: usize,
     /// Objective evaluations (SciPy's `nfev`).
-    pub nfev: usize,
+    pub evaluations: usize,
 }
 
 /// Minimizes with BFGS: evaluates `f(ctx, x, &mut grad) -> value` wherever the state asks.
@@ -73,9 +73,9 @@ where
     Report {
         x: state.x().clone(),
         f: state.f(),
-        g: state.g().clone(),
+        grad: state.grad().clone(),
         termination,
         iterations: state.iterations(),
-        nfev: state.nfev(),
+        evaluations: state.evaluations(),
     }
 }

@@ -150,3 +150,54 @@ fn error_messages_name_the_violation() {
         .to_string()
         .contains("0 < c1 < c2 < 1"));
 }
+
+// ---- the departures from SciPy, one named test each (listed in the `minimize::bfgs` docs) ------------------------
+
+/// Departure 1: `maxiter = 0` is refused; SciPy accepts it and reports "maximum number of iterations".
+#[test]
+fn departure_zero_maxiter_is_refused() {
+    assert_eq!(with(1e-5, 0.0, 1e-4, 0.9, 0), Err(ConfigError::ZeroMaxIter));
+    assert!(with(1e-5, 0.0, 1e-4, 0.9, 1).is_ok());
+}
+
+/// Departure 2: NaN or infinite `gtol`, `xrtol`, `c1`, `c2` are refused; SciPy compares them as "not negative".
+#[test]
+fn departure_non_finite_tolerances_are_refused() {
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(with(bad, 0.0, 1e-4, 0.9, 10), Err(ConfigError::NonFinite));
+        assert_eq!(with(1e-5, bad, 1e-4, 0.9, 10), Err(ConfigError::NonFinite));
+        assert_eq!(with(1e-5, 0.0, bad, 0.9, 10), Err(ConfigError::NonFinite));
+        assert_eq!(with(1e-5, 0.0, 1e-4, bad, 10), Err(ConfigError::NonFinite));
+    }
+}
+
+/// Departure 3: a negative `gtol` or `xrtol` is refused; SciPy runs with it (the gradient test never fires).
+#[test]
+fn departure_negative_tolerances_are_refused() {
+    assert_eq!(
+        with(-1e-12, 0.0, 1e-4, 0.9, 10),
+        Err(ConfigError::NegativeGtol)
+    );
+    assert_eq!(
+        with(1e-5, -1e-12, 1e-4, 0.9, 10),
+        Err(ConfigError::NegativeXrtol)
+    );
+}
+
+/// The defaults cannot fail: they are a `const`, validated when the crate is built (as `lbfgs`'s line search),
+/// and carry the `wolfe1` line search of `_line_search_wolfe12`.
+#[test]
+fn scipy_default_is_a_const_and_carries_the_wolfe1_line_search() {
+    const D: BfgsConfig = BfgsConfig::scipy_default(3);
+    assert_eq!(D.maxiter(), 600);
+    let ls = D.line_search();
+    assert_eq!(
+        (ls.ftol(), ls.gtol(), ls.xtol(), ls.stpmin(), ls.stpmax()),
+        (1e-4, 0.9, 1e-14, 1e-100, 1e100)
+    );
+    let custom = with(1e-8, 1e-9, 0.01, 0.5, 7).expect("valid");
+    assert_eq!(
+        (custom.line_search().ftol(), custom.line_search().gtol()),
+        (0.01, 0.5)
+    );
+}

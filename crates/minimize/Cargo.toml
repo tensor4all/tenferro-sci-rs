@@ -1,6 +1,6 @@
 [package]
 name = "minimize"
-description = "Unconstrained L-BFGS (the bounds=None path of SciPy's L-BFGS-B) and the Moré–Thuente strong-Wolfe line search, in pure Rust"
+description = "Unconstrained L-BFGS (the bounds=None path of SciPy's L-BFGS-B), BFGS and the Moré–Thuente strong-Wolfe line search, in pure Rust"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

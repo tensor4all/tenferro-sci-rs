@@ -507,10 +507,10 @@ pub fn matrix_of(state: &BfgsState<Vec<f64>>) -> Vec<f64> {
 fn snap(state: &BfgsState<Vec<f64>>) -> Snap {
     Snap {
         iterations: state.iterations(),
-        nfev: state.nfev(),
+        nfev: state.evaluations(),
         x: state.x().clone(),
         f: state.f(),
-        g: state.g().clone(),
+        g: state.grad().clone(),
         p: state.direction().clone(),
         h: matrix_of(state),
         running: matches!(state.ask(), Step::Evaluate { .. }),

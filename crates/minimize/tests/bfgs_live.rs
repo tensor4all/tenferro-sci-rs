@@ -46,7 +46,7 @@ fn live(id: &str) -> (Run, Trace) {
     println!(
         "{id:<14} Rust: nit {:>3} nfev {:>3} {:?}   SciPy: nit {:>3} nfev {:>3} status {} ({})",
         trace.state.iterations(),
-        trace.state.nfev(),
+        trace.state.evaluations(),
         trace.termination,
         run.nit,
         run.nfev,
@@ -65,12 +65,12 @@ fn check_solution(id: &str) {
     assert!(!trace.evals.is_empty(), "{id}: nothing was evaluated");
     assert_eq!(trace.termination, Termination::GradTol, "{id}");
     let x = trace.state.x().clone();
-    let g = trace.state.g().clone();
+    let g = trace.state.grad().clone();
     // the reported gradient is the objective's gradient at the reported point
     let (f_check, g_check) = objective(&run.problem)(&x);
     assert_eq!(
         &g, &g_check,
-        "{id}: state.g() is not the gradient at state.x()"
+        "{id}: state.grad() is not the gradient at state.x()"
     );
     assert_eq!(
         trace.state.f(),
@@ -120,11 +120,11 @@ fn check_solution(id: &str) {
     assert!(trace.state.iterations() <= run.maxiter, "{id}");
     assert_eq!(
         trace.evals.len(),
-        trace.state.nfev(),
+        trace.state.evaluations(),
         "{id}: nfev counts the evaluations told"
     );
     assert!(
-        trace.state.nfev() > trace.state.iterations(),
+        trace.state.evaluations() > trace.state.iterations(),
         "{id}: every iteration costs an evaluation"
     );
 }
@@ -154,7 +154,11 @@ fn quadratic_probe_finishes_in_n_iterations() {
     assert_eq!(trace.termination, Termination::GradTol);
     assert_eq!(trace.state.iterations(), 5, "n = 5 iterations");
     assert_eq!(trace.state.iterations(), run.nit);
-    assert_eq!(trace.state.nfev(), run.nfev, "SciPy's 11 evaluations");
+    assert_eq!(
+        trace.state.evaluations(),
+        run.nfev,
+        "SciPy's 11 evaluations"
+    );
 }
 
 /// The driver is a thin loop over ask and tell: same iterations, evaluations and result.
@@ -177,12 +181,12 @@ fn driver_matches_ask_tell() {
     assert!(!trace.evals.is_empty());
     assert_eq!(rep.termination, trace.termination);
     assert_eq!(
-        (rep.iterations, rep.nfev),
-        (trace.state.iterations(), trace.state.nfev())
+        (rep.iterations, rep.evaluations),
+        (trace.state.iterations(), trace.state.evaluations())
     );
     assert_eq!(&rep.x, trace.state.x());
     assert_eq!(rep.f, trace.state.f());
-    assert_eq!(&rep.g, trace.state.g());
+    assert_eq!(&rep.grad, trace.state.grad());
 }
 
 /// The default configuration for the problem dimension runs and converges: no option needs tuning.
