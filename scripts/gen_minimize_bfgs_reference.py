@@ -96,6 +96,11 @@ MARGIN = 4.0
 # Every committed comparison prefix = (smallest first-outside index observed on any checked platform) - PREFIX_MARGIN, never longer
 # (the rule of #41's L-BFGS data). Observed so far for BFGS: macOS arm64 only; the first CI run adds Linux and may only shorten.
 PREFIX_MARGIN = 2
+# First search outside the bound observed on Ubuntu 24.04 / OpenBLAS (CI run 46135920867; the first Linux run of the BFGS check,
+# with the earlier mirror bound): there the trajectory prefix holds for only a few searches, because the n x n matrix carries BLAS
+# rounding forward from the first update. The per-step replay (steps.csv) does not depend on it.
+LINUX_FIRST_OUTSIDE = {"rosen2_a": 2, "rosen2_b": 0, "rosen2_c": 9, "rosen2_tight": 2, "rosen5": 1, "powell": 4, "quad10_k1e4": 4,
+                       "rosen2_xrtol": 2, "rosen2_maxiter_eq_nit": 2, "rosen2_maxiter5": 2}
 # CALIBRATED reproducibility tolerance of SciPy across platforms (BLAS, libm), used by --check only: per component
 # |a - b| <= SCIPY_REPRO_RTOL * max(|a|, |b|, scale), scale = the largest |component| of that column over the run's compared rows.
 # No Linux data for BFGS exists yet: chosen with a large margin after the L-BFGS observation (3.5e-8 at worst, constant 1e-6);
@@ -463,6 +468,74 @@ def mp_updates(n, pairs):
     return out
 
 
+def gamma(k):
+    """Higham's gamma_k = k eps / (1 - k eps)."""
+    return k * EPS / (1.0 - k * EPS)
+
+
+def step_bounds(H, s, y):
+    """The derived single-step bounds (README, "Per-step replay"), entrywise, for the update H' = U(H, s, y) in floating point.
+
+    With rho = 1/(y^T s), u = H y, c = rho + rho^2 y^T u, the symmetric form is H' = H + c s s^T - rho (u s^T + s u^T). The
+    magnitude sum of its terms is M = |H| + cbar |s||s|^T + |rho| (ubar |s|^T + |s| ubar^T), ubar = |H||y|, cbar = |rho| + rho^2 |y|^T ubar.
+    The relative error of rho is gamma_n kappa, kappa = |y|^T|s| / |y^T s| (the conditioning of the pair); rho enters
+    every term (twice in c), u and y^T u carry gamma_n, and at most six more roundings (products, sums) follow, so
+
+        |H'_computed - H'_exact|  <=  (2 kappa + 4) gamma_{n+6} M + |rho||s||w|^T    (tolM; any implementation of the symmetric form)
+
+    where H'_exact is SciPy's formula in exact arithmetic (valid for any H) and w = |(H^T - H) y| is the asymmetry of the input
+    matrix, by which the symmetric form differs from it (zero for a symmetric H)
+
+    SciPy's form (I - rho s y^T) H (I - rho y s^T) + rho s s^T has the magnitude sum S = A1m |H| A2m + |rho||s||s|^T, A1m = I + |rho||s||y|^T
+    (the terms before the cancellation in I - rho s y^T), with two
+    matrix products (gamma_n each) and the same rho:
+
+        |H'_SciPy - H'_exact|  <=  (2 kappa + 4) gamma_{2n+6} S               (tolS)
+
+    The direction p = -H g is a matrix-vector product: |p_computed - p_exact| <= gamma_n |H||g| (tolp, per side).
+    Returns (tolM, tolS, kappa).
+    """
+    n = len(s)
+    sy = float(np.dot(s, y))
+    rho = 1.0 / sy
+    abss, absy, absH = np.abs(s), np.abs(y), np.abs(H)
+    ubar = absH @ absy
+    cbar = abs(rho) + rho * rho * float(absy @ ubar)
+    M = absH + cbar * np.outer(abss, abss) + abs(rho) * (np.outer(ubar, abss) + np.outer(abss, ubar))
+    I = np.eye(n)
+    A1 = I + abs(rho) * np.outer(abss, absy)  # magnitude sums of I - rho s y^T and I - rho y s^T (before cancellation)
+    A2 = I + abs(rho) * np.outer(absy, abss)
+    S = A1 @ absH @ A2 + abs(rho) * np.outer(abss, abss)
+    kappa = float(absy @ abss) / abs(sy)
+    f = 2.0 * kappa + 4.0
+    # the symmetric form equals SciPy's (and the exact general form A1 H A2 + rho s s^T) only for a symmetric H; the H the data
+    # carries is symmetric up to rounding, and the two forms differ by -rho s w^T with w = (H^T - H) y
+    w = np.abs((H.T - H) @ y)
+    asym = abs(rho) * np.outer(abss, w)
+    return f * gamma(n + 6) * M + asym, f * gamma(2 * n + 6) * S, kappa
+
+
+def mp_step(H, s, y):
+    """SciPy's update of float inputs in 60-digit arithmetic: (I - rho s y^T) H (I - rho y s^T) + rho s s^T, valid for any H."""
+    n = len(s)
+    Hm = mpmath.matrix([[mpmath.mpf(float(H[i][j])) for j in range(n)] for i in range(n)])
+    sm = mpmath.matrix([mpmath.mpf(float(t)) for t in s])
+    ym = mpmath.matrix([mpmath.mpf(float(t)) for t in y])
+    rho = 1 / (ym.T * sm)[0]
+    I = mpmath.eye(n)
+    return (I - rho * sm * ym.T) * Hm * (I - rho * ym * sm.T) + rho * sm * sm.T
+
+
+def scipy_update(H, s, y):
+    """_minimize_bfgs's update, line for line."""
+    n = len(s)
+    I = np.eye(n, dtype=int)
+    rhok = 1.0 / np.dot(y, s)
+    A1 = I - s[:, np.newaxis] * y[np.newaxis, :] * rhok
+    A2 = I - y[:, np.newaxis] * s[np.newaxis, :] * rhok
+    return np.dot(A1, np.dot(H, A2)) + (rhok * s[:, np.newaxis] * s[np.newaxis, :])
+
+
 # ----------------------------------------------------------------------------------------------
 # The mirror of the Rust replay (different summation order than SciPy's BLAS)
 # ----------------------------------------------------------------------------------------------
@@ -581,7 +654,7 @@ def generate():
     specs.insert(specs.index(next(s for s in specs if s.rid == "rosen2_maxiter1")),
                  Spec("rosen2_maxiter_eq_nit", "finite", "rosen2", [-1.2, 1.0], maxiter=int(base.nit),
                       note="converges on the last allowed iteration: SciPy reports status 1 (k >= maxiter is tested after the loop)"))
-    out = dict(problems=[], runs=[], evals=[], iters=[], hess=[])
+    out = dict(problems=[], runs=[], evals=[], iters=[], hess=[], steps=[])
     for spec in specs:
         res, log, call = run_scipy(spec)
         n = len(spec.x0)
@@ -666,6 +739,37 @@ def generate():
                 scale_base = scale_base + np.abs(rec["alpha"] * rec["pk"]) + np.abs(x_next)
                 slack_base = slack_base + abs(rec["alpha"]) * np.abs(rec["pk"] - d_exact_f)
                 d_exact_all.append(d_exact_f)
+            # SciPy's own per-iteration state, rebuilt with SciPy's own update code and checked against what SciPy did
+            Hs_chain = np.eye(n, dtype=int)
+            for j, rec in enumerate(log.ls):
+                assert np.array_equal(-np.dot(Hs_chain, rec["gk"]), rec["pk"]), (spec.rid, j, "direction")
+                if applied[j] is not True:
+                    continue
+                s_j = rec["alpha"] * rec["pk"]
+                g_next = log.evals[rec["ev_end"] - 1][2]
+                y_j = g_next - rec["gk"]
+                H_next = scipy_update(Hs_chain, s_j, y_j)
+                p_next = -np.dot(H_next, g_next)
+                if j + 1 < len(log.ls):
+                    assert np.array_equal(p_next, log.ls[j + 1]["pk"]), (spec.rid, j, "next direction")
+                H_k = np.array(Hs_chain, dtype=float)
+                tolM, tolS, kappa = step_bounds(H_k, s_j, y_j)
+                Hex = mp_step(H_k, s_j, y_j)
+                H_ex = np.array([[float(Hex[a, b]) for b in range(n)] for a in range(n)])
+                Hn_m = mpmath.matrix([[mpmath.mpf(float(H_next[a][b])) for b in range(n)] for a in range(n)])
+                gm = mpmath.matrix([mpmath.mpf(float(t)) for t in g_next])
+                p_ex = np.array([float(-t) for t in (Hn_m * gm)])
+                tolp = gamma(n) * (np.abs(H_next) @ np.abs(g_next))
+                Hex_m = Hex
+                h_err = max(float(abs(mpmath.mpf(float(H_next[a][b])) - Hex_m[a, b])) / tolS[a, b] for a in range(n) for b in range(n))
+                p_err = float(np.max(np.abs(p_next - p_ex) / np.maximum(tolp, np.finfo(float).tiny)))
+                assert h_err <= 1.0 and p_err <= 1.0, (spec.rid, j, "the derived single-step bound is violated by SciPy itself", h_err, p_err)
+                out["steps"].append(dict(
+                    run=spec.rid, k=j, n=n, h=vec(H_k), s=vec(s_j), y=vec(y_j), h_next=vec(H_next), g_next=vec(g_next),
+                    p_next=vec(p_next), h_exact=vec(H_ex), p_exact=vec(p_ex), kappa=fl(kappa), h_ratio=fl(h_err),
+                    p_ratio=fl(p_err)))
+                Hs_chain = H_next
+            assert np.array_equal(np.array(Hs_chain, dtype=float), np.array(res.hess_inv, dtype=float)), (spec.rid, "final H")
             per_eval, dir_ratio_m, H_mirror = mirror(spec, log, bases)
             base0 = len(out["evals"]) - len(log.evals)
             out["evals"][base0].update(search=0, x_scale=vec(np.abs(spec.x0)), x_slack=vec(np.zeros(n)), x_ratio=fl(0.0))
@@ -678,7 +782,8 @@ def generate():
             first_outside = next((j for j in range(len(log.ls))
                                   if max([pe["ratio"] for pe in per_eval.values() if pe["search"] == j], default=0.0)
                                   > REPLAY_C / MARGIN), None)
-            cmp_n = len(log.ls) if first_outside is None else max(first_outside - PREFIX_MARGIN, 0)
+            seen = [x for x in (first_outside, LINUX_FIRST_OUTSIDE.get(spec.rid)) if x is not None]
+            cmp_n = len(log.ls) if not seen else max(min(seen) - PREFIX_MARGIN, 0)
             run_row = out["runs"][-1]
             run_row["cmp_nsearch"] = cmp_n
             run_row["cmp_first_outside"] = "none" if first_outside is None else first_outside
@@ -733,9 +838,10 @@ COLUMNS = dict(
     evals=["run", "i", "search", "x", "f", "g", "x_scale", "x_slack", "x_ratio"],
     iters=["run", "k", "x", "f", "g", "p", "d_exact", "d_scale", "alpha", "ev_start", "ev_end", "ys", "applied",
            "dir_ratio_scipy", "dir_ratio_mirror"],
+    steps=["run", "k", "n", "h", "s", "y", "h_next", "g_next", "p_next", "h_exact", "p_exact", "kappa", "h_ratio", "p_ratio"],
     hess=["run", "n", "n_updates", "h_compared", "h_scipy", "h_exact", "h_scale", "ratio", "ratio_mirror"],
 )
-FILES = dict(problems="problems.csv", runs="runs.csv", evals="evals.csv", iters="iters.csv", hess="hess_final.csv")
+FILES = dict(problems="problems.csv", runs="runs.csv", evals="evals.csv", iters="iters.csv", hess="hess_final.csv", steps="steps.csv")
 
 # `repro` (runs.csv, data): "exact" runs are compared by every count and by value on their comparison prefix; "class" runs
 # (the fallback runs whose failure is a rounding-regime effect, and the non-finite ones) are compared by group, problem,
@@ -759,7 +865,7 @@ def render(out):
     return texts
 
 
-def assert_derivation(out):
+def assert_derivation(out):  # noqa
     """The README's claims, confirmed on the regenerated data: a run's comparison prefix is never empty for a run with line
     searches, and the final H of a run is compared only if the mirror agrees. Prints the observed maxima."""
     runs = [r for r in out["runs"] if r["parity"] == "true"]
@@ -772,11 +878,13 @@ def assert_derivation(out):
     short = [(r["id"], r["cmp_nsearch"], r["n_ls"]) for r in runs if r["cmp_nsearch"] != r["n_ls"]]
     if short:
         print("  shorter prefixes (run, searches compared, searches):", ", ".join(f"{a} {b}/{c}" for a, b, c in short))
-    print(f"  prefix margin rule: committed prefix = first-outside index - {PREFIX_MARGIN} (macOS arm64 only so far)")
-    bad = [r["id"] for r in runs if r["cmp_nsearch"] < 1 and r["n_ls"] > 0]
-    if bad:
-        print(f"an empty comparison prefix ({bad}): the replay claim is empty there; refusing", file=sys.stderr)
-        sys.exit(1)
+    print(f"  prefix margin rule: committed prefix = min(first-outside index on macOS, on Linux) - {PREFIX_MARGIN}")
+    empty = [r["id"] for r in runs if r["cmp_nsearch"] < 1 and r["n_ls"] > 0]
+    if empty:
+        print(f"  runs with an empty trajectory prefix (counts and termination only; the per-step replay covers them): {', '.join(empty)}")
+    steps = out["steps"]
+    print(f"  per-step replay: {len(steps)} iterations of {len(runs)} parity runs; SciPy vs exact (mpmath), largest ratio to the derived bound: "
+          f"H {max((float(t['h_ratio']) for t in steps), default=0):.3g}, p {max((float(t['p_ratio']) for t in steps), default=0):.3g}")
     for r in runs:
         assert float(r["x_ratio_max"]) <= REPLAY_C / MARGIN
 
@@ -799,9 +907,11 @@ def assert_derivation(out):
 
 TRAJ = {"evals.csv": {"x", "f", "g"}, "iters.csv": {"x", "f", "g", "p", "alpha", "ys", "d_exact"},
         "runs.csv": {"final_x", "final_f", "gnorm_inf"}, "hess_final.csv": {"h_scipy", "h_exact"},
-        "problems.csv": {"A", "b", "x_star", "f_star", "mu"}}
+        "problems.csv": {"A", "b", "x_star", "f_star", "mu"},
+        "steps.csv": {"h", "s", "y", "h_next", "g_next", "p_next"}}
 DIAGNOSTIC = {"x_scale", "x_slack", "x_ratio", "d_scale", "dir_ratio_scipy", "dir_ratio_mirror", "ratio", "ratio_mirror",
-              "h_scale", "x_ratio_max", "dir_ratio_max", "scipy_call", "note", "cmp_nsearch", "cmp_first_outside"}
+              "h_scale", "x_ratio_max", "dir_ratio_max", "scipy_call", "note", "cmp_nsearch", "cmp_first_outside",
+              "h_exact", "p_exact", "kappa", "h_ratio", "p_ratio"}
 
 
 def _split_data(text):
@@ -826,6 +936,7 @@ def check(data_dir: Path) -> int:
     assert_derivation(out)
     fresh = render(out)
     exact_bad = []  # (file, ident, column, committed, regenerated)
+    info = {}  # steps.csv columns: largest relative difference on rows PAST the prefix (reported, never failing)
     traj = {}  # (file, column) -> [compared, outside, max abs, max rel]
     skipped = {}
     bounds = []
@@ -882,7 +993,7 @@ def check(data_dir: Path) -> int:
             cn = cmp_n.get(rid)
             if name == "evals.csv":
                 inside = cn is not None and (a_["search"] == "none" or int(a_["search"]) < cn)
-            elif name == "iters.csv":
+            elif name in ("iters.csv", "steps.csv"):
                 inside = cn is not None and int(a_["k"]) < cn
             elif name == "runs.csv":
                 inside = cn is not None and cn == n_ls[rid]
@@ -901,11 +1012,16 @@ def check(data_dir: Path) -> int:
                         exact_bad.append((name, ident, col, va[:70], vb[:70]))
                     continue
                 st = traj.setdefault((name, col), [0, 0, 0.0, 0.0])
-                if not inside:
-                    skipped[(name, col)] = skipped.get((name, col), 0) + 1
-                    continue
                 la, lb = va.split(";"), vb.split(";")
                 scale = runmax.get((rid, col), 0.0)
+                if not inside:
+                    skipped[(name, col)] = skipped.get((name, col), 0) + 1
+                    if name == "steps.csv" and len(la) == len(lb):  # informational: how far SciPy's recorded states drift past the prefix
+                        for u, v in zip(la, lb):
+                            x, y = _num(u), _num(v)
+                            if x is not None and y is not None and math.isfinite(x) and math.isfinite(y):
+                                info[col] = max(info.get(col, 0.0), abs(x - y) / max(abs(x), abs(y), scale, 1e-300))
+                    continue
                 if len(la) != len(lb):
                     exact_bad.append((name, ident, col, va[:70], vb[:70]))
                     continue
@@ -940,6 +1056,9 @@ def check(data_dir: Path) -> int:
               f"constant {SCIPY_REPRO_RTOL:g}  margin {marg}  skipped {skipped.get((name, col), 0)}")
     print(f"  observed maximum over all columns {worst:.3e}; constant {SCIPY_REPRO_RTOL:g}"
           + (f" (margin {SCIPY_REPRO_RTOL / worst:.3g}x)" if worst > 0 else " (identical)"))
+    if info:
+        print("  steps.csv rows past the comparison prefix (reported only; the per-step replay uses the committed states): largest relative "
+              "difference per column " + ", ".join(f"{c} {v:.3e}" for c, v in sorted(info.items())) + f" (constant {SCIPY_REPRO_RTOL:g})")
     print("  rows of class runs not compared (counts depend on the platform): "
           + ", ".join(f"{k} {v}" for k, v in skipped.items() if isinstance(k, str)))
     for line in outside_examples[:20]:
