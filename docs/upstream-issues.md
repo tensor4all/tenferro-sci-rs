@@ -706,3 +706,29 @@ The `scipy` column of the reference files is SciPy's value, and the parity compa
 - **Here:** `crates/minimize/src/linesearch/dcstep.rs` uses the strict `<` of the paper and the
   Fortran. A run that hits the tie would take the averaged step here and the cubic step in
   SciPy; the evaluation counts of such a run could differ by that one step.
+
+## scipy: after `ABNORMAL` (a failed line search), `L-BFGS-B` returns `fun` of the last trial point, not of `x`
+
+- **Affects:** SciPy v1.16.3 (`b9105ccc2237f57acb1060202cd77f6dd264fb34`),
+  `scipy/optimize/_lbfgsb_py.py`, `_minimize_lbfgsb`, the loop at lines 455-485 and the result at 507,
+  with `scipy/optimize/__lbfgsb.c`, `mainlb`, lines 918-935.
+- **Evidence:** when a line search fails (`maxls` trials, or a direction that is not a descent
+  direction) with an empty memory, `mainlb` restores `x` and `g` to the start of the search and sets
+  `*f = fold`, then returns `ABNORMAL`. The driver passes `f` to `setulb` as a Python float, which
+  the C code cannot write back, and every `task[0] == 3` request rebinds it
+  (`f, g = func_and_grad(x)`), so the restore of `f` never reaches `OptimizeResult`. `x` and `g` are
+  numpy arrays updated in place and do arrive. Reproducer (SciPy 1.16.3, the run
+  `maxls1_rosen2_first` of `crates/minimize/tests/data/lbfgs/runs.csv`): Rosenbrock from
+  `x0 = (-1.2, 1)` with `maxls = 1` gives `res.x = [-1.2, 1.]` and `res.jac` the gradient there,
+  but `res.fun = 171.33595917774778`, the value at the rejected trial
+  `(-0.27415235630480134, 1.3778969974266115)`, while `f(x0) = 24.199999999999996`; `res.message` is
+  `ABNORMAL: ` and `res.nfev = 2`. All recorded runs that end in `ABNORMAL` show the same
+  (`lbfgs_replay.rs::the_data_covers_every_termination_and_the_counting_quirks` asserts `res.fun`
+  is the last trial's `f` and differs from `f(res.x)` on each of them).
+- **Impact:** `res.fun`, `res.x` and `res.jac` are mutually inconsistent exactly when the run failed,
+  so a caller who reads `fun` of a failed run gets a value that is not attained at the returned `x`
+  (here it is 7 times larger).
+- **Upstream:** not reported.
+- **Here:** `LbfgsState::f()` and `Report::f` are `f(x)` at the returned point after every
+  termination, including `LineSearchFailed`; the replay pins SciPy's value in the data
+  (`runs.csv`, column `f`) and Rust's consistent one separately.
