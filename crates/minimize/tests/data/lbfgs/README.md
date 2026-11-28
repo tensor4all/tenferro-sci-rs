@@ -145,7 +145,7 @@ counts, termination and the other exact columns only**; the summary of `--check`
 Rust replay uses the same prefix and the same formula, so replay and `--check` make the same claim. `cmp_nsearch` is a
 diagnostic column: `--check` fails if the prefix on the running platform is *shorter* than the committed one (the committed
 prefix is then outside the bound there), never by changing it. 18 of the 49 replayed runs have a prefix shorter than the run:
-the Rosenbrock-2/5 runs (9 line searches; the runs have 36–55) and `quad5_k1e4` (15 of 30–36), `m3_rosen5` (8 of 25).
+the Rosenbrock-2/5 runs (7 line searches; the runs have 36–55), `quad5_k1e4` (12 of 30–36) and `m3_rosen5` (6 of 23); see "The margin rule".
 
 **The earlier scale was replaced.** The first version used the absolute-value recursion of the two-loop (`Σ|terms|` with every
 sign positive), which compounds along the recursion: on `default_rosen2` it grew to 4.6e15 over 36 iterations, and
@@ -156,18 +156,36 @@ tolerance, the prefix now shows where it starts. Tolerances relative to the valu
 `x` median 6e-14, 95th percentile 1e-12, maximum 5e-11 of `‖x‖∞`; `g` median 1e-10, 95th percentile 3e-6, maximum 52 (late in
 runs where `|g|` is below the absolute floor `4 L ‖tol_x‖`); `f` median 6e-13, 95th percentile 2e-7, maximum 333 (the same).
 
-**Caps are platform-independent.** The cap of a run is the minimum over the checked platforms of the largest prefix of line
-searches inside the bounds: macOS arm64 (committed first) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (CI run 46132168523,
-earlier selection code) 7, 16, 15, 29, 26 for `m1_rosen5`, `m1_quad10_k1e2`, `m1_powell4`, `m3_rosen5`, `m3_quad10_k1e2`; hence 7,
-15, 15, 26, 26, until the check of CI run 46133315711 (Ubuntu, the authoritative source for Linux) reported the first search
-outside the bounds of `m3_rosen5` as 25, so its cap is **25** (that value comes from run 46133315711). Indexing: line searches
-are numbered from 0; the cap is the number of line searches kept (= `maxiter`, accepted iterations), i.e. searches `0 … cap − 1`;
-`cap_first_bad` is the index of the first search outside the bounds, so a cap is valid iff `cap ≤ first_bad`. Margins on macOS
-(`cap_first_bad − cap`): `m1_rosen5` 18, `m3_rosen5` 1, and 0 for `m1_quad10_k1e2`, `m1_powell4`, `m3_quad10_k1e2` (no
-margin: they sit exactly at the largest prefix). The generator takes the caps, the `tight` gtols, the search picks and the counts-only live rows from fixed
-tables, so no platform-dependent choice remains; `--check` verifies that every committed cap is still inside the bounds on the
-running platform and fails only if it is not (never by choosing a different cap). The generating platform's first search
-outside the bounds is the `cap_first_bad` column (diagnostic).
+**The margin rule (every cap and every comparison prefix).** Committed value = (the smallest first-outside index observed on any
+checked platform) − `PREFIX_MARGIN` (2 line searches), applied uniformly and never lengthening anything; `C_X` and the bounds are
+unchanged. Line searches are numbered from 0; a cap or prefix of `n` keeps searches `0 … n − 1`, and "first outside" is the index of
+the first search outside the bound, so a value is valid iff it is `≤ first outside`, and the rule keeps it `≤ first outside − 2`.
+
+Why a margin: the **same image and the same code gave different prefixes on two GitHub runners**: `quad5_k1e4` (three runs) had its
+first search outside the mirror bound at 15 in CI run 46134596827 (and on macOS) and at **14** in run 46135341702 (PR #42), with 0
+exact mismatches and 0 values outside `SCIPY_REPRO_RTOL` in both. The runners differ in CPU microarchitecture and OpenBLAS kernel
+dispatch, so a prefix or cap at margin 0 on one machine is fragile everywhere, not only across macOS and Linux.
+
+Observed first-outside indices and the resulting values:
+
+| run(s) | macOS | Ubuntu (CI) | committed value |
+|---|---|---|---|
+| Rosenbrock-2/5 runs (`default_`, `ftol0_`, `live_`, `maxls*`, `search_*`, `maxiter_eq_*`, `maxfun20_`) comparison prefix | 9 | not smaller than the committed prefix in any run | **7** |
+| `quad5_k1e4` (`default_`, `tight_`, `live_`) comparison prefix | 15 | 14 (run 46135341702) | **12** |
+| `m3_rosen5` comparison prefix | 8 | not smaller | **6** |
+| `m1_rosen5` cap | 25 | 7 (run 46132168523, earlier mirror scale) | **5** |
+| `m1_quad10_k1e2` cap | 15 | 16 (run 46132168523) | **13** |
+| `m1_powell4` cap | 15 | 15 | **13** |
+| `m3_rosen5` cap | 26 | 25 (run 46133315711) | **23** |
+| `m3_quad10_k1e2` cap | 26 | 26 | **24** |
+
+Caps are the number of line searches kept (= `maxiter`, accepted iterations); the caps' evidence is the first search outside the bounds
+(direction criterion on macOS, `cap_first_bad`; the earlier mirror criterion for the Linux values). The generator keeps these
+numbers in `LINUX_FIRST_OUTSIDE`, `OBSERVED_CAP_OUTSIDE` and `PREFIX_MARGIN`, and takes the caps, the `tight` gtols, the search
+picks and the counts-only live rows from fixed tables, so no platform-dependent choice remains. `--check` still fails when a
+committed cap or prefix leaves the bounds on the running platform, and **prints the margin of every prefix and cap** (first outside
+here minus the committed value, smallest first) in its "margins" section, so every CI log shows how close each one is; the data
+column `first_outside` records the raw first search outside the mirror bound on the generating platform.
 
 The generator also asserts the coverage the tests rely on (every termination, a restart ending in each of three ways, the
 counting cases).
@@ -200,25 +218,25 @@ accumulates over the steps taken. For component `i` the test allows
   The constant is one named value (`C_X` in `tests/lbfgs_common/mod.rs`) and every replay failure prints the observed
   maximum ratio and the bound.
 * **Which runs are capped, and why the cap is data.** Five runs of the `memory` group (`maxcor` = 1, 3) end early. Their
-  `maxiter` is the `maxiter_cap` column of `runs.csv` (`none` for every other run), chosen as **the largest prefix inside the
-  bound on SciPy's own direction error on every checked platform**: every line search before the cap has direction error
+  `maxiter` is the `maxiter_cap` column of `runs.csv` (`none` for every other run), chosen by **the margin rule** from the first search outside the
+  bound on every checked platform: every line search before the cap has direction error
   ≤ `C_DIR / 2`, and the run stops there (`MaxIter`). (The cap no longer depends on the mirror: the position claim is the
   separate, shorter-or-equal `cmp_nsearch`.) `cap_first_bad` is the first search outside the direction bound on the generating
   platform (macOS); the cap is at or below it. `caps.csv` holds the per-search mirror and direction ratios of the *uncapped* run
   behind each capped row.
 
-  | run | cap | first search outside the direction bound (macOS) | comparison prefix `cmp_nsearch` | Linux CI evidence |
+  | run | cap (margin rule) | first search outside the direction bound (macOS) | comparison prefix `cmp_nsearch` | Linux CI evidence (first outside) |
   |---|---|---|---|---|
-  | `m1_rosen5` | 7 | 42 (direction 81.0) | 7 | cap 7 from CI run 46132168523 (selection by the old mirror scale) |
-  | `m3_rosen5` | 25 | 55 (64.1) | 8 | cap 25 from CI run 46133315711 (old scale) |
-  | `m1_quad10_k1e2` | 15 | 15 (113.6) | 15 | CI run 46132168523: 16 |
-  | `m1_powell4` | 15 | 15 (438.5) | 15 | 15 |
-  | `m3_quad10_k1e2` | 26 | 26 (65.8) | 26 | 26 |
+  | `m1_rosen5` | 5 | 42 (direction 81.0) | 5 | 7 (run 46132168523, earlier mirror scale) |
+  | `m3_rosen5` | 23 | 55 (64.1) | 6 | 25 (run 46133315711) |
+  | `m1_quad10_k1e2` | 13 | 15 (113.6) | 13 | 16 (run 46132168523) |
+  | `m1_powell4` | 13 | 15 (438.5) | 13 | 15 |
+  | `m3_quad10_k1e2` | 24 | 26 (65.8) | 24 | 26 |
 
   The caps of `m1_rosen5` and `m3_rosen5` come from Linux evidence gathered with the earlier (compounding-scale) criterion; they
   are kept as the committed run lengths (shorter than SciPy's direction bound requires, and not shorter than the prefix), and
-  the position claim for them is `cmp_nsearch` (7 and 8 line searches). Indexing: line searches are numbered from 0; the cap is
-  the number of line searches kept (= `maxiter`), searches `0 … cap − 1`; a cap is valid iff `cap ≤ cap_first_bad`.
+  the position claim for them is `cmp_nsearch` (5 and 6 line searches). A cap is valid iff `cap ≤ cap_first_bad`; the margin rule
+  (above) keeps it 2 below the smallest observed first-outside index.
 
   The maintainer proposed that the per-search ratio should be monotone up to the cap. It is not (several decreases before the
   cap in every capped run; only the running maximum is monotone, which is a tautology), and the test does not pretend it is.

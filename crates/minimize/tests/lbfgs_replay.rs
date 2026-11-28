@@ -291,11 +291,15 @@ fn caps_cannot_hide_a_disagreement() {
                 c.mirror_ratio
             );
         }
-        assert!(
-            cmp == cap || series[cmp].mirror_ratio > CAP_MIRROR_BOUND,
-            "{}: the prefix {cmp} ends before the cap {cap} but line search {cmp} is inside the mirror bound",
-            r.id
-        );
+        // the margin rule: where the mirror bound is exceeded at all, the prefix stays PREFIX_MARGIN searches below it
+        if let Some(out) = r.first_outside {
+            assert!(
+                series[out].mirror_ratio > CAP_MIRROR_BOUND,
+                "{}: first_outside {out} is inside the mirror bound",
+                r.id
+            );
+            assert!(cmp + PREFIX_MARGIN <= out, "{}: prefix {cmp} is closer than {PREFIX_MARGIN} searches to the first search outside ({out})", r.id);
+        }
         let decreases = series[1..cap]
             .windows(2)
             .filter(|w| w[1].mirror_ratio < w[0].mirror_ratio)
@@ -349,4 +353,63 @@ fn only_the_live_group_is_counts_only() {
         })
         .collect();
     assert!(!skipped.is_empty() && skipped.len() <= 2, "{skipped:?}");
+}
+
+#[test]
+fn prefixes_and_caps_keep_the_margin_rule() {
+    // Data only. Every committed cap and comparison prefix is at least PREFIX_MARGIN line searches shorter than the
+    // smallest first-outside index observed on any checked platform: macOS (the `first_outside`, `cap_first_bad` columns)
+    // and the Ubuntu CI runs 46132168523, 46133315711 (caps: first outside m1_rosen5 7, m1_quad10_k1e2 16, m1_powell4 15,
+    // m3_rosen5 25, m3_quad10_k1e2 26), 46134596827 and 46135341702 (quad5_k1e4 comparison prefix: 14 where macOS has 15).
+    let linux_caps = [
+        ("m1_rosen5", 7),
+        ("m1_quad10_k1e2", 16),
+        ("m1_powell4", 15),
+        ("m3_rosen5", 25),
+        ("m3_quad10_k1e2", 26),
+    ];
+    let runs = load_runs();
+    let get = |id: &str| {
+        runs.iter()
+            .find(|r| r.id == id)
+            .unwrap_or_else(|| panic!("run {id}"))
+    };
+    for (id, linux) in linux_caps {
+        let r = get(id);
+        let cap = r.maxiter_cap.expect("capped");
+        let mac = r.cap_first_bad.expect("recorded");
+        // macOS evidence for the cap: the direction criterion (first_bad) and the mirror criterion of the earlier selection
+        // (25, 15, 15, 26, 26); Linux as listed
+        let mac_old = [
+            ("m1_rosen5", 25),
+            ("m1_quad10_k1e2", 15),
+            ("m1_powell4", 15),
+            ("m3_rosen5", 26),
+            ("m3_quad10_k1e2", 26),
+        ]
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, v)| *v)
+        .expect("listed");
+        let smallest = mac.min(mac_old).min(linux);
+        assert!(cap + PREFIX_MARGIN <= smallest, "{id}: cap {cap} needs {PREFIX_MARGIN} searches below the smallest first-outside index {smallest}");
+    }
+    for id in ["default_quad5_k1e4", "tight_quad5_k1e4", "live_quad5_k1e4"] {
+        let r = get(id);
+        let cmp = r.cmp_nsearch.expect("replayed");
+        assert!(
+            cmp + PREFIX_MARGIN <= 14,
+            "{id}: prefix {cmp} must be <= 12 (Linux first outside: 14)"
+        );
+    }
+    for r in runs.iter().filter(|r| r.replay) {
+        if let Some(out) = r.first_outside {
+            assert!(
+                r.cmp_nsearch.expect("replayed") + PREFIX_MARGIN <= out,
+                "{}: prefix {:?}, first outside {out}",
+                r.id,
+                r.cmp_nsearch
+            );
+        }
+    }
 }

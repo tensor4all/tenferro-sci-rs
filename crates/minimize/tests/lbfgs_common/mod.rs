@@ -28,6 +28,9 @@ pub const C_DIR: f64 = 128.0;
 /// be about twice as far from SciPy as the mirror) or whose SciPy direction error exceeds `C_DIR / 2`.
 pub const CAP_MIRROR_BOUND: f64 = C_X / 4.0;
 pub const CAP_DIR_BOUND: f64 = C_DIR / 2.0;
+/// Every committed cap and comparison prefix is at least this many line searches shorter than the smallest first-outside
+/// index observed on any checked platform (README, "The margin rule").
+pub const PREFIX_MARGIN: usize = 2;
 /// The bound on the direction of a float64 two-loop recursion against the exact one (README: observed ≤ 1.4).
 pub const C_TWOLOOP: f64 = 16.0;
 
@@ -107,6 +110,8 @@ pub struct Run {
     /// `None` for counts-only rows.
     pub cmp_nsearch: Option<usize>,
     pub nsearch: usize,
+    /// First line search outside the mirror bound on the generating platform (`None`: none inside the run).
+    pub first_outside: Option<usize>,
     pub maxiter_cap: Option<usize>,
     /// First line search outside the bounds on the platform that generated the data (diagnostic, platform-dependent).
     pub cap_first_bad: Option<usize>,
@@ -175,6 +180,7 @@ pub fn load_runs() -> Vec<Run> {
             cap_first_bad: (r["cap_first_bad"] != "none").then(|| int(r, "cap_first_bad")),
             cmp_nsearch: (r["cmp_nsearch"] != "none").then(|| int(r, "cmp_nsearch")),
             nsearch: int(r, "nsearch"),
+            first_outside: (r["first_outside"] != "none").then(|| int(r, "first_outside")),
             nit: int(r, "nit"),
             nfev: int(r, "nfev"),
             nskip: int(r, "nskip"),
