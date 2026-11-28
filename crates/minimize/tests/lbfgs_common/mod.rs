@@ -19,10 +19,14 @@ use minimize::lbfgs::{LbfgsConfig, LbfgsState, Step, Termination, H0};
 
 /// ε = 2⁻⁵².
 pub const EPS: f64 = f64::EPSILON;
-/// The replay tolerance multiplier (README: observed maximum on the committed runs ≤ C_X / 2).
+/// The replay tolerance multiplier (README: the mirror stays within C_X / 4 on every committed run).
 pub const C_X: f64 = 32.0;
 /// The bound on SciPy's own direction error against the exact direction (README: observed maximum ≤ C_DIR / 2).
 pub const C_DIR: f64 = 128.0;
+/// A run is capped at the first line search whose float64-mirror ratio exceeds this (`C_X / 4`: the implementation may
+/// be about twice as far from SciPy as the mirror) or whose SciPy direction error exceeds `C_DIR / 2`.
+pub const CAP_MIRROR_BOUND: f64 = C_X / 4.0;
+pub const CAP_DIR_BOUND: f64 = C_DIR / 2.0;
 /// The bound on the direction of a float64 two-loop recursion against the exact one (README: observed ≤ 1.4).
 pub const C_TWOLOOP: f64 = 16.0;
 
@@ -95,6 +99,8 @@ pub struct Run {
     /// The exact SciPy call (the protocol).
     pub call: String,
     pub termination: String,
+    /// The `maxiter` the generator imposed because the run leaves the bounds after that many line searches (data).
+    pub maxiter_cap: Option<usize>,
     pub nit: usize,
     pub nfev: usize,
     pub nskip: usize,
@@ -155,6 +161,7 @@ pub fn load_runs() -> Vec<Run> {
             maxls: int(r, "maxls"),
             call: r["call"].clone(),
             termination: r["termination"].clone(),
+            maxiter_cap: (r["maxiter_cap"] != "none").then(|| int(r, "maxiter_cap")),
             nit: int(r, "nit"),
             nfev: int(r, "nfev"),
             nskip: int(r, "nskip"),
@@ -214,6 +221,31 @@ pub fn load_searches() -> HashMap<String, Vec<Search>> {
     }
     for v in by.values_mut() {
         v.sort_by_key(|s| s.j);
+    }
+    by
+}
+
+/// One row of `caps.csv`: the per-search ratios of the uncapped run behind a capped row.
+#[derive(Clone, Debug)]
+pub struct CapRow {
+    pub j: usize,
+    /// The float64 mirror's replay ratio of line search `j` (bound: `C_X / 4`).
+    pub mirror_ratio: f64,
+    /// SciPy's direction error of line search `j` in units of ε·scale (bound: `C_DIR / 2`).
+    pub dir_ratio: f64,
+}
+
+pub fn load_caps() -> HashMap<String, Vec<CapRow>> {
+    let mut by: HashMap<String, Vec<CapRow>> = HashMap::new();
+    for r in read_csv("caps.csv") {
+        by.entry(r["run"].clone()).or_default().push(CapRow {
+            j: int(&r, "j"),
+            mirror_ratio: num(&r, "mirror_ratio"),
+            dir_ratio: num(&r, "dir_ratio"),
+        });
+    }
+    for v in by.values_mut() {
+        v.sort_by_key(|c| c.j);
     }
     by
 }
@@ -328,7 +360,8 @@ pub fn replay(run: &Run, evals: &[Eval], searches: &[Search]) -> Replay {
             out.max_ratio = out.max_ratio.max(ratio);
             if ratio.is_nan() || ratio > C_X {
                 out.path_errors.push(format!(
-                    "request {i} component {c}: rust {xr:e}, scipy {xs:e}, ratio {ratio:.1} > {C_X}"
+                    "request {i} component {c}: rust {xr:e}, scipy {xs:e}; observed ratio {ratio:.2} (largest so far {:.2}) exceeds the bound C_X = {C_X}",
+                    out.max_ratio
                 ));
             }
         }

@@ -41,7 +41,8 @@ at the last finite iterate), so those paths are tested with hand-fed values in `
 
 | File | Contents |
 |---|---|
-| `runs.csv` | one row per run: problem, `x0`, options, the exact call, SciPy's `status`, `message`, `nit`, `nfev`, `njev`, `nskip`, number of restarts, final `x`, `f`, `‖g‖∞`, the Rust `termination`, and the two calibration statistics `dir_ratio` and `mirror_ratio` (below) |
+| `caps.csv` | per line search, the mirror and direction ratios of the uncapped run behind each capped row (see "Which runs are capped") |
+| `runs.csv` | one row per run: problem, `x0`, options, the exact call, `maxiter_cap`, SciPy's `status`, `message`, `nit`, `nfev`, `njev`, `nskip`, number of restarts, final `x`, `f`, `‖g‖∞`, the Rust `termination`, and the two calibration statistics `dir_ratio` and `mirror_ratio` (below) |
 | `evals.csv` | every evaluation SciPy requested, in order: `x`, `f`, `g`, the search it belongs to (−1 for the start), `ifun` (index within the search), `accepted` (the iterate that became `x` after it), `x_scale`, `x_slack` |
 | `searches.csv` | one row per line search: `iter`, `col`, `gamma_scipy` (= 1/θ), `gamma_exact`, `stp0`, `x_base`, `g_base`, SciPy's direction `d`, the exact direction `d_exact` (mpmath, 60 digits), `d_scale`, the ids of the stored pairs |
 | `pairs.csv` | the `(s, y)` pairs as SciPy stored them in `S`, `Y` (id `p` is per run) |
@@ -57,7 +58,7 @@ Himmelblau, Powell's singular function, and the quadratics `½(x−x*)ᵀA(x−x
 |---|---|---|
 | `default` | every problem, SciPy's defaults | `GradTol` and `FTol` after k iterations |
 | `ftol0` | `ftol = 0` | only the gradient test, `maxiter`, `maxfun` or a failure can stop |
-| `memory` | `maxcor` = 1, 3, 50 | the ring buffer wraps (capped `maxiter`, see below) |
+| `memory` | `maxcor` = 1, 3, 50 | the ring buffer wraps (five runs capped by `maxiter_cap`, see below) |
 | `tight` | quadratics, small `gtol`, `ftol = 0` | `GradTol` at a stated tolerance |
 | `termination` | start at the minimizer; `maxiter = 1`; large `ftol` | `GradTol` with 0 iterations and 1 evaluation; `MaxIter`; `FTol` |
 | `maxiter_order` | `maxiter = k` and `k + 1` where the free run ends at k | `MaxIter` wins over `GradTol` and `FTol` at the same iterate |
@@ -106,17 +107,48 @@ accumulates over the steps taken. For component `i` the test allows
   committed runs (`dir_ratio`), against 1.3 ε for a float64 two-loop recursion (`../../../src/lbfgs/twoloop.rs`,
   checked on all 1028 searches).
 * **`C_X = 32` is measured, not derived from `n` and `m`.** A float64 mirror of the algorithm the Rust code follows
-  (`Mirror` in the generator: the ask/tell state machine described in the module docs of `minimize::lbfgs`, on Python's `DCSRCH._iterate`, which `linesearch::MoreThuente`
-  ports) replays every run; the generator keeps a run only if the mirror agrees on every count and termination and its
-  largest `(|Δx| − x_slack) / (ε x_scale)` (`mirror_ratio`) is at most `C_X / 2 = 16` (observed maximum: **13.55**),
-  and only if SciPy's own direction is within `C_DIR / 2 = 64` of exact (`dir_ratio`, `C_DIR = 128`).
-  The Rust implementation is independent of the mirror; its PR must report its own maximum. If the implementation exceeds
-  the bound, that is a finding to explain, not a constant to widen.
-* **Why some runs are capped** (`memory` group): past some iteration an ill-conditioned problem amplifies the last-digit
-  differences between two correct implementations (the mirror's ratio for Rosenbrock-5 with `maxcor = 1` reaches 1.8e5 by the end of the
-  uncapped 78-iteration run although both implementations are right: the cumulative bound is exceeded by the
-  amplification, not by an error). The generator caps `maxiter` at the largest tried value that stays inside the bounds. The replay claim
-  ends there; the counts and the termination are pinned *within* the cap, and the live tests cover the converged ends.
+  (`Mirror` in the generator: the ask/tell state machine described in the module docs of `minimize::lbfgs`, on Python's
+  `DCSRCH._iterate`, which `linesearch::MoreThuente` ports) replays every run. The generator keeps a run (or the prefix
+  of one) only while the mirror agrees on every count and termination and the ratio
+  `(|Δx| − x_slack) / (ε x_scale)` of each line search (`mirror_ratio`) is at most `C_X / 4 = 8`, and SciPy's own direction
+  is within `C_DIR / 2 = 64` of exact (`dir_ratio`, `C_DIR = 128`). The factor 4 is a margin: a throwaway implementation
+  of the algorithm was up to twice as far from SciPy as the mirror (27.5 against the mirror's 13.6 on a longer prefix), so
+  the constant `C_X` is never raised and the prefix is shortened instead. The Rust implementation is independent of the
+  mirror; its PR must report its own maximum. If it exceeds the bound, that is a finding to explain, not a constant to widen.
+  The constant is one named value (`C_X` in `tests/lbfgs_common/mod.rs`) and every replay failure prints the observed
+  maximum ratio and the bound.
+* **Which runs are capped, and why the cap is data.** Five runs of the `memory` group (`maxcor` = 1, 3) leave the bounds
+  after some line searches. Their `maxiter` is the `maxiter_cap` column of `runs.csv` (empty = `none` for every other run),
+  chosen as the **largest prefix inside the bounds**: the first line search whose mirror ratio exceeds `C_X / 4` or whose
+  SciPy direction error exceeds `C_DIR / 2` is search `maxiter_cap`, and the run stops before it (`MaxIter`). `caps.csv`
+  holds the per-search ratios of the *uncapped* run behind each capped row, so the claim is checkable.
+
+  | run | cap (searches) | of uncapped | largest ratio inside the cap (mirror) | search at the cap: mirror, direction | why it is the cap |
+  |---|---|---|---|---|---|
+  | `m1_rosen5` | 25 | 78 | 6.5 | 11.7, 0.9 | mirror ratio above `C_X / 4` |
+  | `m3_rosen5` | 26 | 58 | 7.7 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
+  | `m1_quad10_k1e2` | 15 | 73 | 0.9 | 0.9, 113.6 | SciPy's own direction error above `C_DIR / 2` |
+  | `m1_powell4` | 15 | 58 | 1.5 | 1.4, 438.5 | SciPy's own direction error above `C_DIR / 2` |
+  | `m3_quad10_k1e2` | 26 | 56 | 0.8 | 0.7, 65.8 | SciPy's own direction error above `C_DIR / 2` |
+
+  The maintainer proposed that the per-search ratio should be monotone up to the cap. It is not (11–15 decreases before the
+  cap in the Rosenbrock rows, 5–13 in the others; only the running maximum is monotone, which is a tautology), and the
+  test does not pretend it is. `lbfgs_replay.rs::caps_cannot_hide_a_disagreement` checks the condition that does hold and
+  that excludes "we stopped before it got worse": the replay agrees on every request up to the cap, every search before
+  the cap is inside the bounds, and the search at the cap is outside one of them. `only_a_recorded_cap_shortens_a_run`
+  checks that no other run is shortened (the only other runs with a small `maxiter` are the tests of the iteration limit
+  itself).
+* **Largest observed ratios on the uncapped runs** (mirror ratio, SciPy direction ratio; all runs of a group that have no
+  cap): `default` 0.73, 7.5; `ftol0` 0.73, 7.5; `memory` (`m3_powell4`, `m50_quad10_k1e2`) 0.64, 1.7; `tight` 0.21, 14.7;
+  `termination` 0.73, 1.6; `maxiter_order` 0.30, 1.9; `maxfun` 0.73, 1.9; `maxls` 0.73, 7.5; `search` 0.73, 9.1. For the
+  capped runs, inside their cap: 7.7 and 44.4.
+* **A finding that bounds what replay can prove: Rosenbrock-5 with `maxcor = 1`.** Run to its end (78 iterations) the
+  mirror's ratio reaches 1.8e5 (3e5 for SciPy's own direction error against the exact one in the same run) although both
+  implementations are correct: last-digit differences between two correct implementations are amplified by the
+  ill-conditioning of the problem, iteration after iteration, so a replay of requested points can only vouch for a prefix of
+  the run, and how long that prefix is depends on the problem and the memory, not on the care of the implementer. Past it the
+  counts and terminations stop being comparable point by point; the live tests (`lbfgs_live.rs`) cover the converged ends
+  by solution, not path.
 * Other bounds used by the tests: `C_DIR = 128` (SciPy vs exact, above); `C_TWOLOOP = 16` (Rust's two-loop vs exact
   direction, observed 1.34); `|γ_scipy/γ_exact − 1| ≤ 64 ε` (SciPy forms `dr = (gd − gdold) α`, whose rounding is the
   difference: observed 16 ε); the dense-matrix and secant tests of the two-loop use `4 (2m+1) n ε S`, 2% of which is

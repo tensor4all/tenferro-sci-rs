@@ -52,7 +52,7 @@ fn replay_reproduces_every_requested_point_count_and_termination() {
     let worst = reps.iter().map(|r| r.max_ratio).fold(0.0, f64::max);
     eprintln!("replay: largest (|dx| - slack) / (eps x_scale) over all runs = {worst:.2} (tolerance {C_X})");
     assert_none(
-        "path",
+        &format!("path (largest observed ratio {worst:.2}, bound C_X = {C_X})"),
         reps.iter()
             .flat_map(|r| r.path_errors.iter().map(|e| format!("{}: {e}", r.run)))
             .collect(),
@@ -61,10 +61,11 @@ fn replay_reproduces_every_requested_point_count_and_termination() {
 
 #[test]
 fn replay_ends_with_scipys_final_point_value_and_gradient() {
+    let reps = replays();
+    let worst = reps.iter().map(|r| r.max_ratio).fold(0.0, f64::max);
     assert_none(
-        "final state",
-        replays()
-            .iter()
+        &format!("final state (largest observed ratio {worst:.2}, bound C_X = {C_X})"),
+        reps.iter()
             .flat_map(|r| r.final_errors.iter().map(|e| format!("{}: {e}", r.run)))
             .collect(),
     );
@@ -175,4 +176,111 @@ fn the_data_covers_every_termination_and_the_counting_quirks() {
         && r.call.contains("bounds=None")
         && r.call.contains("'maxls'")
         && r.call.contains("'maxcor'")));
+}
+
+#[test]
+fn only_a_recorded_cap_shortens_a_run() {
+    // Data only. A run whose `maxiter` is below SciPy's default is either one of the tests of the iteration limit
+    // itself (groups `maxiter_order`, `termination`) or a capped run: then `maxiter_cap` is recorded, equals `maxiter`
+    // and the run ends with MaxIter. The replay compares every run to its recorded termination, so nothing else can
+    // be cut short unnoticed.
+    let mut capped = 0;
+    for r in load_runs() {
+        match r.maxiter_cap {
+            Some(cap) => {
+                assert_eq!(
+                    r.maxiter, cap,
+                    "{}: maxiter must equal the recorded cap",
+                    r.id
+                );
+                assert_eq!(
+                    (r.termination.as_str(), r.nit),
+                    ("max_iter", cap),
+                    "{}",
+                    r.id
+                );
+                assert_eq!(
+                    r.group, "memory",
+                    "{}: only the memory group is capped",
+                    r.id
+                );
+                capped += 1;
+            }
+            None if r.maxiter != 15000 => assert!(
+                matches!(r.group.as_str(), "maxiter_order" | "termination"),
+                "{}: maxiter = {} is neither a recorded cap nor a test of the iteration limit",
+                r.id,
+                r.maxiter
+            ),
+            None => {}
+        }
+    }
+    assert_eq!(
+        capped, 5,
+        "the five memory runs that leave the bounds are capped"
+    );
+}
+
+#[test]
+fn caps_cannot_hide_a_disagreement() {
+    // For each capped row: (1) the replay agrees on every request up to the cap (it is part of
+    // `replay_reproduces_every_requested_point_count_and_termination`, repeated here for the capped rows alone);
+    // (2) every line search before the cap is inside the bounds, per the recorded series of the uncapped run;
+    // (3) the cap is the largest such prefix: line search `cap` of the uncapped run is outside a bound (mirror ratio
+    // above C_X/4 or SciPy direction error above C_DIR/2), so a cap is never "we stopped before it got worse".
+    //
+    // Monotonicity of the per-search ratio, which the maintainer proposed, does NOT hold in the data: the ratio of a
+    // single line search goes up and down (several decreases before the cap in every capped run, printed below); only its running maximum is
+    // monotone, and that is a tautology. The largest-prefix condition is the honest replacement.
+    let (runs, evals, searches, caps) = (load_runs(), load_evals(), load_searches(), load_caps());
+    for r in runs.iter().filter(|r| r.maxiter_cap.is_some()) {
+        let cap = r.maxiter_cap.expect("filtered");
+        let rep = replay(r, &evals[&r.id], &searches[&r.id]);
+        assert!(
+            rep.path_errors.is_empty(),
+            "{}: disagreement within the cap: {:?}",
+            r.id,
+            &rep.path_errors[..1.min(rep.path_errors.len())]
+        );
+        assert!(
+            rep.max_ratio <= C_X,
+            "{}: observed ratio {:.2} exceeds C_X = {C_X}",
+            r.id,
+            rep.max_ratio
+        );
+        let series = &caps[&r.id];
+        assert!(
+            series.len() > cap,
+            "{}: the uncapped series must continue past the cap",
+            r.id
+        );
+        for c in &series[..cap] {
+            assert!(
+                c.mirror_ratio <= CAP_MIRROR_BOUND && c.dir_ratio <= CAP_DIR_BOUND,
+                "{}: line search {} inside the cap is outside the bounds ({:.2}, {:.2})",
+                r.id,
+                c.j,
+                c.mirror_ratio,
+                c.dir_ratio
+            );
+        }
+        let next = &series[cap];
+        assert!(
+            next.mirror_ratio > CAP_MIRROR_BOUND || next.dir_ratio > CAP_DIR_BOUND,
+            "{}: line search {cap} is inside the bounds, so the cap is not the largest prefix",
+            r.id
+        );
+        let decreases = series[1..cap]
+            .windows(2)
+            .filter(|w| w[1].mirror_ratio < w[0].mirror_ratio)
+            .count();
+        eprintln!(
+            "{}: cap {cap} of {} searches; prefix max {:.2}; search {cap}: mirror {:.2}, direction {:.2}; {decreases} decreases of the per-search ratio before the cap",
+            r.id,
+            series.len(),
+            series[..cap].iter().map(|c| c.mirror_ratio).fold(0.0, f64::max),
+            next.mirror_ratio,
+            next.dir_ratio
+        );
+    }
 }
