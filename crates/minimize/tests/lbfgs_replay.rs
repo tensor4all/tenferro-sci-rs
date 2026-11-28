@@ -224,7 +224,7 @@ fn only_a_recorded_cap_shortens_a_run() {
 #[test]
 fn caps_cannot_hide_a_disagreement() {
     // The cap of a run is the minimum, over the platforms checked so far, of the largest prefix of line searches inside
-    // the bounds (macOS: 25, 15, 15, 26, 26; Ubuntu/OpenBLAS, CI run 46132168523: 7, 16, 15, 29, 26). For each capped row:
+    // the bounds (macOS: 25, 15, 15, 26, 26; Ubuntu/OpenBLAS: 7, 16, 15, 29, 26 from CI run 46132168523, then m3_rosen5 25 from run 46133315711). For each capped row:
     // (1) the replay agrees on every request up to the cap; (2) every recorded line search before the cap is inside the
     // bounds (mirror ratio <= C_X/4, SciPy direction error <= C_DIR/2); (3) the generating platform's first search
     // outside the bounds (`cap_first_bad`) is at or after the cap, and the recorded series really leaves a bound

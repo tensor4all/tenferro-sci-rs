@@ -82,8 +82,9 @@ function test stops the run. `../../lbfgs_termination.rs` replays the same scrip
 `uv run scripts/gen_minimize_lbfgs_reference.py --check` regenerates everything in memory, compares and writes nothing.
 It prints a summary per file and column (mismatch counts, the largest absolute and relative difference, the largest ratio to
 the tolerance) and **every mismatch of an exact column in full**, with the list of runs whose path or options changed, so
-one CI log answers "did any run change its counts or termination on this platform". Exit 1 on any exact mismatch, any
-trajectory value outside its tolerance, or any committed cap that leaves the bounds on the running platform.
+one CI log answers "did any run change its counts or termination on this platform". Every comparison runs before the verdict: a committed cap (or run) outside the bounds on the running platform is listed under
+"bounds on this platform" after the summaries and never hides other mismatches. Exit 1 on any exact mismatch, any
+trajectory value outside its tolerance, or any bound violation.
 
 Why this is needed: SciPy's trajectory differs at rounding level between platforms (Accelerate/Apple libm vs
 OpenBLAS/glibc: the quadratics' matrix–vector products and the dot products inside SciPy's C code sum in a different order,
@@ -116,8 +117,13 @@ maintainer, not changed here (it would change every recorded ratio).
 
 **Caps are platform-independent.** The cap of a run is the minimum over the checked platforms of the largest prefix of line
 searches inside the bounds: macOS arm64 (committed first) 25, 15, 15, 26, 26 and Ubuntu 24.04 x86_64 (CI run 46132168523,
-values from its log) 7, 16, 15, 29, 26 for `m1_rosen5`, `m1_quad10_k1e2`, `m1_powell4`, `m3_rosen5`, `m3_quad10_k1e2`; hence 7,
-15, 15, 26, 26. The generator takes the caps, the `tight` gtols, the search picks and the counts-only live rows from fixed
+earlier selection code) 7, 16, 15, 29, 26 for `m1_rosen5`, `m1_quad10_k1e2`, `m1_powell4`, `m3_rosen5`, `m3_quad10_k1e2`; hence 7,
+15, 15, 26, 26, until the check of CI run 46133315711 (Ubuntu, the authoritative source for Linux) reported the first search
+outside the bounds of `m3_rosen5` as 25, so its cap is **25** (that value comes from run 46133315711). Indexing: line searches
+are numbered from 0; the cap is the number of line searches kept (= `maxiter`, accepted iterations), i.e. searches `0 … cap − 1`;
+`cap_first_bad` is the index of the first search outside the bounds, so a cap is valid iff `cap ≤ first_bad`. Margins on macOS
+(`cap_first_bad − cap`): `m1_rosen5` 18, `m3_rosen5` 1, and 0 for `m1_quad10_k1e2`, `m1_powell4`, `m3_quad10_k1e2` (no
+margin: they sit exactly at the largest prefix). The generator takes the caps, the `tight` gtols, the search picks and the counts-only live rows from fixed
 tables, so no platform-dependent choice remains; `--check` verifies that every committed cap is still inside the bounds on the
 running platform and fails only if it is not (never by choosing a different cap). The generating platform's first search
 outside the bounds is the `cap_first_bad` column (diagnostic).
@@ -164,7 +170,7 @@ accumulates over the steps taken. For component `i` the test allows
   | run | cap (searches) | macOS first search outside | Ubuntu (CI) first search outside | of uncapped | macOS: search outside, mirror / direction | exceeds |
   |---|---|---|---|---|---|---|
   | `m1_rosen5` | 7 | 25 | 7 | 78 | 11.7, 0.9 | mirror ratio above `C_X / 4` |
-  | `m3_rosen5` | 26 | 26 | 29 | 58 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
+  | `m3_rosen5` | 25 | 26 | 25 | 58 | 10.5, 0.0 | mirror ratio above `C_X / 4` |
   | `m1_quad10_k1e2` | 15 | 15 | 16 | 73 | 0.9, 113.6 | SciPy's own direction error above `C_DIR / 2` |
   | `m1_powell4` | 15 | 15 | 15 | 58 | 1.4, 438.5 | SciPy's own direction error above `C_DIR / 2` |
   | `m3_quad10_k1e2` | 26 | 26 | 26 | 56 | 0.7, 65.8 | SciPy's own direction error above `C_DIR / 2` |
